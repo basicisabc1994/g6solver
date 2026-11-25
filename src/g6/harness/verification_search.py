@@ -644,14 +644,14 @@ def reading(ran: dict, node: str, *, template: str | None = None) -> dict:
     if observed is not None:   # G6's own runner's record, read by its schema; any other is unknown (below)
         ran = observed
         reading = ran["g6_observation"]
-        return {"result": reading["result"], "detail": reading["detail"], "verdict": ran["verdict"],
+        return _qualified({"result": reading["result"], "detail": reading["detail"], "verdict": ran["verdict"],
                 "seconds": ran["seconds"], "tree_digest": ran["source_before"],
                 **{key: ran[key] for key in RAN_WITH if key in ran},
                 'execution_artifact': ran.get('execution_artifact'),
                 'bootstrap_sha256': ran.get('bootstrap_sha256', ''),
-                **{key: reading[key] for key in ('import_evidence', 'fallback_observation', 'reason_code')
+                **{key: reading[key] for key in ('import_evidence', 'fallback_observation', 'reason_code', 'case_reruns')
                    if key in reading},
-                "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}
+                "observations": reading.get("observations"), "owned_probe": reading.get("owned_probe", False)}, reading)
     structured_setup = 'check_errors' in ran
     report = repo_tests.read_report(ran)
     ran = report.wire()
@@ -743,16 +743,35 @@ def _canonical(value) -> str:
 NOT_OBSERVED = "(not observed)"
 
 
+def _occurrences(observations: list[dict] | None) -> dict[int | str, dict]:
+    """Runner calls carry positions; free-form observation lines have only their historical input identity."""
+    return {item.get('case', _canonical(item['input'])): item for item in observations or []}
+
+
+def _difference_key(item: dict) -> int | str:
+    return item.get('case', item['input'])
+
+
+def _qualified(found: dict, source: dict) -> dict:
+    """Every reconstructed verdict keeps the fallback field and its observation limit."""
+    if source.get('fallback_observation'):
+        found = {**found, 'fallback_observation': source['fallback_observation']}
+        if 'fallback was taken' not in found['detail']:
+            found['detail'] += '; the fallback was taken; the path with the missing imports satisfied was not observed'
+    return found
+
+
 def _differences(base: list[dict] | None, patch: list[dict] | None) -> list[dict]:
     """The inputs a probe observed differently at the base commit and on the patch, with both outputs, each as
     canonical JSON text (``NOT_OBSERVED`` where one run did not observe it), so nothing nested reaches the reply."""
-    before = {_canonical(item["input"]): item for item in base or []}
-    after = {_canonical(item["input"]): item for item in patch or []}
+    before, after = _occurrences(base), _occurrences(patch)
     found = []
     for key in dict.fromkeys([*before, *after]):
         old, new = before.get(key), after.get(key)
-        if old is None or new is None or _canonical(old["output"]) != _canonical(new["output"]):
-            found.append({"input": key, "base": _canonical(old["output"]) if old else NOT_OBSERVED,
+        if (old is None or new is None or _canonical(old['input']) != _canonical(new['input'])
+                or _canonical(old["output"]) != _canonical(new["output"])):
+            found.append({**({'case': key} if type(key) is int else {}), "input": _canonical((new or old)['input']),
+                          "base": _canonical(old["output"]) if old else NOT_OBSERVED,
                           "patch": _canonical(new["output"]) if new else NOT_OBSERVED})
     return found
 
@@ -766,20 +785,33 @@ UNSTABLE = ("passes at the base commit and on the patch; each input it observed 
 
 
 def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
+    return _qualified(_stabilized(verdict, first, again), verdict)
+
+
+def _stabilized(verdict: dict, first: dict, again: dict | None) -> dict:
     """``verdict``'s differences, less each input the base commit observed differently on its second run (review I6):
     such an observation is unstable, listed as such and never a difference, so never a counterexample. With none left,
     ``not_refuted``; when the second run could not be made to a pass, a check error."""
     if again is not None:
-        first, again = _import_pair(first, again)
+        first, again = _import_pair(first, again, repeat=True)
     if again is None or again["result"] != "passed":
         why = OUT_OF_TIME if again is None else f"it gave {again['result']}: {again['detail']}"
         return {"result": CHECK_ERROR, "detail": NOT_REPEATED.format(why=why)}
-    shaky = {item["input"]: item for item in _differences(first.get("observations"), again.get("observations"))}
-    unstable = [{"input": key, "base": item["base"], "base_again": item["patch"]} for key, item in shaky.items()]
-    compared = ({_canonical(item['input']) for item in first.get('observations') or []}
-                & {_canonical(item['input']) for item in again.get('observations') or []})
-    missing = [item['input'] for item in verdict['differences'] if item['input'] not in compared]
-    kept = [item for item in verdict["differences"] if item["input"] in compared and item["input"] not in shaky]
+    shaky = {_difference_key(item): item for item in _differences(first.get("observations"), again.get("observations"))}
+    unstable = [{**({'case': key} if type(key) is int else {}),
+                 "input": item['input'], "base": item["base"], "base_again": item["patch"]}
+                for key, item in shaky.items()]
+    first_pairs, again_pairs = _occurrences(first.get('observations')), _occurrences(again.get('observations'))
+    compared = first_pairs.keys() & again_pairs.keys()
+    if all(type(side.get('observations')) is list and not side.get('owned_probe')
+           and not side.get('import_evidence') for side in (first, again)):
+        # Printed probes identify inputs, not call occurrences. An input absent from both completed base
+        # reports has a stable absence; keep the patch-only observation and its historical missing-side text.
+        compared |= {item['input'] for item in verdict['differences'] if 'case' not in item
+                     and item['input'] not in first_pairs and item['input'] not in again_pairs}
+    missing = [_difference_key(item) for item in verdict['differences'] if _difference_key(item) not in compared]
+    kept = [item for item in verdict["differences"]
+            if _difference_key(item) in compared and _difference_key(item) not in shaky]
     if not kept:
         if missing:
             return {'result': CHECK_ERROR, 'detail': NOT_REPEATED.format(
@@ -803,7 +835,7 @@ def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
     return found
 
 
-def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
+def _import_pair(left: dict, right: dict | None, *, repeat: bool = False) -> tuple[dict, dict | None]:
     """Compare missing imports on the outcomes being judged, then admit matching provisional readings."""
     if right is None:
         return left, right
@@ -811,11 +843,24 @@ def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
 
     evidence = [side.get('import_evidence', {}) for side in (left, right)]
     marks = [one.get('outcomes', []) for one in evidence]
-    if not any(marks):
+    unavailable = [set(one.get('unavailable', [])) for one in evidence]
+    dependent = [set(one.get('dependent', [])) for one in evidence]
+    if not any(marks) and not any(unavailable) and not any(dependent):
         return left, right
     failures = [one.get('failures', []) for one in evidence]
     compared = sorted(set(failures[0] + failures[1])) or list(range(max(map(len, marks))))
+    candidates = [one.get('reading', side) for side, one in zip((left, right), evidence, strict=True)]
+    probe_pairs = [_occurrences(side.get('observations')) for side in candidates]
+
+    def needs_independence(index):
+        if not all(side.get('owned_probe') for side in candidates):
+            return True
+        before, after = (pairs.get(index) for pairs in probe_pairs)
+        return before is None or after is None or _canonical(before) != _canonical(after)
+
     kept = [index for index in compared if
+            not any(index in group for group in unavailable)
+            and (repeat or not needs_independence(index) or not any(index in group for group in dependent)) and
             (marks[0][index] if index < len(marks[0]) else []) ==
             (marks[1][index] if index < len(marks[1]) else [])]
 
@@ -829,7 +874,7 @@ def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
         if found['result'] == 'passed' and names:
             found = {**found, 'fallback_observation': {
                 'missing_imports': names, 'satisfied_import_path': 'not observed'}}
-        return found
+        return _qualified(found, found)
 
     if len(kept) == len(compared):
         return admitted(left, evidence[0]), admitted(right, evidence[1])
@@ -840,7 +885,9 @@ def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
     if all(side.get('owned_probe') and side['result'] == 'passed' for side in provisional):
         # A later unavailable path cannot erase an earlier input the host can still compare. Keep only inputs
         # with the same import evidence on both trees; no output on a differing marked path supplies a finding.
-        comparable = [[candidate['observations'][index] for index in kept] for candidate in provisional]
+        comparable = [[{**observation, 'case': observation.get('case', index)} for index, observation in
+                       enumerate(candidate['observations']) if observation.get('case', index) in kept]
+                      for candidate in provisional]
         if kept:
             return tuple({**{key: value for key, value in side.items() if key != 'reason_code'}, **candidate,
                           'verdict': 'passed', 'observations': observations,
@@ -860,7 +907,7 @@ def _import_pair(left: dict, right: dict | None) -> tuple[dict, dict | None]:
         return tuple(readings)
     unavailable = {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
-    return {**left, **unavailable}, right
+    return _qualified({**left, **unavailable}, left), right
 
 
 def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
@@ -873,11 +920,7 @@ def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
     if on_patch.get('unavailable_case_inputs'):
         found = {**found, 'unavailable_case_inputs': on_patch['unavailable_case_inputs'],
                  'detail': found['detail'] + '; other cases remain unavailable because their missing imports differ'}
-    if on_patch['result'] == 'passed' and on_patch.get('fallback_observation'):
-        found = {**found, 'fallback_observation': on_patch['fallback_observation'],
-                 'detail': found['detail'] + '; the fallback was taken; the path with the missing imports '
-                           'satisfied was not observed'}
-    return found
+    return _qualified(found, on_patch)
 
 
 def _classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
@@ -980,9 +1023,9 @@ def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
 
 def _summary(found: dict) -> dict:
     """A run as its activity lists it: its result, and the interpreter, boundary and import path it ran with."""
-    return {key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest", *RAN_WITH,
-                                      'fallback_observation', 'import_evidence')
-            if key in found}
+    return _qualified({key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest", *RAN_WITH,
+                                      'fallback_observation', 'import_evidence', 'case_reruns')
+            if key in found}, found)
 
 
 def _bound(left: float) -> int:
@@ -1000,7 +1043,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
     must show the selector helps before any caller does."""
     done = Search()
-    stopped = False
+    budget_exhausted = False
     rooted = {"roots": tuple(roots)} if roots else {}
     if select:
         checks = verification_controller.order_checks(
@@ -1025,8 +1068,8 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         origin = (origins or {}).get(one.id, FREE_FORM)
         activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
-        if stopped or deadline - _clock() < 2 * MIN_RUN_S:
-            stopped = True
+        if budget_exhausted or deadline - _clock() < 2 * MIN_RUN_S:
+            budget_exhausted = True
             activity.update(result="skipped", reason=OUT_OF_TIME)
             continue
         node = activity["node"]
@@ -1045,6 +1088,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                 activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
             verdict = origin.judge(one.intent, on_patch, at_base) if origin.judge else classify(one.intent, on_patch,
                                                                                                  at_base)
+            verdict = _qualified(verdict, on_patch)
             if verdict.get("differences") and not origin.judge:   # review I6: the base commit observed again
                 again = read(at_base=True) if deadline - _clock() >= MIN_RUN_S else None
                 activity["runs"].append({"on": "base commit, again", **(_summary(again) if again else {
@@ -1052,16 +1096,17 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                 verdict = _stable(verdict, at_base, again)
             if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR and on_patch["result"] != "error":
                 # only where the base run would have decided the result
-                verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
+                verdict = _qualified({"result": CHECK_ERROR,
+                                      "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}, verdict)
             if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
                 # the differential rule: the instance declares this behaviour must not change, so a difference refutes
-                verdict = {"result": COUNTEREXAMPLE, "differences": verdict["differences"],
+                verdict = _qualified({**verdict, "result": COUNTEREXAMPLE,
                            **({'unavailable_probe_inputs': verdict['unavailable_probe_inputs']}
                               if verdict.get('unavailable_probe_inputs') else {}),
                            "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
                                      "and on the patch, where the instance declares that behaviour must not change"
                                      + ('; other inputs remain unavailable because their missing imports differ'
-                                        if verdict.get('unavailable_probe_inputs') else '')}
+                                        if verdict.get('unavailable_probe_inputs') else '')}, verdict)
             activity.update(verdict)
             activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
             _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
@@ -1086,8 +1131,8 @@ def _guarded(change: repo_tests.Change, ran: dict, found: dict) -> dict:
     elsewhere = _loaded_elsewhere(change, ran)
     if not elsewhere:
         return found
-    return {key: value for key, value in found.items() if key != "observations"} | {
-        "result": "error", "detail": LOADED_ELSEWHERE.format(elsewhere)}
+    return _qualified({key: value for key, value in found.items() if key != "observations"} | {
+        "result": "error", "detail": LOADED_ELSEWHERE.format(elsewhere)}, found)
 
 
 #: What a differential counterexample is, in its reason, and how its reproduction is read.
@@ -1117,6 +1162,8 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             reproduction["template"] = origin.template
         if "differences" in verdict:
             reproduction.update(differences=verdict["differences"], compare=COMPARE)
+        if verdict.get('fallback_observation'):
+            reproduction.update(fallback_observation=verdict['fallback_observation'], detail=verdict['detail'])
         shape = verdict.get("shape") or (DIFFERS if "differences" in verdict else SHAPE[result])
         # review 10: in G6's own words only; what the check printed or failed with stays in assessment.completion
         said = "observed" if "differences" in verdict else "failed with"
@@ -1124,6 +1171,8 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
                                               f"{said} is in assessment.completion"))
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
+                             **({'fallback_observation': verdict['fallback_observation']}
+                                if verdict.get('fallback_observation') else {}),
                              "reproduction": reproduction,
                              **({"template": origin.template} if origin.template else {})})
         done.next_actions.append(
@@ -1147,10 +1196,14 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
                         f"{first['patch']}"
                         + (f" ({more} more input(s) differ)" if more else "")
                         + f", observed by {about}. Which is intended for {one.requirement_id}?",
+            **({'fallback_observation': verdict['fallback_observation'], 'detail': verdict['detail']}
+               if verdict.get('fallback_observation') else {}),
             "behaviours": {"differences": verdict["differences"]}})
     elif result == FAILS_ON_BASE_TOO:
         done.questions.append({
             "check": one.id, "requirement": one.requirement_id, "intent": one.intent, "result": result,
+            **({'fallback_observation': verdict['fallback_observation'], 'detail': verdict['detail']}
+               if verdict.get('fallback_observation') else {}),
             "question": f"{about} fails at the base commit ({at_base['detail']}) and on the patch "
                         f"({on_patch['detail']}). Does what it expects describe the behaviour {one.requirement_id} "
                         "asks to keep, or is the check wrong?",
@@ -1406,18 +1459,25 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                         {"node": found["node"], **reproduce(found["node"], found.get("ran") or {}),
                          "on": "the working tree under review" + ("" if named else "; it passes at the base commit"),
                          "artifact_digest": artifact, "base_commit": base_commit})
+        if found.get('fallback_observation'):
+            reproduction.update(fallback_observation=found['fallback_observation'], detail=found['detail'])
         stated.append({"check": found["node"], "provenance": found.get("provenance") or ("stated" if named
                                                                                           else "derived"),
                        **({"contract_provenance": found["contract_provenance"]} if "contract_provenance" in found
                           else {}),
                        "requirements": [req["id"] for req in evaluated
                                         if any(c["id"] == found["node"] for c in req["checks"])],
-                       "code": found["code"], "detail": found["detail"], "reproduction": reproduction})
+                       "code": found["code"], "detail": found["detail"], "reproduction": reproduction,
+                       **({'fallback_observation': found['fallback_observation']}
+                          if found.get('fallback_observation') else {})})
     proposed = done.activities if done else []
     structural = list(templates.structural) if templates is not None else []
     unconfirmed = [{"check": s["id"], "requirement": s["requirement"], "provenance": s["contract_provenance"],
                     "result": s["verdict"], "code": REASONS[COUNTEREXAMPLE], "detail": s["detail"],
-                    "reproduction": {**s["reproduction"], "artifact_digest": artifact, "base_commit": base_commit}}
+                    **({'fallback_observation': s['fallback_observation']} if s.get('fallback_observation') else {}),
+                    "reproduction": {**s["reproduction"], "artifact_digest": artifact, "base_commit": base_commit,
+                                     **({'fallback_observation': s['fallback_observation'], 'detail': s['detail']}
+                                        if s.get('fallback_observation') else {})}}
                    for s in structural if s["verdict"] == COUNTEREXAMPLE]
     preservation = [{"obligation": req["id"], "text": req["text"], "provenance": req["provenance"],
                      "status": req["status"], "stated_checks": [{"id": c["id"], "verdict": c["verdict"]}

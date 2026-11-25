@@ -208,7 +208,7 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
             result['fallback_observation'] = {
                 'missing_imports': sorted({name for one in fallbacks for name in one['missing_imports']}),
                 'satisfied_import_path': 'not observed'}
-            result['detail'] += '; the fallback was taken; the path with the missing imports satisfied was not observed'
+            result.update(vs._qualified(result, result))
         failing = next((found for found in on_the_patch if _failed(found)), None)
         if failing is not None:
             result["reproduction"] = {"check": ident, "file": placed, "text": check.source,
@@ -219,6 +219,8 @@ def run(root: Path, change: repo_tests.Change, standard: ExpectationStandard, *,
                                       "patched_tree_digest": failing.get("tree_digest", ""),
                                       "artifact_digest": artifact, "base_commit": change.base_commit,
                                       "template": "example.v1", "compiled": COMPILED,
+                                      **({'fallback_observation': result['fallback_observation'], 'detail': result['detail']}
+                                         if result.get('fallback_observation') else {}),
                                       "on_patch": f"{failing['result']}: {failing.get('detail', '')}"}
             try:
                 result["reproduction"].update(vs.reproduce(node, failing))

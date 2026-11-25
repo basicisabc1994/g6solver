@@ -413,14 +413,92 @@ REPORT_FIELDS['check_errors'] = ReportField({str: str}, {}, 'G6 preparation reas
     'recorded from the generated setup exception class by object identity, never its display text')
 #: An observation's result, and the verdict its record gives it (``behaviour_runner.run``).
 OBSERVED_VERDICTS = {"passed": "passed", "failed": "failed", "error": "not_run"}
+
+
+def _observation_shape(value: dict) -> bool:
+    """Read legacy pairs and occurrence-bearing pairs, plus bounded fresh-load evidence."""
+    if value['result'] not in OBSERVED_VERDICTS:
+        return False
+    if 'reruns' in value.get('observed', {}):
+        from g6.harness.behaviour_runner import frame, read_frame
+
+        try:
+            if read_frame(frame(value['observed'])) is None:
+                return False
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            return False
+    pairs = value.get('observations', [])
+    if len(pairs) > MAX_OBSERVATIONS:
+        return False
+    cases = []
+    for pair in pairs:
+        if type(pair) is not dict or set(pair) not in ({'input', 'output'}, {'case', 'input', 'output'}):
+            return False
+        if 'case' in pair:
+            if type(pair['case']) is not int or not 0 <= pair['case'] < MAX_OBSERVATIONS:
+                return False
+            cases.append(pair['case'])
+    if cases and (len(cases) != len(pairs) or len(set(cases)) != len(cases)):
+        return False
+    evidence = value.get('import_evidence', {})
+    if 'reading' in evidence:
+        reading = evidence['reading']
+        if (type(reading) is not dict or 'import_evidence' in reading
+                or not REPORT_FIELDS['g6_observation'].accepts(reading)):
+            return False
+    for key in ('unavailable', 'dependent'):
+        if key in evidence:
+            indexes = evidence[key]
+            outcomes = evidence.get('outcomes', [])
+            if (type(outcomes) is not list or type(indexes) is not list
+                    or any(type(index) is not int or not 0 <= index < len(outcomes) for index in indexes)
+                    or indexes != sorted(set(indexes))):
+                return False
+    reruns = value.get('case_reruns', [])
+    if len(reruns) > MAX_OBSERVATIONS:
+        return False
+    seen = set()
+    for rerun in reruns:
+        if (type(rerun) is not dict or set(rerun) != {'case', 'ran', 'result', 'outcome', 'marks'}
+                or type(rerun['case']) is not int or not 0 <= rerun['case'] < MAX_OBSERVATIONS
+                or rerun['case'] in seen or type(rerun['ran']) is not bool
+                or rerun['result'] not in ('reproduced', 'not_reproduced', 'unavailable')
+                or type(rerun['marks']) is not list or any(type(name) is not str for name in rerun['marks'])):
+            return False
+        seen.add(rerun['case'])
+        outcome = rerun['outcome']
+        if not rerun['ran'] and (outcome is not None or rerun['result'] != 'unavailable'):
+            return False
+        if outcome is None:
+            if rerun['result'] != 'unavailable' or rerun['marks']:
+                return False
+        else:
+            from g6.harness.behaviour_runner import frame, read_frame
+
+            try:
+                if (type(outcome) is not dict or 'reruns' in outcome or read_frame(frame(outcome)) is None
+                        or outcome.get('version') in ('observation.v1', 'observation.v2')
+                        and len(outcome['outcomes']) != 1):
+                    return False
+            except (TypeError, ValueError, OverflowError, RecursionError):
+                return False
+            groups = outcome.get('outcomes', [outcome])
+            names = sorted({name for one in groups for name in one.get('missing_imports', [])})
+            if rerun['marks'] != names:
+                return False
+            if rerun['result'] != 'unavailable' and (outcome.get('version') != 'observation.v2'
+                    or any('missing_import' in one or 'unavailable_import' in one for one in groups)):
+                return False
+    return True
+
+
 REPORT_FIELDS["g6_observation"] = ReportField(
     {"result": str, "detail": str, "observed": dict, "owned_probe": bool, "observations": list, 'reason_code': str,
-     'import_evidence': dict, 'fallback_observation': dict},
+     'import_evidence': dict, 'fallback_observation': dict, 'case_reruns': list},
     {"result": "passed", "detail": "G6 observed the calls in its isolated runner"},
     "G6's own observation of a confirmed check or probe", "a known result and its detail; observations are "
-    "input/output pairs", required_members=("result", "detail"),
-    predicate=lambda value: value["result"] in OBSERVED_VERDICTS and all(
-        type(pair) is dict and set(pair) == {"input", "output"} for pair in value.get("observations", ())))
+    "input/output pairs with optional call occurrence; reruns retain fresh-load outcomes and import marks",
+    required_members=("result", "detail"), predicate=_observation_shape)
 REPORT_FIELDS["bootstrap_sha256"] = ReportField(str, "0" * 64, "the observation runner's bootstrap program",
                                                 "a SHA-256 hex digest",
                                                 predicate=lambda value: re.fullmatch("[0-9a-f]{64}", value) is not None)

@@ -501,23 +501,56 @@ def track_imports():
     global _missing_preparation_imports, _missing_imports, _missing_import_requests
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     load = importlib._bootstrap._find_and_load
+    library_roots = tuple(os.path.normcase(os.path.realpath(prefix))
+                          for prefix in (sys.base_prefix, sys.prefix))
 
     def tracked(name, import_):
         frame = sys._getframe(1)
         tree = os.path.normcase(os.path.realpath(globals().get('root', os.getcwd())))
         # None means no caller could be attributed (for example a library callback on a worker thread).
         requested_here = None
+        helper = False
         # Attribute library helpers to their nearest repository caller. An import made while a library module
         # itself is loading is that module's request, not an optional dependency requested by the repository.
         while frame is not None:
             filename = frame.f_code.co_filename
+            module = frame.f_globals.get('__name__', '')
+            if module in ('importlib', 'importlib._bootstrap', 'importlib._bootstrap_external',
+                          '_frozen_importlib', '_frozen_importlib_external'):
+                frame = frame.f_back
+                continue
+            runner_frame = frame.f_globals is globals() or filename == __file__
+            if runner_frame:
+                # A direct bootstrap request has no case requester. Library callbacks remain unattributable.
+                if not helper:
+                    requested_here = False
+                    break
+                frame = frame.f_back
+                continue
+            helper = True
+            # Frozen stdlib modules retain their installed file in the module namespace, not co_filename.
+            if filename.startswith('<frozen '):
+                origin = frame.f_globals.get('__file__')
+                if type(origin) is str:
+                    filename = origin
             file = os.path.normcase(os.path.realpath(filename)) if os.path.isabs(filename) else ''
             if (file and os.path.splitdrive(file)[0] == os.path.splitdrive(tree)[0]
                     and os.path.commonpath((tree, file)) == tree):
                 requested_here = True
                 break
-            if frame.f_code.co_name == '<module>' and not filename.startswith('<frozen importlib.'):
+            # Our bootstrap/helper frames are never an outside requester. A known library's module
+            # load can own its imports; a callback with only runner frames above it is unattributable.
+            library = (file and any(os.path.commonpath((prefix, file)) == prefix
+                                   for prefix in library_roots
+                                   if os.path.splitdrive(prefix)[0] == os.path.splitdrive(file)[0]))
+            # A library's own import statement is its dependency, including an optional import inside
+            # a function. Calls forwarding a repository-supplied name still follow the caller stack.
+            if library and (frame.f_code.co_name == '<module>'
+                            or frame.f_code.co_code[frame.f_lasti] == dis.opmap['IMPORT_NAME']):
                 requested_here = False
+                break
+            if not library:
+                requested_here = True
                 break
             frame = frame.f_back
         del frame
@@ -710,7 +743,7 @@ BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\
              + inspect.getsource(target_attribute) + '\n'
              + inspect.getsource(bind_method) + '\n'
              + inspect.getsource(_import_roots)) + r'''
-import ast, builtins, collections.abc, concurrent.futures, copy, dis, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys
+import ast, builtins, collections.abc, concurrent.futures, copy, dis, hashlib, importlib, importlib.machinery, inspect, json, os, re, struct, sys, time
 _SETUP_CODE_CARRIERS = ()
 _SETUP_CONTROLS = ()
 _IMPORT_OPS = (dis.opmap['IMPORT_NAME'], dis.opmap['IMPORT_FROM'])
@@ -795,6 +828,7 @@ if raw == '@channel':
     with open(channel, 'wb'):
         pass
 data = json.loads(raw)
+end = time.monotonic() + data.pop('budget_s', 10)
 sink = open(channel, "ab", buffering=0)
 write, dumps, pack = sink.write, json.dumps, struct.pack
 is_instance, identity, kind_of = isinstance, id, type
@@ -836,12 +870,6 @@ def load_target(spec):
     if not callable(target):
         raise CheckSetupError("binding: target is not callable")
     return target
-# Evict the resolved module and its parents, including any same-named standard-library cache entry. The encoder,
-# writer and import machinery above are already held by the bootstrap.
-module = data["function"][1]
-for name in list(sys.modules):
-    if name == module or name.startswith(module + ".") or module.startswith(name + "."):
-        del sys.modules[name]
 # A built-in outcome type is read now, before any repository code runs. Nothing else an outcome names is imported or
 # initialised before the call: the person confirmed a fresh import of the function's module and the call, no more.
 fixed = {}
@@ -889,88 +917,123 @@ def setup_failed(exc, *, constructor=False):
     if data['probe'] and not constructor and type(exc) is not ObservationUnavailable:
         exc = ObservationUnavailable(detail=ObservationUnavailable.NO_OBSERVATION)
     version = 'observation_unavailable.v1' if type(exc) is ObservationUnavailable else 'check_setup.v1'
-    payload = dumps({"version": version, "detail": exception_detail(exc, "setup")},
-                    sort_keys=True, allow_nan=False).encode("utf-8")
-    if len(payload) > 1048576:
-        raise RuntimeError("setup error too large")
-    write(b"G6R1\n" + pack(">I", len(payload)) + payload)
-    sink.close()
-    raise SystemExit(0)
+    return {"version": version, "detail": exception_detail(exc, "setup")}
 
 def call_failed(exc):
     try:
         detail = exception_detail(exc, 'call failed')
     except CheckSetupError as unavailable:
-        setup_failed(unavailable)
+        return setup_failed(unavailable)
     # Import absence already passed own_import_absent: a genuinely absent held export stays the code's failure.
     # A missing callable can instead be a definition guarded by the recorded optional import.
-    payload = dumps({'version': 'call_failure.v1', 'detail': detail,
-                     **(import_mark() if exception_matches(exc, AttributeError) else {})},
-                    sort_keys=True, allow_nan=False).encode('utf-8')
-    write(b'G6R1\n' + pack('>I', len(payload)) + payload)
-    sink.close()
-    raise SystemExit(0)
+    return {'version': 'call_failure.v1', 'detail': detail,
+            **(import_mark() if exception_matches(exc, AttributeError) else {})}
 
-try:
-    function = load(data["function"])
-except CheckSetupError as exc:
-    setup_failed(exc)
-except (AttributeError, ImportError) as exc:
-    call_failed(exc)
-except BaseException as exc:
-    if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
-        raise
-    preparation = setup_outcome(exc)
-    if preparation is not None:
-        setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
-    raise
-errors, outcomes, alive = {}, [], []
-# Preparation affects every case; imports attempted by one call belong to that case alone.
-preparation_imports = list(_missing_imports)
-preparation_requests = set(_missing_import_requests)
-for call in data["calls"]:
-    _missing_imports = list(preparation_imports)
-    _missing_import_requests = set(preparation_requests)
-    args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
+def observe(request):
+    global data, _missing_preparation_imports, _missing_imports, _missing_import_requests
+    global errors, outcomes, alive
+    data = request
+    _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
+    errors, outcomes, alive = {}, [], []
+    # Reload every repository module, including helpers whose mutable globals a previous call changed.
+    module = data['function'][1]
+    for name, loaded in list(sys.modules.items()):
+        where = held(namespace_of(loaded), '__file__') if type(loaded) is type(sys) else None
+        owned = (type(where) is str and os.path.isabs(where)
+                 and os.path.splitdrive(where)[0] == os.path.splitdrive(root)[0]
+                 and os.path.commonpath((os.path.realpath(root), os.path.realpath(where))) == os.path.realpath(root))
+        if name != '__main__' and (owned or name in data.get('own_modules', ())
+                                   or name == module or name.startswith(module + '.')
+                                   or module.startswith(name + '.')):
+            del sys.modules[name]
+    return observe_calls()
+
+def observe_calls():
+    global errors, outcomes, alive
+    global _missing_imports, _missing_import_requests
     try:
-        result = function(*args, **kwargs)
+        function = load(data["function"])
     except CheckSetupError as exc:
-        setup_failed(exc)
+        return setup_failed(exc)
+    except (AttributeError, ImportError) as exc:
+        return call_failed(exc)
     except BaseException as exc:
-        if ((execution_control(exc) and (raised_during_setup(exc) or not exception_matches(exc, KeyboardInterrupt)))
-                or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError))):
+        if execution_control(exc) or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError)):
             raise
         preparation = setup_outcome(exc)
         if preparation is not None:
-            setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
-        if call_absent(exc):
-            call_failed(exc)
-        errors = resolved()
-        unavailable = None
-        if unavailable_import(exc):
-            unavailable = ObservationUnavailable(type(exc))
-            if data['probe']:
-                setup_failed(unavailable)
-        alive.append(exc)
-        outcomes.append(_exception_observation(exc, errors, data['probe']))
-        if unavailable is not None:
-            # An import that did not run cannot establish even a confirmed raises-ImportError outcome.
-            outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
-    else:
-        errors = resolved()
-        one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
-        if data["probe"]:
-            one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
-                            {"returned": _bounded(_plain(result))})
-        outcomes.append(one)
-    # Retain shared preparation and this call's imports without marking independent cases.
-    outcomes[-1].update(import_mark())
-payload = dumps({"version": "observation.v2", "outcomes": outcomes, "errors": errors},
-                sort_keys=True, allow_nan=False).encode("utf-8")
-if len(payload) > 1048576:
-    raise RuntimeError("observation too large")
-write(b"G6R1\n" + pack(">I", len(payload)) + payload)
+            return setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
+        raise
+    errors, outcomes, alive = {}, [], []
+    # Preparation affects every case; imports attempted by one call belong to that case alone.
+    preparation_imports = list(_missing_imports)
+    preparation_requests = set(_missing_import_requests)
+    for call in data["calls"]:
+        _missing_imports = list(preparation_imports)
+        _missing_import_requests = set(preparation_requests)
+        args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
+        try:
+            result = function(*args, **kwargs)
+        except CheckSetupError as exc:
+            return setup_failed(exc)
+        except BaseException as exc:
+            if ((execution_control(exc) and (raised_during_setup(exc) or not exception_matches(exc, KeyboardInterrupt)))
+                    or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError))):
+                raise
+            preparation = setup_outcome(exc)
+            if preparation is not None:
+                return setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
+            if call_absent(exc):
+                return call_failed(exc)
+            errors = resolved()
+            unavailable = None
+            if unavailable_import(exc):
+                unavailable = ObservationUnavailable(type(exc))
+            alive.append(exc)
+            outcomes.append(_exception_observation(exc, errors, data['probe']))
+            if unavailable is not None:
+                # An import that did not run cannot establish even a confirmed raises-ImportError outcome.
+                outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
+        else:
+            errors = resolved()
+            one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
+            if data["probe"]:
+                one["probe"] = ({"raised": None} if data["mode"] == "exceptions" else
+                                {"returned": _bounded(_plain(result))})
+            outcomes.append(one)
+        # Retain shared preparation and this call's imports without marking independent cases.
+        outcomes[-1].update(import_mark())
+    return {"version": "observation.v2", "outcomes": outcomes, "errors": errors}
+
+def publish(value):
+    payload = dumps(value, sort_keys=True, allow_nan=False).encode('utf-8')
+    if len(payload) > 1048576:
+        raise RuntimeError('observation too large')
+    sink.seek(0)
+    sink.truncate()
+    write(b'G6R1\n' + pack('>I', len(payload)) + payload)
+
+request_data = data
+observed = observe(request_data)
+if observed['version'] == 'observation.v2':
+    prior_unavailable = False
+    reruns = []
+    for index, outcome in enumerate(observed['outcomes']):
+        if prior_unavailable:
+            # Expectations stay in the host. Collect a fresh candidate for each later call; only the
+            # host can decide whether its original mismatch was reproduced. No extra process or limit.
+            rerun = {'case': index, 'ran': False, 'observation': None}
+            reruns.append(rerun)
+            observed['reruns'] = reruns
+            if time.monotonic() < end:
+                rerun['ran'] = True
+                # If the bounded child expires here, the channel still says this rerun is unavailable.
+                publish(observed)
+                rerun['observation'] = observe({**request_data, 'calls': [request_data['calls'][index]]})
+        prior_unavailable = prior_unavailable or 'missing_import' in outcome or 'unavailable_import' in outcome
+publish(observed)
 sink.close()
+
 '''
 
 
@@ -1018,7 +1081,8 @@ def read_frame(raw: bytes) -> dict | None:
                              and (not marked.intersection(value) or valid_marks(value))
                              and type(value['detail']) is str
                              and value['detail'] in CheckSetupError.CALL_FAILURES) else None
-        if (not isinstance(value, dict) or set(value) != {"version", "outcomes", "errors"}
+        if (not isinstance(value, dict) or set(value) not in ({"version", "outcomes", "errors"},
+                                                            {"version", "outcomes", "errors", "reruns"})
                 or value["version"] not in {"observation.v1", "observation.v2"}
                 or not isinstance(value["outcomes"], list)
                 or not isinstance(value["errors"], dict)
@@ -1026,6 +1090,26 @@ def read_frame(raw: bytes) -> dict | None:
                 or any(type(v) is not int and (v is not None or value["version"] != "observation.v2")
                        for v in value["errors"].values())):
             return None
+        if 'reruns' in value:
+            reruns = value['reruns']
+            if value['version'] != 'observation.v2' or type(reruns) is not list or len(reruns) > len(value['outcomes']):
+                return None
+            seen = set()
+            for rerun in reruns:
+                if (type(rerun) is not dict or set(rerun) != {'case', 'ran', 'observation'}
+                        or type(rerun['case']) is not int or not 0 <= rerun['case'] < len(value['outcomes'])
+                        or rerun['case'] in seen or type(rerun['ran']) is not bool):
+                    return None
+                seen.add(rerun['case'])
+                fresh = rerun['observation']
+                if fresh is not None:
+                    if not rerun['ran'] or type(fresh) is not dict or 'reruns' in fresh:
+                        return None
+                    raw_fresh = bytes(_encoded(fresh), 'utf-8')
+                    if read_frame(MAGIC + struct.pack('>I', len(raw_fresh)) + raw_fresh) is None:
+                        return None
+                    if fresh['version'] in ('observation.v1', 'observation.v2') and len(fresh['outcomes']) != 1:
+                        return None
         for one in value["outcomes"]:
             if not isinstance(one, dict):
                 return None
@@ -1099,27 +1183,38 @@ def _matches_encoding(observed, expected) -> bool:
 
 def finish(code: int | None, raw: bytes, data: dict) -> dict:
     """G6 compares the observation here, in its own process; child exit status supplies no support or failure."""
-    observed = read_frame(raw) if code == 0 else None
+    observed = read_frame(raw)
     calls = data.get("cases", data.get("calls", []))
+    reruns, uncertain = [], set()
+
+    if code != 0 and not (observed and observed.get('reruns')):
+        # Only a completed original observation published before a rerun can survive a stopped child.
+        observed = None
 
     def marked(found, outcomes, failures):
         marks = [one.get('missing_imports', []) for one in outcomes]
-        affected = any('missing_import' in outcomes[index] for index in failures)
-        if not any('missing_import' in one for one in outcomes):
+        unavailable = [index for index, one in enumerate(outcomes) if 'unavailable_import' in one]
+        dependent = sorted(uncertain.intersection(failures))
+        affected = (any('missing_import' in outcomes[index] for index in failures)
+                    or bool(unavailable) or bool(dependent))
+        found = {**found, **({'case_reruns': reruns} if reruns else {})}
+        if not any('missing_import' in one for one in outcomes) and not unavailable and not dependent:
             return found
         # Retain the provisional comparison without granting it authority in a single run. The host can use it
         # only with matching per-outcome evidence from the other tree. Legacy marks have no comparable names.
-        evidence = {'outcomes': marks, 'failures': failures,
+        evidence = {'outcomes': marks, 'failures': failures, 'unavailable': unavailable, 'dependent': dependent,
                     'reading': {key: value for key, value in found.items() if key != 'observed'}}
         if affected:
-            return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
+            detail = (outcomes[unavailable[0]]['unavailable_import'] if unavailable else ObservationUnavailable.DETAIL)
+            return {'result': 'error', 'detail': detail,
                     'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE',
                     **({'owned_probe': True} if found.get('owned_probe') else {}),
-                    **({'import_evidence': evidence} if any(marks) else {})}
+                    **({'case_reruns': reruns} if reruns else {}), 'import_evidence': evidence}
         names = sorted({name for group in marks for name in group})
         return {**found, 'import_evidence': evidence,
-                **({'fallback_observation': {'missing_imports': names, 'satisfied_import_path': 'not observed'}}
-                   if found['result'] == 'passed' and names else {})}
+                **({'fallback_observation': {'missing_imports': names, 'satisfied_import_path': 'not observed'},
+                    'detail': found['detail'] + '; the fallback was taken; the path with the missing imports '
+                      'satisfied was not observed'} if found['result'] == 'passed' and names else {})}
 
     if observed is not None and observed["version"] == "check_setup.v1":
         return {"result": "error", "detail": observed["detail"], 'reason_code': 'G6_E_CHECK_SETUP'}
@@ -1136,22 +1231,50 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             "returned" in one and len(one["arguments"]) != len(call.get("args", []))
             for call, one in zip(calls, observed["outcomes"], strict=True)):
         return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: observation does not match the scenario"}
+    prior_unavailable = False
+    fresh_results = {}
+    fresh_by_case = {one['case']: one for one in observed.get('reruns', [])}
+    for index, outcome in enumerate(observed['outcomes']):
+        if prior_unavailable:
+            fresh = fresh_by_case.get(index, {'ran': False, 'observation': None})
+            record = fresh['observation']
+            fresh_outcomes = record.get('outcomes', []) if record else []
+            names = sorted({name for one in fresh_outcomes for name in one.get('missing_imports', [])}
+                           | set(record.get('missing_imports', []) if record else []))
+            clean = (record is not None and record['version'] == 'observation.v2' and len(fresh_outcomes) == 1
+                     and not any('missing_import' in one or 'unavailable_import' in one for one in fresh_outcomes)
+                     and set(record['errors']) == expected_errors)
+            # Exception identity tokens are local to one load. Compare value digests, effects and type names,
+            # then let the ordinary host comparator read the fresh case against its own expected error tokens.
+            keys = ('returned', 'arguments', 'probe', 'raised_name')
+            same = clean and {k: outcome[k] for k in keys if k in outcome} == {
+                k: fresh_outcomes[0][k] for k in keys if k in fresh_outcomes[0]}
+            if same:
+                one_data = {**data, ('cases' if 'cases' in data else 'calls'): [calls[index]],
+                            'errors': data.get('errors', [case['error'] for case in calls
+                                                         if case.get('expect') == 'raises'])}
+                raw_fresh = bytes(_encoded(record), 'utf-8')
+                reading = finish(0, MAGIC + struct.pack('>I', len(raw_fresh)) + raw_fresh, one_data)
+                same = reading['result'] in ('passed', 'failed')
+                fresh_results[index] = reading['result']
+            result = 'reproduced' if same else 'not_reproduced' if clean else 'unavailable'
+            reruns.append({'case': index, 'ran': fresh['ran'], 'result': result, 'outcome': record, 'marks': names})
+            if not same:
+                uncertain.add(index)
+        prior_unavailable = prior_unavailable or 'missing_import' in outcome or 'unavailable_import' in outcome
     if "cases" not in data:
-        if any('unavailable_import' in one for one in observed['outcomes']):
-            return {'result': 'error', 'detail': ObservationUnavailable.DETAIL,
-                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
         if any("probe" not in one for one in observed["outcomes"]):
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: missing probe observation"}
         return marked({"result": "passed", "detail": "G6 observed the calls in its isolated runner", "observed": observed,
-                "owned_probe": True, "observations": [{"input": call, "output": one["probe"]}
-                    for call, one in zip(calls, observed["outcomes"], strict=True)]},
+                "owned_probe": True, "observations": [{"case": index, "input": call, "output": one["probe"]}
+                    for index, (call, one) in enumerate(zip(calls, observed["outcomes"], strict=True))]},
                       observed['outcomes'], list(range(len(calls))))
     failures = []
     for index, (case, outcome) in enumerate(zip(calls, observed["outcomes"], strict=True)):
         expected = case["expect"]
         if 'unavailable_import' in outcome:
-            return {'result': 'error', 'detail': outcome['unavailable_import'],
-                    'reason_code': 'G6_E_OBSERVATION_UNAVAILABLE'}
+            failures.append(index)
+            continue
         if expected == "raises":
             token = observed["errors"].get(_encoded(case["error"]))
             if "raised" not in outcome:
@@ -1172,6 +1295,9 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
             return {"result": "error", "detail": "G6_E_OBSERVATION_UNAVAILABLE: unknown comparison"}
         if not matches:
             failures.append(index)
+            if index in fresh_results and fresh_results[index] != 'failed':
+                uncertain.add(index)
+                next(one for one in reruns if one['case'] == index)['result'] = 'not_reproduced'
     return marked({"result": "failed" if failures else "passed", "observed": observed,
             "detail": ("the confirmed outcome did not match the observed call(s): " + str(failures)) if failures
                       else "the confirmed outcome matched what the entry point returned or raised in G6's runner"},
@@ -1228,12 +1354,12 @@ def located(copy: Path, data: dict) -> dict:
     return data
 
 
-def request(data: dict) -> dict:
+def request(data: dict, *, budget_s: float = 10) -> dict:
     """Only setup and inputs reach the child. The chosen outcome stays in G6's process."""
     calls = data.get("cases", data.get("calls", []))
     return {"function": data["function"], "calls": [{"args": c["args"], "kwargs": c.get("kwargs", {})} for c in calls],
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
-            "probe": "cases" not in data, "mode": data.get("mode", "outputs"),
+            "probe": "cases" not in data, "mode": data.get("mode", "outputs"), 'budget_s': budget_s,
             **({'own_modules': data['own_modules']} if 'own_modules' in data else {}),
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
@@ -1425,7 +1551,7 @@ def run(copy: Path, data: dict, node: str, *, timeout_s: int, deadline: float) -
         program = data.get("_program", confine.CHILD_PRELUDE + BOOTSTRAP)
         boot.write_text(program, encoding="utf-8", newline="\n")
         with channel.open("xb") as handle:
-            handle.write(_encoded(request(data)).encode('utf-8'))
+            handle.write(_encoded(request(data, budget_s=remaining)).encode('utf-8'))
         plan = confine.plan(confine.Confinement(read_write=(str(own),),
                             read_only=confine.interpreter_paths(python), network=False), python)
         # the observation record is G6's data, read back by its exact-type schema (repo_tests.read_observation): a
