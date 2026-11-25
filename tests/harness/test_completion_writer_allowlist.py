@@ -441,10 +441,134 @@ class _Bindings(ast.NodeVisitor):
         return False
 
 
+class _TextBindings:
+    """Require string values at every binding in the module, including nested writes."""
+
+    def __init__(self, tree):
+        self.values = {}
+        covered = set()
+
+        def bind(target, value):
+            if isinstance(target, ast.Name):
+                self.values.setdefault(target.id, []).append(value)
+                covered.add(target)
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                paired = isinstance(value, (ast.Tuple, ast.List)) and len(target.elts) == len(value.elts)
+                for index, part in enumerate(target.elts):
+                    bind(part, value.elts[index] if paired else None)
+            elif isinstance(target, ast.Starred):
+                bind(target.value, None)
+            elif isinstance(target, (ast.Subscript, ast.Attribute)):
+                while isinstance(target, (ast.Subscript, ast.Attribute)):
+                    target = target.value
+                if isinstance(target, ast.Name):
+                    self.values.setdefault(target.id, []).append(None)
+
+        def named(name):
+            if name:
+                self.values.setdefault(name, []).append(None)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    bind(target, node.value)
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+                bind(node.target, node.value)
+            elif isinstance(node, ast.AugAssign):
+                # Adding strings preserves the type only if all the other
+                # bindings are strings too. Every other update is unknown.
+                bind(node.target, node.value if isinstance(node.op, ast.Add) else None)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)) and node.iter.elts:
+                    for value in node.iter.elts:
+                        bind(node.target, value)
+                else:
+                    bind(node.target, None)
+            elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+                bind(node.optional_vars, None)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    named(alias.asname or (alias.name.split('.')[0] if isinstance(node, ast.Import) else alias.name))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                named(node.name)
+            elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+                named(node.name)
+            elif isinstance(node, ast.MatchMapping):
+                named(node.rest)
+            elif isinstance(node, ast.arguments):
+                positional = [*node.posonlyargs, *node.args]
+                for arg, value in zip(positional[len(positional) - len(node.defaults):], node.defaults):
+                    self.values.setdefault(arg.arg, []).append(value)
+                for arg, value in zip(node.kwonlyargs, node.kw_defaults):
+                    if value is not None:
+                        self.values.setdefault(arg.arg, []).append(value)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node not in covered:
+                bind(node, None)
+
+    def string(self, node, seen=frozenset(), indices=()):
+        if isinstance(node, ast.Name):
+            if node.id in seen or node.id not in self.values or '*' in self.values:
+                return False
+            # A named mutable container can change through an alias without
+            # rebinding its name. Its initial elements do not establish str.
+            if any(isinstance(value, (ast.List, ast.Dict)) for value in self.values[node.id]):
+                return False
+            return all(self.string(value, seen | {node.id}, indices) for value in self.values[node.id])
+        if isinstance(node, ast.Subscript):
+            return self.string(node.value, seen, (node.slice, *indices))
+        if indices and isinstance(node, (ast.List, ast.Tuple, ast.Dict)):
+            index, *rest = indices
+            if isinstance(node, ast.Dict):
+                if not isinstance(index, ast.Constant) or any(not isinstance(key, ast.Constant) for key in node.keys):
+                    return False
+                matches = [value for key, value in zip(node.keys, node.values) if key.value == index.value]
+                return bool(matches) and all(self.string(value, seen, tuple(rest)) for value in matches)
+            if isinstance(index, ast.Constant) and type(index.value) is int:
+                if not -len(node.elts) <= index.value < len(node.elts):
+                    return False
+                return self.string(node.elts[index.value], seen, tuple(rest))
+            if isinstance(index, ast.Slice):
+                return bool(rest) and all(self.string(value, seen, tuple(rest[1:])) for value in node.elts)
+            return bool(node.elts) and all(self.string(value, seen, tuple(rest)) for value in node.elts)
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str)
+        if isinstance(node, ast.JoinedStr):
+            return True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self.string(node.left, seen) and self.string(node.right, seen)
+        if isinstance(node, ast.IfExp):
+            return self.string(node.body, seen, indices) and self.string(node.orelse, seen, indices)
+        if isinstance(node, ast.BoolOp):
+            return all(self.string(value, seen, indices) for value in node.values)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                return node.func.id == 'str' and 'str' not in self.values and '*' not in self.values
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr in {'decode', 'read_text'}:
+                    return True
+                return (node.func.attr in {'capitalize', 'casefold', 'center', 'expandtabs', 'format', 'format_map',
+                                          'join', 'ljust', 'lower', 'lstrip', 'removeprefix', 'removesuffix', 'replace',
+                                          'rjust', 'rstrip', 'strip', 'swapcase', 'title', 'translate', 'upper', 'zfill'}
+                        and self.string(node.func.value, seen))
+        return False
+
+    def receiver(self, node):
+        root = node
+        while isinstance(root, ast.Subscript):
+            root = root.value
+        # The committed allowance includes injected names and parameters with
+        # no binding anywhere in the module. A binding in any scope ends it.
+        if (isinstance(root, ast.Name) and root.id not in self.values and '*' not in self.values
+                and root.id not in {'os', 'shutil', 'tempfile', 'pathlib', 'json', 'builtins'}):
+            return True
+        return self.string(node)
+
+
 def unguarded_calls(source):
     """Admit named collaborator operations; refuse unknown or indirect calls."""
     tree = ast.parse(source)
     analysis = _Bindings(tree)
+    strings = _TextBindings(tree)
     bindings = analysis.origins
     # Retain the earlier import-map refusals alongside lexical allowances.
     imports = {alias.asname or alias.name.split('.')[0]: alias.name
@@ -493,15 +617,7 @@ def unguarded_calls(source):
         if not (isinstance(node, ast.Attribute) and node.attr == 'replace'
                 and isinstance(parent, ast.Call) and parent.func is node and len(parent.args) >= 2):
             return False
-        root = node.value
-        if analysis.module_value(root):
-            return False
-        if any(isinstance(child, ast.Name) and (child.id in imports or bindings.get(child) is not None)
-               for child in ast.walk(root)):
-            return False
-        return (isinstance(root, (ast.Constant, ast.JoinedStr, ast.Subscript))
-                or isinstance(root, ast.Name) and root.id in {'text', 'data'}
-                or isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute) and root.func.attr == 'replace')
+        return strings.receiver(node.value)
 
     def allowed(node, *, captured=False):
         return permitted(node, captured=captured, scoped=True) and permitted(node, captured=captured, scoped=False)

@@ -291,7 +291,24 @@ def on_prompt(event: dict) -> dict:
         return {}
     from g6.harness import completion_loop as loop
 
-    return _context(loop.prepare(asked["repo"], task, asked["base"], session), task)
+    try:
+        return _context(loop.prepare(asked["repo"], task, asked["base"], session), task)
+    except OSError as exc:
+        try:
+            state = dict(exc.state)
+        except AttributeError:
+            raise exc from None
+        return _context("G6's completion loop stopped, so this work is not tested: " +
+                        _storage_error_text(exc, state), task)
+
+
+def _storage_error_text(error: Exception, state: dict) -> str:
+    from g6.harness.completion_loop import attempted
+
+    total = attempted(state)
+    count = (f'Up to {total} request(s) of this run may have gone out.' if total is not None else
+             'The send count of this run is unknown.')
+    return f'{count} {error}'
 
 
 def on_stop(event: dict) -> dict:
@@ -314,11 +331,7 @@ def on_stop(event: dict) -> dict:
             state = dict(exc.state)
         except AttributeError:
             raise exc from None
-        from g6.harness.completion_loop import attempted
-        total = attempted(state)
-        count = (f' Up to {total} request(s) of this run may have gone out.' if total is not None else
-                 ' The send count of this run is unknown.')
-        return {'systemMessage': str(exc) + count}
+        return {'systemMessage': _storage_error_text(exc, state)}
     except Exception as exc:  # noqa: BLE001 - only coded G6 refusals become hook messages
         code = code_of(exc)
         if code == 'unknown':
@@ -468,7 +481,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, the person's turn ends
         if args[0] == "tool":
             return 0                 # this optional hint has no completion-loop verdict
-        why = " ".join(f"{type(exc).__name__}: {exc}".split())
+        try:
+            detail = _storage_error_text(exc, dict(exc.state))
+        except AttributeError:
+            detail = str(exc)
+        why = " ".join(f"{type(exc).__name__}: {detail}".split())
         print(f"G6's completion loop stopped, so this work is not tested: {why}"[:300], file=sys.stderr)
         return 1
     if said:

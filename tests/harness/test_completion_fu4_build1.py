@@ -453,3 +453,37 @@ def test_repair1_amendment2_reads_preserve_spares_no_restore_marker_owns(tmp_pat
         store.retained_paths(tmp_path / spare_name.removesuffix('.new'))
         assert spare.read_bytes() == body
         assert (spare.stat().st_dev, spare.stat().st_ino) == identity
+
+
+def test_repair2_prompt_prints_the_send_bound_before_a_long_storage_path(monkeypatch, capsys):
+    import io
+    from types import SimpleNamespace
+
+    from g6.harness import completion_hook as hook
+
+    error = loop._call_read_error(
+        PermissionError(errno.EACCES, 'publication held', 'C:/' + 'deep/' * 80 + 'state.json'),
+        {loop.ATTEMPTED: 1, 'call_requests': 1})
+
+    def refused(event):
+        raise error
+
+    monkeypatch.delenv(hook.CHILD, raising=False)
+    monkeypatch.setitem(hook.HOOKS, 'prompt', refused)
+    monkeypatch.setattr(hook.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b'{}')))
+    assert hook.main(['prompt']) == 1
+    shown = capsys.readouterr().err.strip()
+    count = 'Up to 1 request(s) of this run may have gone out.'
+    assert count in shown
+    assert 'not sent' not in shown
+    assert len(shown) <= 300
+    assert 'C:/' not in shown or shown.index(count) < shown.index('C:/')
+
+
+def test_repair2_text_replace_requires_a_proven_string_receiver():
+    assert not unguarded_calls("shown = 'text'.replace('a', 'b')\n")
+    assert not unguarded_calls("shown = text.replace('a', 'b')\n")
+    assert not unguarded_calls("shown = parts[0].replace('a', 'b')\n")
+    assert not unguarded_calls("text = str(value)\nshown = text.replace('a', 'b')\n")
+    assert (2, 'text.replace') in unguarded_calls("text = pick()\nshown = text.replace('a', 'b')\n")
+    assert (2, 'parts[0].replace') in unguarded_calls("parts = list(values)\nshown = parts[0].replace('a', 'b')\n")

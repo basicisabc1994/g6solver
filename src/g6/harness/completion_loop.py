@@ -200,7 +200,7 @@ _SOURCE_STATE: contextvars.ContextVar[cloud.Capture | None] = contextvars.Contex
 
 def literal(text: str) -> str:
     """``text`` for a template that ``format`` fills."""
-    return text.replace("{", "{{").replace("}", "}}")
+    return str(text).replace("{", "{{").replace("}", "}}")
 
 
 @dataclass(frozen=True)
@@ -229,13 +229,13 @@ def harness(path: Path = HARNESS) -> Harness:
 
     def scout(text: str) -> str:
         add = added.get("scout")
-        return text.replace("5. Critique:", f"   {literal(add)}\n5. Critique:", 1) if add else text
+        return str(text).replace("5. Critique:", f"   {literal(add)}\n5. Critique:", 1) if add else text
 
     fixer, repair, critic = added.get("fixer"), added.get("repair"), added.get("critic")
     return Harness(scout(data["scout"]), tuple(scout(text) for text in data["hidden_scouts"]),
                    data["fixer"] + (f"\n\n{fixer}" if fixer else ""),
                    data["repair"] + (f"\n\n{literal(repair)}" if repair else ""),
-                   data["critic"].replace("</task>", f"4. {critic}\n</task>", 1) if critic else data["critic"],
+                   str(data["critic"]).replace("</task>", f"4. {critic}\n</task>", 1) if critic else data["critic"],
                    data["critic_note"], data["review_ask"],
                    (cloud.Source.text(cloud.repository_source(path), "harness-file", json.dumps(data)),)
                    if added or path.resolve() != HARNESS.resolve() else ())
@@ -571,7 +571,7 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             if isinstance(exc, OSError):
                 run = _RUN_COUNT.get()
                 exc = _call_read_error(exc, run.pending if run is not None else None)
-            failed = f"{type(exc).__name__}: {exc}"[:400]
+            failed = f"{type(exc).__name__}: {_storage_error_text(exc)}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
         cloud.record_sources(origins)
         wrong = _gate(where / "tree.json", got)
@@ -858,7 +858,7 @@ def _shown(change: repo_tests.Change, read: repo_tests.DiffRead) -> Shown:
         if old is not None:
             parents.append(f"parent/{shown[0]}:\n" + "".join(sides[0].rows))
             masked_parents.append(f"parent/{sent[0]}:\n" + "".join(
-                shown_line("", row, cuts_of(row, cuts))[1].replace("\n\\ No newline at end of file\n", "")
+                str(shown_line("", row, cuts_of(row, cuts))[1]).replace("\n\\ No newline at end of file\n", "")
                 for row, cuts in zip(sides[0].rows, sides[0].cuts)))
     return Shown("".join(plain), "".join(masked), _hides(marks, names), tuple(parents), tuple(masked_parents))
 
@@ -923,7 +923,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         if isinstance(exc, OSError):
             run = _RUN_COUNT.get()
             exc = _call_read_error(exc, run.pending if run is not None else None)
-        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+        found["error"] = f"{type(exc).__name__}: {_storage_error_text(exc)}"[:400]
     if hidden and found["verdict"] == "none":
         found = {**found, "verdict": "failed", "error": HIDDEN}
     if found["test"]:
@@ -1258,6 +1258,17 @@ def _call_read_error(error: OSError, state: dict | None) -> OSError:
             error = _ReservationFailure('The prior retained publication is waiting for a sharing refusal to clear.')
         error.state = {ATTEMPTED: attempted(state)}
     return error
+
+
+def _storage_error_text(error: Exception) -> str:
+    """Keep call accounting ahead of storage paths, including truncated diagnostics."""
+    try:
+        total = attempted(error.state)
+    except AttributeError:
+        return str(error)
+    count = (f'Up to {total} request(s) of this run may have gone out.' if total is not None else
+             'The send count of this run is unknown.')
+    return f'{count} {error}'
 
 
 def _reply_for(session: Path, step: Step, repo: str, base: str, *, hook: bool = False,
@@ -2084,7 +2095,7 @@ def _advance_counted(repo, task, base, session, scout, critic, said, answered, a
             raise exc from None
         if (not ended_before and retained.get('done')
                 and not (isinstance(retained, _RetainedState) and not retained.readable)):
-            return Step(STOP, str(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
+            return Step(STOP, _storage_error_text(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
                         call_ran=True, settled_here=True, refusal=True)
         if accounting['call_requests']:
             exc.state = {ATTEMPTED: run.total()}
@@ -2113,7 +2124,7 @@ def _advance_counted(repo, task, base, session, scout, critic, said, answered, a
                 publication_code = (OUTSIDE_ROOT if isinstance(publication, PathRefused) else
                                     publication.code if isinstance(publication, WorkspaceRefused) else code)
                 publication_reason = (publication.reason if isinstance(publication, (WorkspaceRefused, PathRefused))
-                                      else str(publication))
+                                      else _storage_error_text(publication))
                 return Step(STOP, publication_reason, publication_code, ending=state.get('ending', 'untested'),
                             call_ran=True, settled_here=True, refusal=True)
             # An unsaved ending cannot replace the original refusal.

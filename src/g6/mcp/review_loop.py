@@ -89,6 +89,12 @@ def _evidence(state: dict, base: str) -> list[dict[str, Any]]:
             for n, one in enumerate(state.get("reviews") or [], 1)]
 
 
+def _storage_error_text(error: OSError, total: int | None) -> str:
+    count = (f'Up to {total} request(s) of this run may have gone out.' if total is not None else
+             'The send count of this run is unknown.')
+    return f'{count} {error}'
+
+
 def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
     from g6.core.door import blocked_reply
@@ -118,7 +124,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             state = dict(exc.state)
         except AttributeError:
             raise exc from None
-        return {**blocked_reply(str(exc), request_id=request_id), 'action': loop.STOP,
+        return {**blocked_reply(_storage_error_text(exc, loop.attempted(state)), request_id=request_id), 'action': loop.STOP,
                 'run_id': folder.name, 'requests_sent': loop.attempted(state)}
     except WorkspaceRefused as exc:
         if exc.code not in (WORKSPACE_BUSY, loop.BUSY):
@@ -141,11 +147,14 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         if code_of(exc) == RESERVATION_UNSAVED:
             return {**blocked_reply(str(exc), request_id=request_id), 'code': RESERVATION_UNSAVED,
                     'run_id': folder.name, 'action': loop.STOP}
+        error_text = str(exc)
         try:
             total = loop.attempted(exc.state)
         except AttributeError:
             pass
-        return {**blocked_reply(str(exc), request_id=request_id),
+        else:
+            error_text = _storage_error_text(exc, total)
+        return {**blocked_reply(error_text, request_id=request_id),
                 'run_id': folder.name, 'action': loop.STOP,
                 **({'requests_sent': total} if total is not None or
                    done.state is not None and done.state.get('call_requests', 0) else {})}
