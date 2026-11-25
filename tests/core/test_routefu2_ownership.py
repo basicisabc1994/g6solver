@@ -2380,3 +2380,67 @@ def test_rejected_reuse_preserves_discovery_cache_evidence_without_promoting_chi
     specs.clear()
     saved.unlink()
     assert _roots(dependencies, SCOPES[2]) == expected
+
+
+@pytest.mark.parametrize("interruption", ("recording-attributes", "recording-entry", "discovery-metadata"))
+@pytest.mark.parametrize("failure", (SystemExit, KeyboardInterrupt, BaseException))
+def test_rejected_reuse_evidence_survives_callback_interruption(
+        _rfu5_r2_describe_server, tmp_path, monkeypatch, interruption, failure):
+    dependencies, specs, families = _rfu5_r2_describe_server
+    source, cache_file, saved = (tmp_path / name for name in ("required.py", "hint.pyc", "saved.py"))
+    source.write_text("value = 73\n", encoding="utf-8")
+    loaded = ModuleType(REQUIRED)
+    loaded.__file__ = str(source)
+    loaded.__spec__ = util.spec_from_file_location(REQUIRED, source)
+    loaded.__spec__.cached = loaded.__cached__ = str(cache_file)
+    monkeypatch.setitem(sys.modules, REQUIRED, loaded)
+    assert families.describe("load_state")["available"] is True
+    if interruption == "discovery-metadata":
+        # Only root discovery owns this cache hint; startup merely covers it.
+        target = cache_file
+        target.write_bytes(b"required root cache")
+    else:
+        target = source
+        source.rename(tmp_path / "retired.py")
+        source.write_text("value = 74\n", encoding="utf-8")
+    identity = dependencies._stat_identity(target)
+    stat, observed = dependencies._stat_identity, []
+    declarations = dependencies._optional_root_declarations
+
+    def interrupt(*args, **kwargs):
+        assert not dependencies._ownership_lock._is_owned()
+        raise failure("interrupted rejected reuse handoff")
+
+    def attribute(name):
+        if name == "__path__":
+            interrupt()
+        raise AttributeError(name)
+
+    def move_observed_identity(path):
+        result = stat(path)
+        if os.fspath(path) == str(target) and not observed:
+            observed.append(result)
+            target.rename(saved)
+            if interruption == "recording-attributes":
+                loaded.__getattr__ = attribute
+        return result
+
+    def interrupt_discovery(extras, *args):
+        if extras and observed:
+            interrupt()
+        return declarations(extras, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dependencies, "_stat_identity", move_observed_identity)
+        if interruption == "recording-entry":
+            patch.setattr(dependencies, "record_loaded_required_imports", interrupt)
+        elif interruption == "discovery-metadata":
+            patch.setattr(dependencies, "_optional_root_declarations", interrupt_discovery)
+        with pytest.raises(failure, match="interrupted rejected reuse handoff"):
+            families.describe("load_state")
+    assert observed == [identity]
+    if interruption == "recording-attributes":
+        del loaded.__getattr__
+    assert families.describe("load_state")["available"] is True
+    monkeypatch.delitem(sys.modules, REQUIRED)
+    _rfu6_transfer_required_file(dependencies, specs, saved, tmp_path)

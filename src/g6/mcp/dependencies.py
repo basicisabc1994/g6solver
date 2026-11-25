@@ -26,6 +26,10 @@ _ownership_observations: dict[str, dict[str, tuple]] = {}
 # uses these to bind its describe-only shortcut to this boundary's own commits.
 _loaded_required_recordings: dict[str, tuple] = {}
 _loaded_optional_recordings: dict[tuple[str, str], tuple] = {}
+# Reuse probes remain owned here across interrupted callbacks. Loaded recording
+# and root discovery consume independently: coverage is not startup ownership.
+_pending_reuse_evidence: dict[int, tuple[str, tuple, set[str]]] = {}
+_active_reuse_evidence: set[int] = set()
 
 
 class _ExceptionWork:
@@ -753,6 +757,33 @@ def _advance_ownership_generation(before):
         _ownership_generation += 1
 
 
+def _adopt_reuse_evidence(evidence, required_extras):
+    """Retain a handoff before any metadata, module, finder or stat callback."""
+    with _ownership_lock:
+        if evidence is not None and evidence[0] == _declaration_epoch:
+            _pending_reuse_evidence.setdefault(id(evidence), (required_extras, evidence, {"loaded", "discovery"}))
+
+
+def _pending_reuse_snapshot(required_extras, consumer):
+    with _ownership_lock:
+        # An active validator may still append probes. It retains its batch;
+        # another recording cannot release it or consume an incomplete copy.
+        return {token: (*evidence[:3], tuple(evidence[3]))
+                for token, (extras, evidence, remaining) in _pending_reuse_evidence.items()
+                if extras == required_extras and consumer in remaining
+                and token not in _active_reuse_evidence}
+
+
+def _consume_reuse_evidence(pending, consumer):
+    """Release only this recording's committed inputs, under the store lock."""
+    for token in pending:
+        entry = _pending_reuse_evidence.get(token)
+        if entry is not None:
+            entry[2].discard(consumer)
+            if not entry[2]:
+                del _pending_reuse_evidence[token]
+
+
 def optional_import_roots(extras: str, required_extras: str = "mcp", *,
                           _recording_key: tuple | None = None,
                           _reuse_evidence: tuple | None = None) -> frozenset[str]:
@@ -760,27 +791,34 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
     # Metadata, finders and module/spec attributes can execute import code.
     # None may run while another importer waits for our ownership store.
     extras, required_extras = _plain_text(extras), _plain_text(required_extras)
+    _adopt_reuse_evidence(_reuse_evidence, required_extras)
     with _ownership_lock:
         # A rejected declaration or a contended pass cannot reuse an earlier
         # completion token, even when no ownership state ultimately changed.
         _loaded_optional_recordings.pop((extras, required_extras), None)
     attempts = []
     attempt_epoch = None
+    pending = {}
     for _ in range(2):
         generation, epoch, paths = _ownership_snapshot()
         if epoch != attempt_epoch:
             attempts.clear()  # Only an explicit clear supersedes gathered facts.
+            pending.clear()
             attempt_epoch = epoch
+        available = _pending_reuse_snapshot(required_extras, "discovery")
         optional, required = _optional_root_declarations(extras, required_extras, epoch)
         try:
             optional = {_plain_text(root) for root in optional}
             required = {_plain_text(root) for root in required}
         except Exception:
             return frozenset()  # An unusable declaration cannot establish optionality.
-        if not attempts and _reuse_evidence is not None and _reuse_evidence[0] == epoch:
-            # Root discovery owns cache observations independently of startup.
-            # Reuse has already taken these stats; retain their original tickets.
-            attempts.append(_reuse_probe_observations(*_reuse_evidence[1:], cache_roots=required))
+        # Root discovery owns cache observations independently of startup.
+        # Reuse has already taken these stats; retain their original tickets.
+        available = {token: evidence for token, evidence in available.items()
+                     if evidence[0] == epoch and token not in pending}
+        attempts.extend(_reuse_probe_observations(*evidence[1:], cache_roots=required)
+                        for evidence in available.values())
+        pending.update(available)
         refresh = _path_refresh_observations(paths)
         observations = _root_observations(optional | required)
         _observe_current_sources(refresh, observations)
@@ -794,6 +832,7 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
                 optional = _without_required_aliases(optional, required)
             result = _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
             _advance_ownership_generation(before)
+            _consume_reuse_evidence(pending, "discovery")
             complete = (_recording_key is not None and len(attempts) == 1
                         and _recording_key[:2] == (epoch, generation)
                         and _loaded_required_recordings.get(required_extras) == _recording_key)
@@ -825,6 +864,7 @@ def optional_import_roots(extras: str, required_extras: str = "mcp", *,
                 optional = _without_required_aliases(optional, required)
             _without_observed_aliases(optional, required, observations, refresh, previous=attempts[:-1])
             _advance_ownership_generation(before)
+            _consume_reuse_evidence(pending, "discovery")
     return frozenset()
 
 
@@ -984,29 +1024,48 @@ def _loaded_required_recording_current(key: tuple, required_extras: str = "mcp",
         return False
     with _ownership_lock:
         if (key[:2] != (_declaration_epoch, _ownership_generation)
-                or _loaded_required_recordings.get(required_extras) != key):
+                or _loaded_required_recordings.get(required_extras) != key
+                or any(extras == required_extras for extras, _, _ in _pending_reuse_evidence.values())):
             return False
-        paths = _required_paths.union(*_known_paths.values()) if _rejected is not None else ()
-    probes = []
+        probes = []
+        token = None
+        if _rejected is not None:
+            # Boolean-only callers do not request a recording handoff. Every
+            # describe reuse supplies this collector and journals before probing.
+            evidence = key[0], key[2], _required_paths.union(*_known_paths.values()), probes
+            token = id(evidence)
+            _pending_reuse_evidence[token] = required_extras, evidence, {"loaded", "discovery"}
+            _active_reuse_evidence.add(token)
     # Capture all inputs before probing. Recheck only the same fingerprint and
     # store guards afterward; no ownership collection or extra stat is hidden
     # in those comparisons. A second pass is necessary: the first stat can
     # return the old identity after a replacement has already taken its place.
-    for _ in range(2):
-        current = _recording_spellings_current(key[3], probes=probes)
-        if current:
-            current = key[:3] == _loaded_required_recording_key(required_extras)
-        if current:
+    accepted = False
+    try:
+        for _ in range(2):
+            current = _recording_spellings_current(key[3], probes=probes)
+            if current:
+                current = key[:3] == _loaded_required_recording_key(required_extras)
+            if current:
+                with _ownership_lock:
+                    current = (key[:2] == (_declaration_epoch, _ownership_generation)
+                               and _loaded_required_recordings.get(required_extras) == key
+                               and not any(other != token and extras == required_extras
+                                           for other, (extras, _, _) in _pending_reuse_evidence.items()))
+            if not current:
+                if _rejected is not None:
+                    _rejected.append(evidence)
+                return False
+        accepted = True
+        return True
+    finally:
+        if token is not None:
             with _ownership_lock:
-                current = (key[:2] == (_declaration_epoch, _ownership_generation)
-                           and _loaded_required_recordings.get(required_extras) == key)
-        if not current:
-            if _rejected is not None:
-                # Deliver every probe, including earlier matching identities and
-                # coverage-only hints. Only an explicit clear may supersede it.
-                _rejected.append((key[0], key[2], paths, probes))
-            return False
-    return True
+                _active_reuse_evidence.discard(token)
+                if accepted:
+                    # An unchanged successful validation has no rejected evidence.
+                    # Every interruption or rejection leaves the batch for recording.
+                    _pending_reuse_evidence.pop(token, None)
 
 
 def _reuse_probe_observations(fingerprint, paths, probes, *, cache_roots=None):
@@ -1049,9 +1108,11 @@ def record_loaded_required_imports(required_extras: str = "mcp", *,
                                   _reuse_evidence: tuple | None = None) -> tuple | None:
     """Fully refresh a load's required modules and descendants on every direct call."""
     required_extras = _plain_text(required_extras)
+    _adopt_reuse_evidence(_reuse_evidence, required_extras)
     with _ownership_lock:
         epoch = _declaration_epoch
         _loaded_required_recordings.pop(required_extras, None)
+    pending = _pending_reuse_snapshot(required_extras, "loaded")
     _, required = _optional_root_declarations("", required_extras, epoch)
     try:
         required = {_plain_text(root) for root in required}
@@ -1068,9 +1129,8 @@ def record_loaded_required_imports(required_extras: str = "mcp", *,
         identity, established = _root_identities(root, observed, absent, locations=copied,
                                                 live_paths=live, ordered_paths=ordered)
         observations[root] = identity, established, observed, absent, live, ordered
-    attempts = []
-    if _reuse_evidence is not None and _reuse_evidence[0] == epoch:
-        attempts.append(_reuse_probe_observations(*_reuse_evidence[1:]))
+    attempts = [_reuse_probe_observations(*evidence[1:])
+                for evidence in pending.values() if evidence[0] == epoch]
     for _ in range(2):
         refresh = _path_refresh_observations(paths)
         recording_refresh = refresh
@@ -1083,6 +1143,7 @@ def record_loaded_required_imports(required_extras: str = "mcp", *,
                 _refresh_path_ownership(refresh)
                 _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
                 _advance_ownership_generation(before)
+                _consume_reuse_evidence(pending, "loaded")
                 committed_generation, owned = _ownership_generation, _required_paths.copy()
                 break
         attempts.append(({}, refresh))
@@ -1112,6 +1173,7 @@ def record_loaded_required_imports(required_extras: str = "mcp", *,
             _refresh_path_ownership(refresh)
             _without_required_aliases(set(), {root: values[2] for root, values in reconciled.items()})
             _advance_ownership_generation(before)
+            _consume_reuse_evidence(pending, "loaded")
             # A fallback retained evidence but did not obtain a stable recording.
             # Leave the next successful-load boundary eligible for a full pass.
             _loaded_required_recordings.pop(required_extras, None)
@@ -1172,6 +1234,8 @@ def _clear_optional_roots():
         _ownership_observations.clear()
         _loaded_required_recordings.clear()
         _loaded_optional_recordings.clear()
+        _pending_reuse_evidence.clear()
+        _active_reuse_evidence.clear()
 
 
 # Explicit clearing resets declarations and process-wide file ownership together.
