@@ -28,10 +28,11 @@ PUBLICATION_WAIT = 0.3
 _LOCKS = contextvars.ContextVar('completion_publication_locks', default=())
 _ATTEMPT = contextvars.ContextVar('completion_publication_attempt', default=None)
 _TASK_WRITE = contextvars.ContextVar('completion_task_write', default=None)
+_STAGING_ERRORS: dict[Path, str] = {}
 
 
 @contextmanager
-def _locked(target: Path) -> Iterator[None]:
+def _locked(target: Path, *, sweep: bool = True) -> Iterator[None]:
     """Every destination's producers and restorers use the same OS mutex."""
     target = path(target)
     mkdir(target.parent, parents=True, exist_ok=True)
@@ -69,6 +70,8 @@ def _locked(target: Path) -> Iterator[None]:
         active = [True]
         token = _LOCKS.set((*held, (identity, active)))
         try:
+            if sweep and not run_owned:
+                _sweep_staging()
             yield
         finally:
             active[0] = False
@@ -94,8 +97,6 @@ class _Publication:
     def wrote(self, target: Path, body: bytes) -> None:
         if target in self.written:
             self.written[target] = body
-        else:
-            self.spares[target] = (body, _file_identity(target))
 
 
 class _TaskWrite:
@@ -190,6 +191,7 @@ def mkdir(folder: Path, **kwargs) -> None:
 
 def write_bytes(target: Path, body: bytes) -> None:
     with _mutation(target) as attempt:
+        _reserve_spare(target, attempt)
         path(target).write_bytes(body)
         if attempt is not None:
             attempt.wrote(path(target), body)
@@ -197,6 +199,7 @@ def write_bytes(target: Path, body: bytes) -> None:
 
 def write_text(target: Path, text: str, **kwargs) -> None:
     with _mutation(target) as attempt:
+        _reserve_spare(target, attempt)
         path(target).write_text(text, **kwargs)
         if attempt is not None:
             attempt.wrote(path(target), path(target).read_bytes())
@@ -221,15 +224,34 @@ def retained_paths(target: Path) -> tuple[Path, ...]:
                                   receipt.with_name(receipt.name + '.new')))
 
 
-def _file_identity(target: Path) -> tuple[int, int, int]:
+def _file_identity(target: Path) -> tuple[int, int]:
     status = path(target).stat()
-    return status.st_dev, status.st_ino, status.st_mtime_ns
+    return status.st_dev, status.st_ino
+
+
+def _reserve_spare(target: Path, attempt: _Publication | None) -> None:
+    target = path(target)
+    if attempt is None or target not in retained_paths(attempt.target)[2:]:
+        return
+    if target.is_file() and attempt.spares.get(target) == _file_identity(target):
+        return
+    # Reuse the gate's descriptor writer to create an empty spare exclusively.
+    # It records the opened file's identity before any content can fail to write.
+    append_text(target, '', exclusive=True)
+
+
+class _RetainedPath(type(Path())):
+    """Route the bound producer's spare writes through creation ownership."""
+
+    def write_bytes(self, body: bytes) -> int:
+        write_bytes(Path(self), body)
+        return len(body)
 
 
 def _remove_spares(spares: dict) -> None:
-    for item, (body, identity) in spares.items():
+    for item, identity in spares.items():
         item = path(item)
-        if item.is_file() and _file_identity(item) == identity and item.read_bytes() == body:
+        if item.is_file() and _file_identity(item) == identity:
             unlink(item)
 
 
@@ -253,7 +275,7 @@ def _restore_retained(target: Path, previous: dict[Path, bytes | None], *,
             else:
                 spare = content_spare if item == target else receipt_spare
                 write_bytes(spare, old)
-                owned_spares[spare] = (old, _file_identity(spare))
+                owned_spares[spare] = _file_identity(spare)
                 replace(spare, item)
         _remove_spares(owned_spares)
 
@@ -294,6 +316,8 @@ def write_retained(target: Path, body: bytes) -> None:
             write_bytes(prepared_receipt, cloud.sha256(body).encode('ascii'))
             # Publish the same already-serialized bytes. Preparation has no
             # authority to replace them with bytes read back from scratch.
+        # The home-lock path sweeps before publishing. Run-owned writes keep
+        # their run mutex; a prompt can save its new run before staging a task.
         with _locked(target):
             attempt = _Publication(target)
             if task is not None and task.includes(target):
@@ -304,7 +328,7 @@ def write_retained(target: Path, body: bytes) -> None:
                 while True:
                     try:
                         retained_paths(target)
-                        cloud.write_retained(target, body)
+                        cloud.write_retained(_RetainedPath(target), body)
                         attempt.written = {target: body, receipt: cloud.sha256(body).encode('ascii')}
                         return
                     except OSError as exc:
@@ -317,10 +341,6 @@ def write_retained(target: Path, body: bytes) -> None:
                         else:
                             # Do not adopt another producer's bytes as ours.
                             attempt.written = completed
-                        if owned:
-                            for spare, expected in ((content_spare, body), (receipt_spare, completed[receipt])):
-                                if path(spare).is_file() and path(spare).read_bytes() == expected:
-                                    attempt.spares[spare] = (expected, _file_identity(spare))
                         sharing = isinstance(exc, PermissionError) and (
                             exc.errno in (errno.EACCES, errno.EPERM) or getattr(exc, 'winerror', None) in (5, 32, 33))
                         if sharing and owned and time.monotonic() < deadline:
@@ -337,8 +357,41 @@ def write_retained(target: Path, body: bytes) -> None:
         if staging is not None:
             try:
                 remove_tree(staging)
+            except Exception as exc:
+                _defer_staging(staging, exc)
             finally:
                 task.staging = None
+
+
+def _defer_staging(staging: Path, error: Exception) -> None:
+    # A cleanup error must never escape into the caller's publication rollback,
+    # including an error while persisting its sweep record.
+    _STAGING_ERRORS[staging] = str(error)
+    try:
+        with _locked(home_path('completion_staging'), sweep=False):
+            write_text(staging.with_name(staging.name + '.cleanup'), str(error), encoding='utf-8')
+    except Exception:
+        pass
+
+
+def _sweep_staging() -> None:
+    root = home_path('completion_staging')
+    with _locked(root, sweep=False):
+        if not root.is_dir():
+            return
+        # Only a failed cleanup authorizes sweeping. An unmarked directory may
+        # belong to another process still preparing or paused before cleanup.
+        pending = {item.with_name(item.name.removesuffix('.cleanup')) for item in root.iterdir()
+                   if item.name.endswith('.cleanup') and item.is_file()}
+        pending.update(item for item in _STAGING_ERRORS if item.parent == root)
+        for child in pending:
+            try:
+                remove_tree(path(child))
+                unlink(child.with_name(child.name + '.cleanup'), missing_ok=True)
+            except (OSError, WorkspaceRefused) as exc:
+                _STAGING_ERRORS[child] = str(exc)
+            else:
+                _STAGING_ERRORS.pop(child, None)
 
 
 def sync_state(session: Path, names: tuple[str, ...]) -> None:
@@ -374,11 +427,23 @@ def remove_tree(folder: Path) -> None:
             raise
 
 
-def append_text(target: Path, text: str) -> None:
-    with _locked(target):
-        with os.fdopen(os.open(path(target), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600),
-                       'a', encoding='utf-8', newline='\n') as out:
-            out.write(text)
+def append_text(target: Path, text: str, *, exclusive: bool = False) -> None:
+    with _mutation(target) as attempt:
+        flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_APPEND)
+        fd = os.open(path(target), flags, 0o600)
+        try:
+            if exclusive and attempt is not None:
+                opened = os.fstat(fd)
+                attempt.spares[path(target)] = (opened.st_dev, opened.st_ino)
+            stream = os.fdopen(fd, 'a', encoding='utf-8', newline='\n')
+        except BaseException:
+            os.close(fd)
+            raise
+        with stream as out:
+            # Exclusive creation already reserves the empty spare. A wrapped
+            # row writer may only accept complete nonempty rows.
+            if text or not exclusive:
+                out.write(text)
 
 
 def replace(source: Path, target: Path) -> None:
