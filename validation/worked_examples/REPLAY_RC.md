@@ -100,6 +100,12 @@ start row. They detect mismatched saved evidence; they do not authenticate its
 author. A version/digest test binds the evidence rule's code to its version so
 an honest rule change must also raise that version.
 
+Without a source, folders with names that differ only in case, or a deliberately
+assigned DOS short name, cannot always be told apart. With a source on a POSIX
+filesystem that ignores case, two real folders swapped under one name between
+the separate closing name checks can each answer one spelling. Holding their
+descriptors does not stop those renames; the checks do not close that window.
+
 JSON text is saved with escapes, preserving even lone surrogate escapes in
 captured tool inputs. Dry and live planning use the same evidence enumeration;
 such text is serializable in either route. A failed replay-record finalization
