@@ -21,8 +21,9 @@ batch = synthetic.batch
 
 
 @pytest.fixture
-def tmp_path(request, monkeypatch):
-    base = Path(request.config.getoption("basetemp"))
+def tmp_path(request, monkeypatch, tmp_path_factory):
+    base = (Path(request.config.getoption("basetemp"))
+            if request.config.getoption("basetemp") else tmp_path_factory.getbasetemp())
     try:
         base.mkdir(parents=True, exist_ok=True)
         folder = base / uuid.uuid4().hex

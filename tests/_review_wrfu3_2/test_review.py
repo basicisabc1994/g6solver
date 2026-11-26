@@ -18,8 +18,9 @@ TASK = SimpleNamespace(id="black-5634", repo="/synthetic/project", parent="c" * 
 
 
 @pytest.fixture
-def tmp_path(request):
-    base = Path(request.config.getoption("basetemp"))
+def tmp_path(request, tmp_path_factory):
+    base = (Path(request.config.getoption("basetemp"))
+            if request.config.getoption("basetemp") else tmp_path_factory.getbasetemp())
     base.mkdir(parents=True, exist_ok=True)
     folder = base / uuid.uuid4().hex
     folder.mkdir()
