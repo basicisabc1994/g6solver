@@ -54,10 +54,14 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
     checks = list(checks)
     cache = {}
 
-    def bindings_in(body):
+    def bindings_in(body, *, static_conditions=False):
         bindings = {}
         for node in body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if (static_conditions and isinstance(node, ast.If) and isinstance(node.test, ast.Constant)
+                    and isinstance(node.test.value, bool)):
+                branch = node.body if node.test.value else node.orelse
+                pairs = list(bindings_in(branch, static_conditions=True).items())
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 pairs = [(node.name, ("definition", node))]
             elif isinstance(node, ast.ImportFrom):
                 pairs = [(a.asname or a.name, ("from", (node, a.name))) for a in node.names]
@@ -67,10 +71,12 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 pairs = [(t.id, ("value", node.value)) for t in targets if isinstance(t, ast.Name)]
+                pairs += [(n.id, ("unknown", None)) for t in targets if not isinstance(t, ast.Name)
+                          for n in ast.walk(t) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
             else:
                 # Conditional/runtime bindings are deliberately not evaluated.
                 pairs = [(n.id, ("unknown", None)) for n in ast.walk(node)
-                         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+                         if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))]
                 pairs += [(a.asname or a.name.split(".")[0], ("unknown", None))
                           for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))
                           for a in n.names]
@@ -129,9 +135,12 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
         dependency_scanned = set()
         function_active = set()
         local_active = set()
+        local_class_scopes = {}
         receivers = []
         classes = []
         collected_classes = set()
+        fixture_audited = set()
+        fixture_rebound = False
         plugins, plugin_scanned = [], set()
         collector = top / file
         conftests = []
@@ -238,6 +247,10 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 return definition_source(path, (*parts_of(value), *parts[1:]), seen)
             return None
 
+        def builtin_base(path, node):
+            return (isinstance(node, ast.Name) and node.id in {"object", "type"}
+                    and node.id not in read(path)[2])
+
         def class_order(scope, seen=frozenset()):
             # Python's C3 order is static when every base names a definite class.
             if scope in seen:
@@ -245,7 +258,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             source, node = scope
             bases = []
             for base in node.bases:
-                if isinstance(base, ast.Name) and base.id in {"object", "type"}:
+                if builtin_base(source, base):
                     continue
                 target = definition_source(source, parts_of(base))
                 if target is None or not isinstance(target[1], ast.ClassDef):
@@ -404,6 +417,11 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             inner test wrappers returned by an applied decorator (R3'/R5').
             """
             nested = nested or {}
+            if (isinstance(node, ast.If) and isinstance(node.test, ast.Constant)
+                    and isinstance(node.test.value, bool)):
+                for statement in node.body if node.test.value else node.orelse:
+                    dependencies(path, statement, locals_, nested, role)
+                return
             if isinstance(node, ast.Return):
                 if node.value is not None:
                     dependencies(path, node.value, locals_, nested, role, role == "decorator")
@@ -497,7 +515,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                         raise ValueError("unresolved collection-local attribute")
                     return
                 if parts and parts[0] in nested and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    if not wrapper_return:
+                    if not (wrapper_return and isinstance(nested[parts[0]], (ast.FunctionDef, ast.AsyncFunctionDef))):
                         local_reference(path, parts[0], locals_, nested,
                                         "decorator" if role == "decorator_factory" else "call")
                     return
@@ -520,8 +538,27 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             local_active.add(key)
             try:
                 value = nested[name]
-                if isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if not recognised_fixture(path, value):
+                if value is None:
+                    raise ValueError("unresolved collection-local reference")
+                if isinstance(value, ast.ClassDef):
+                    # A closure base needs a lexical class scope we cannot yet
+                    # resolve. Never mistake a local object/type for a builtin.
+                    headers = [*value.bases, *value.decorator_list, *(k.value for k in value.keywords)]
+                    for member in value.body:
+                        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            headers.extend((*member.decorator_list, *member.args.defaults,
+                                            *(d for d in member.args.kw_defaults if d is not None)))
+                    if any(name_loads(header) & locals_ for header in headers):
+                        raise ValueError("unresolved collection-local class header")
+                    source = path[0] if isinstance(path, tuple) else path
+                    scope = source, value
+                    local_class_scopes[scope] = locals_, nested
+                    try:
+                        definition(path, value, role)
+                    finally:
+                        local_class_scopes.pop(scope)
+                elif isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not recognised_fixture(path, value, locals_):
                         collection_function(path, value, role, locals_, nested)
                 else:
                     dependencies(path, value, locals_, nested, role)
@@ -538,10 +575,15 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             if receiver:
                 receivers.append((arguments[0].arg, path))
             try:
-                local = bindings_in(node.body)
-                nested = {**(nested or {}), **{name: value for name, (kind, value) in local.items()
-                                              if kind in {"definition", "value"} and value is not None
-                                              and not isinstance(value, ast.ClassDef)}}
+                if path in local_class_scopes:
+                    closure, captured = local_class_scopes[path]
+                    outer = outer | closure
+                    nested = {**captured, **(nested or {})}
+                local = bindings_in(node.body, static_conditions=True)
+                # Retain unknown locals as explicit gaps, also shadowing outer
+                # bindings. Missing/conditional bodies must never vanish (F3').
+                nested = {**(nested or {}), **{name: value if kind in {"definition", "value"} else None
+                                              for name, (kind, value) in local.items()}}
                 names = outer | set(local) | {a.arg for a in (*node.args.posonlyargs, *node.args.args,
                                                             *node.args.kwonlyargs)}
                 names |= {a.arg for a in (node.args.vararg, node.args.kwarg) if a}
@@ -588,8 +630,62 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 dependencies(path, statement)
             unused_imports(path, tree, bindings)
 
-        def recognised_fixture(path, node):
-            return any(qualified(path, d.func if isinstance(d, ast.Call) else d) == "pytest.fixture"
+        def fixture_decorator(path, node, locals_=frozenset()):
+            if qualified(path, node) != "pytest.fixture" or parts_of(node)[0] in locals_:
+                return False
+            # Imports can mutate pytest before a decorator is applied, including
+            # unused imports in defining modules. Audit their source without
+            # treating test-time product bodies as identity dependencies. Any
+            # possible fixture-attribute write defeats the exemption; do not
+            # infer execution order or try to prove a mutation harmless.
+            nonlocal fixture_rebound
+            owner = path[0] if isinstance(path, tuple) else path
+            pending = [collector, *conftests, *plugins, owner]
+            while pending:
+                source = pending.pop()
+                if source in fixture_audited:
+                    continue
+                fixture_audited.add(source)
+                tree = read(source)[1]
+                if any(isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del))
+                       and (n.attr == "fixture" or qualified(source, n).startswith("pytest.fixture."))
+                       or isinstance(n, ast.Attribute) and n.attr == "__dict__"
+                       and qualified(source, n) == "pytest.__dict__"
+                       or isinstance(n, ast.Subscript) and isinstance(n.ctx, (ast.Store, ast.Del))
+                       and isinstance(n.slice, ast.Constant) and n.slice.value == "fixture"
+                       for n in ast.walk(tree)):
+                    fixture_rebound = True
+                statements = list(tree.body)
+                while statements:
+                    statement = statements.pop()
+                    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                        continue
+                    if isinstance(statement, ast.ImportFrom):
+                        imported = module(source, statement.module or "", statement.level)
+                        if imported:
+                            pending.append(imported)
+                            if imported.name == "__init__.py":
+                                for alias in statement.names:
+                                    child = module(imported, alias.name, 1)
+                                    if child:
+                                        pending.append(child)
+                    elif isinstance(statement, ast.Import):
+                        for alias in statement.names:
+                            imported = module(source, alias.name)
+                            if imported:
+                                pending.append(imported)
+                    statements.extend(ast.iter_child_nodes(statement))
+                # Package initializers execute before the imported module too.
+                for folder in source.parents:
+                    if folder == top or not folder.is_relative_to(top):
+                        break
+                    initializer = folder / "__init__.py"
+                    if initializer.is_file():
+                        pending.append(initializer)
+            return not fixture_rebound
+
+        def recognised_fixture(path, node, locals_=frozenset()):
+            return any(fixture_decorator(path, d.func if isinstance(d, ast.Call) else d, locals_)
                        for d in node.decorator_list)
 
         def fixture_options(path, name):
@@ -599,7 +695,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 path, value = target
                 for decorator in value.decorator_list:
                     target = decorator.func if isinstance(decorator, ast.Call) else decorator
-                    if qualified(path, target) == "pytest.fixture":
+                    if fixture_decorator(path, target):
                         options = {"fixture": True}
                         for keyword in decorator.keywords if isinstance(decorator, ast.Call) else ():
                             if keyword.arg in {"name", "autouse"}:
@@ -686,7 +782,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 direct.update(mark_names(path, decorator))
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
-                    if not isinstance(base, ast.Name) or base.id not in {"object", "type"}:
+                    if not builtin_base(path, base):
                         expression(path, base, "test" if role == "test" else
                                    role if role in {"call", "metaclass", "base"} else "value")
                         if role == "test":
