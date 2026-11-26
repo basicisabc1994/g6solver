@@ -166,7 +166,7 @@ def refused() -> dict | None:
 def _elsewhere_folder(folder: Any) -> dict | None:
     """A network or device folder, refused on its words before anything asks the file system about it
     (``storage._elsewhere``, as ``repo_tests.checked_repo``): asking Windows about a share opens it over the network.
-    A stop never asks this: it must reach any runner, wherever its folder is."""
+    A stop asks it too (the owner's ruling, 2026-11-26): no runner can start on a share, so none is there to stop."""
     from g6.core.storage import _elsewhere
 
     why = _elsewhere(folder) if isinstance(folder, str) else None
@@ -1129,7 +1129,12 @@ def stop(folder: str, reason: str = "") -> dict:
     stop's canonical record stands. Every statement runs inside its one handler, as in the dialog and the start, and a
     check that cannot be made never keeps the stop from being written: a folder whose check fails is taken for a loop's
     (``_looped``). A folder that cannot be found, or anything else that escapes the stop's own receipt, says so
-    (``STOP_FAILED``), with the denial still in force."""
+    (``STOP_FAILED``), with the denial still in force. A network or device folder is refused on its words first
+    (``_elsewhere_folder``): no runner can start on one (the start refuses it), so there is nothing there to stop, and
+    stopping would open the share and write there. A runner an earlier version enrolled on a share is stopped by
+    writing its STOP file locally (a stated limit)."""
+    if (away := _elsewhere_folder(folder)) is not None:
+        return away
     root, running = folder, None            # the folder as given, for a reply before it is found
     try:
         denial = _begin_stop(folder)

@@ -97,12 +97,14 @@ def test_the_workflow_tools_refuse_a_share_before_asking_about_it(share_calls, s
 
 
 @pytest.mark.parametrize("share", SHARES)
-@pytest.mark.parametrize("ask", ["status", "start", "enrol"])
+@pytest.mark.parametrize("ask", ["status", "start", "enrol", "stop"])
 def test_the_self_improvement_tools_refuse_a_share_before_asking_about_it(share_calls, share, ask):
+    """A stop too: no runner can be started on a share (start refuses one), so there is nothing there to stop, and a
+    stop would open the share and write its STOP file there."""
     from g6.mcp import improve
 
     reply = {"status": lambda: improve.status(share), "start": lambda: improve.asked(share),
-             "enrol": lambda: improve.asked_act("enrol", share)}[ask]()
+             "enrol": lambda: improve.asked_act("enrol", share), "stop": lambda: improve.stop(share, "done")}[ask]()
     assert isinstance(reply, dict) and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == improve.NOT_A_FOLDER
     assert share_calls == []
