@@ -343,13 +343,24 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
 
 def finish(found: Any, job_id: str) -> Any:
     """What ``metaharness_job`` returns for a finished submission: the review's compact reply, and the mission's."""
-    shown = review_reply.finish(found, job_id)
     if not isinstance(found, dict) or "mission" not in found:
+        return review_reply.finish(found, job_id)
+    body, original, _ = cloud.freeze_output(found)
+    try:
+        frozen = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
+    shown = review_reply.finish(found, job_id)
+    if not isinstance(frozen, dict) or "mission" not in frozen:
         return shown
-    _, refs, metadata = cloud.freeze_output(shown)
-    original = cloud.output_sources(found)
-    refs = cloud.boundary_sources(carried=(*(refs if refs is not None else (cloud.UNKNOWN,)), *(original or ())))
-    return cloud.bind_output({**shown, "mission": found["mission"]}, refs, metadata=metadata)
+    body, refs, metadata = cloud.freeze_output(shown)
+    try:
+        shown = json.loads(body)
+    except (RecursionError, MemoryError):
+        raise ValueError("a JSON record exceeds decoder limits") from None
+    refs = cloud.boundary_sources(carried=(*(refs if refs is not None else (cloud.UNKNOWN,)),
+                                           *(original if original is not None else (cloud.UNKNOWN,))))
+    return cloud.bind_output({**shown, "mission": frozen["mission"]}, refs, metadata=metadata)
 
 
 def status(mission_id: str, detail: str = "summary") -> dict:
