@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import threading
 import time
 
+from g6.core.component_process import ContainmentFailure, ExecutionInterrupted
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
 from g6.distill.ledger import Stores
@@ -99,6 +100,8 @@ def check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "", 
                 try:
                     record_fire(found, before, after)
                     found["field_recorded"] = True
+                except (ExecutionInterrupted, ContainmentFailure):
+                    raise
                 except (LedgerError, OSError):
                     found["field_recorded"] = False
                     found["field_note"] = "The unlabelled field fire could not be retained; no field evidence was added."
