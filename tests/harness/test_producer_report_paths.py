@@ -314,6 +314,18 @@ def test_an_invalid_no_phase_report_cannot_be_sanitized_by_projection(process, m
 def test_all_report_return_sites_use_an_exercised_builder():
     tree = ast.parse(Path(rt.__file__).read_text(encoding="utf-8"))
     functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    # Collection-only returns have their own schema and coverage in
+    # test_change_map_collection.py. Keep ordinary verdict-return guards exact.
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    def collection_only(node):
+        child = node
+        while child in parents:
+            parent = parents[child]
+            if (isinstance(parent, ast.If) and isinstance(parent.test, ast.Name)
+                    and parent.test.id == "collect_only" and child in parent.body):
+                return True
+            child = parent
+        return False
     # Fail when a new report exit bypasses the builders this file executes.
     for name in ("run", "_run", "run_before", "run_at_base"):
         nested = [node for node in ast.walk(functions[name]) if isinstance(node, ast.FunctionDef)
@@ -324,6 +336,14 @@ def test_all_report_return_sites_use_an_exercised_builder():
         for node in ast.walk(functions[name]):
             if isinstance(node, ast.Return) and id(node) not in identity_returns:
                 expression = ast.unparse(node.value)
+                if name == "_run" and collection_only(node):
+                    if expression != "collection":
+                        assert isinstance(node.value, ast.Dict)
+                        values = {key.value: value for key, value in zip(node.value.keys, node.value.values)
+                                  if isinstance(key, ast.Constant)}
+                        assert set(values) == {"status", "reason"}
+                        assert ast.literal_eval(values["status"]) == "uncertain"
+                    continue
                 # behaviour_runner.run: the observation exit's builder (``observed``,
                 # test_the_observation_exit_writes_a_record_of_the_schema).
                 assert (expression in ("found", "results") or expression.startswith((

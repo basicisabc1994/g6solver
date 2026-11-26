@@ -4,6 +4,8 @@ from itertools import combinations, permutations
 
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map, patch_review
 from tests.harness.test_change_map import change, mapped, target
 
@@ -102,7 +104,7 @@ def test_selection_subsets_and_orders_equal_each_alone():
 ])
 def test_nested_and_inherited_parametrized_selections(selection):
     node = "test_api.py::" + selection
-    collection = {node: {"status": "available", "nodes": ["test_api.py::TestOuter::TestInner::test_call"]}} \
+    collection = {node: collection_answer({"test_api.py": CHECKS}, {"status": "available", "nodes": ["test_api.py::TestOuter::TestInner::test_call"]})} \
         if selection == "TestOuter::TestInner" else None
     assert change_map.exercised([{"binding": "api.neighbour"}], {node: CHECKS},
                                  collection=collection) == {"api.neighbour": [node]}

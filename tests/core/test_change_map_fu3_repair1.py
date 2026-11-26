@@ -99,7 +99,7 @@ def test_module_lookup_only_on_executed_routes(tmp_path, monkeypatch, hook, argu
     if file == "helper.py":
         files["test_api.py"] = "import helper\n"
     _, usable = inventory(tmp_path, monkeypatch, files)
-    assert usable is (file == "helper.py" or not effect)
+    assert usable is (not effect or file == "helper.py" and hook == "__dir__")
 
 
 @pytest.mark.parametrize("effect", [False, True], ids=["inert", "effect"])
@@ -112,7 +112,7 @@ def test_helper_module_attribute_dispatch(tmp_path, monkeypatch, effect, missing
         "helper.py": source,
         "test_api.py": "import helper\nstr(helper." + ("missing" if missing else "VALUE") + ")\n",
     })
-    assert usable is (not effect or not missing)
+    assert usable is (not effect)
 
 
 @pytest.mark.parametrize("route", ["dataclass-base", "annotation", "with-target", "new-result", "field-set-name"])

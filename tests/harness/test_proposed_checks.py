@@ -37,7 +37,7 @@ TESTS = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 ADD = "test_calc.py::test_add"
 R1 = [{"id": "R1", "text": "add returns the sum of two integers", "checks": [ADD]}]
 COMPLETION = {"demonstrated", "not_established", "defects_reproduced", "preservation", "test_adequacy",
-              "open_questions", "activities"}
+              "open_questions", "activities", "neighbourhood"}
 
 
 def check(ident, intent, file, source, requirement="R1", test=""):
