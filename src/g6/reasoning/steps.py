@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from g6.core.decoder_limits import decode, shaped
 from g6.core.llm import LLMCaller, LLMError
 from g6.reasoning.vote import Candidate, VoteResult, weighted_vote
 
@@ -33,12 +34,14 @@ def _escape_lone_backslashes(blob: str) -> str:
 
 
 def first_json_object(text: str) -> dict:
-    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``."""
+    """The first balanced ``{...}`` in ``text`` that parses as a JSON object. Raises ``ValueError``. A balanced span
+    that does not parse is passed over whole, never an object inside it read as the reply's; a ``{`` never closed, or a
+    span past the decoder's limits (``UndecodableRecord``, a ``ValueError``), raises, since what it holds is not known."""
     if not text:
         raise ValueError("empty response")
     start = text.find("{")
     while start != -1:
-        depth, in_str, esc = 0, False, False
+        depth, in_str, esc, end = 0, False, False, -1
         for i in range(start, len(text)):
             c = text[i]
             if in_str:
@@ -55,19 +58,22 @@ def first_json_object(text: str) -> dict:
             elif c == "}":
                 depth -= 1
                 if depth == 0:
-                    try:
-                        try:
-                            value = json.loads(_escape_lone_backslashes(text[start:i + 1]))
-                        except (RecursionError, MemoryError):
-                            raise ValueError("a JSON record exceeds decoder limits") from None
-                    except json.JSONDecodeError:
-                        break
-                    if isinstance(value, dict):
-                        return value
+                    end = i
                     break
-        start = text.find("{", start + 1)
+        if end == -1:
+            raise ValueError("an object in the response is never closed")
+        try:
+            value = decode(_escape_lone_backslashes(text[start:end + 1]))
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict):
+            return value
+        start = text.find("{", end + 1)
     raise ValueError("no JSON object in response")
 
+
+#: A direct answer in its one shape: text, or a number (an int or a float, never a bool).
+ANSWER_SHAPE = {"answer": (str, int, float)}
 
 SYSTEM = ("Solve the problem. Reply with one JSON object: "
           '{"reasoning": "<brief working>", "answer": "<final answer only>"}')
@@ -82,13 +88,15 @@ class DirectStep:
     max_tokens: int = 4096
 
     def solve(self, problem: str) -> str:
-        """The answer text, or ``""`` when the call failed or the reply has no usable answer (an abstention)."""
+        """The answer text, or ``""`` when the call failed or the reply has no usable answer (an abstention): one whose
+        ``answer`` is not text or a number (``ANSWER_SHAPE``) is not read, never rendered from a bool, a list or an
+        object."""
         try:
             reply = self.llm.complete(self.system, problem, max_tokens=self.max_tokens)
-            answer = first_json_object(reply).get("answer", "")
+            found = first_json_object(reply)
         except (LLMError, ValueError):
             return ""
-        return str(answer).strip() if answer is not None else ""
+        return str(found["answer"]).strip() if shaped(found, ANSWER_SHAPE) else ""
 
 
 def self_consistency(llm: LLMCaller, problem: str, n: int, *,

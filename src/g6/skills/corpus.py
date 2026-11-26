@@ -2,7 +2,8 @@
 """The selector's corpus, as data: one entry for every next call ``g6_select`` can offer (plan revision 8, phase B).
 
 ``corpus.json``, beside this file, is written by ``g6.mcp.corpus_build`` from the code and checked in; a test builds
-it again and compares, so it cannot drift. This module only reads it: it imports the standard library alone, so core
+it again and compares, so it cannot drift. This module only reads it: it imports the standard library and G6's
+guarded JSON decoder (``g6.core.decoder_limits``, itself the standard library alone) and nothing else, so core
 (``g6.core.selector``, ``agent_guidance``, ``refusals``) reads the corpus without importing ``g6.mcp`` or
 ``g6.metaharness``, even indirectly (pyproject's import contracts). ``g6.mcp.corpus_build`` says what the file holds.
 
@@ -10,6 +11,8 @@ it again and compares, so it cannot drift. This module only reads it: it imports
     python -P -m g6.mcp.corpus_build --check     # exit 1 when the file is stale
 """
 from __future__ import annotations
+
+from g6.core.decoder_limits import json_value as _decode_json
 
 import copy
 import json
@@ -61,9 +64,9 @@ def _expanded(data: dict[str, Any]) -> list[dict[str, Any]]:
 @lru_cache(maxsize=1)
 def _loaded(text: str) -> dict[str, Any]:
     try:
-        return json.loads(text)
+        return _decode_json(text)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def load() -> dict[str, Any]:

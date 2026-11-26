@@ -34,6 +34,8 @@ nothing is honoured.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import collections.abc
 import contextvars
 import dataclasses
@@ -573,9 +575,9 @@ def canonical_json(value: Any, *, cap: int | None = None, error: str | None = No
 def record_data(value: Any) -> Any:
     """A record's plain representation, through the bounded canonical encoder."""
     try:
-        return json.loads(canonical_json(value))
+        return _decode_json(canonical_json(value))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def publish(value: T, *, where: str) -> T:
@@ -652,9 +654,9 @@ def plain(value: Any, *, where: str, _depth: int = 0, cap: int | None = None, er
     if found:
         raise NotPlainData(*found)
     try:
-        out = json.loads(canonical_json(value))
+        out = _decode_json(canonical_json(value))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
     return out
@@ -1028,11 +1030,9 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
     try:
-        parsed = json.loads(reply, object_pairs_hook=_unique)
-    except RecursionError:
+        parsed = _decode_json(reply, object_pairs_hook=_unique)
+    except (RecursionError, MemoryError):   # the bridge's own refusal, never a translation it does not catch
         raise _too_deep("a model's reply") from None
-    except MemoryError:
-        raise ValueError("a JSON record exceeds decoder limits") from None
     if preflight is not None:
         preflight(parsed)
     return plain(parsed, where="a model's reply")

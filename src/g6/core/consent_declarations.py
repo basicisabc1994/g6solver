@@ -119,6 +119,18 @@ TOOLS = {
     'g6_feedback': contract('client_request', 'client_workflow_feedback'),
     **{name: contract('client_request', 'client_workflow') for name in (
         'g6_suggestion_decide', 'g6_workflow_correct', 'g6_workflow_delete', 'g6_workflow_export')},
+    'g6_failure_record': contract('client_request'),
+    'g6_distill_start': contract('client_request', 'source:component_data', 'source:host_configuration'),
+    'g6_distill_job': contract('client_request', 'source:jobs'),
+    'g6_library': contract('client_request', 'source:component_data'),
+    'g6_library_decide': contract('client_request'),
+    'g6_self_model': contract('g6_operational'),
+    'g6_simulate': contract('client_request', 'g6_operational'),
+    'g6_extend': contract('client_request', 'client_repository'),
+    'g6_research_start': contract('client_request', 'source:improvement'),
+    'g6_research_stop': contract('client_request', 'source:improvement'),
+    'g6_research_status': contract('client_request', 'source:improvement'),
+    'g6_research_digest': contract('client_request', 'source:improvement'),
 }
 
 def _arguments(content='', pointer=''):
@@ -185,6 +197,18 @@ TOOL_ARGUMENTS = {
     'g6_workflow_correct': _arguments(pointer='repo'),
     'g6_workflow_delete': _arguments('scope task', 'repo run'),
     'g6_workflow_export': _arguments(pointer='repo'),
+    'g6_failure_record': {'kind': 'content', 'family': 'content', 'case_json': 'content', 'note': 'content'},
+    'g6_distill_start': {'family': 'content', 'failure_ids': 'pointer'},
+    'g6_distill_job': {'job_id': 'pointer', 'detail': 'content'},
+    'g6_library': {'op': 'content', 'entry_id': 'pointer'},
+    'g6_library_decide': {'entry_id': 'pointer', 'action': 'content', 'reason': 'content'},
+    'g6_self_model': {'section': 'content', 'detail': 'content'},
+    'g6_simulate': {'action_json': 'content'},
+    'g6_extend': {'request': 'content', 'repo': 'pointer'},
+    'g6_research_start': {'folder': 'pointer'},
+    'g6_research_stop': {'folder': 'pointer', 'reason': 'content'},
+    'g6_research_status': {'folder': 'pointer'},
+    'g6_research_digest': {'folder': 'pointer'},
 }
 
 

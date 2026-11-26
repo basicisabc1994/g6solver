@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2684dad8be2be6406669af15493e5296c9c98c9839db4ff49b46b60b887c1741"
+  },
+  "reason": "merge 5 adds the learn route; no session has run",
+  "digest": "5d440153663b184b684069279502d1ef09bcd1e348c68958195c0d1b2df5aceb"
+}

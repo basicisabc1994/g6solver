@@ -24,7 +24,13 @@ def test_the_reader_core_imports_holds_the_standard_library_alone() -> None:
     tree = ast.parse(Path(corpus.__file__).read_text(encoding="utf-8"))
     imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imported |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
-    assert {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names} == set()
+    # The guarded JSON decoder is a core leaf that imports the standard library alone (lead ruling, rc-int: every
+    # JSON reader goes through it); it is the one G6 module the reader may import.
+    assert {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names} <= {"g6.core.decoder_limits"}
+    leaf = ast.parse((Path(corpus.__file__).parents[1] / "core" / "decoder_limits.py").read_text(encoding="utf-8"))
+    leaf_imports = {alias.name for node in ast.walk(leaf) if isinstance(node, ast.Import) for alias in node.names}
+    leaf_imports |= {node.module or "" for node in ast.walk(leaf) if isinstance(node, ast.ImportFrom)}
+    assert {name for name in leaf_imports if name.split(".")[0] not in sys.stdlib_module_names} == set()
     core = Path(corpus.__file__).parents[1] / "core"
     assert not [path.name for path in core.rglob("*.py") if "corpus_build" in path.read_text(encoding="utf-8")]
 

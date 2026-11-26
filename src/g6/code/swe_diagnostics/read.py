@@ -10,8 +10,9 @@ Every name, command and file name in a result is the repository's own text, whic
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
-import json
 import re
 import tomllib
 from itertools import islice
@@ -91,7 +92,7 @@ def repo_map(folder: Path, roots: _roots.Roots) -> dict[str, Any]:
 
 def _json(path: Path, roots: _roots.Roots) -> dict[str, Any] | None:
     try:
-        value = json.loads(_roots.read_text(path, MAX_FILE_BYTES, roots=roots))
+        value = _decode_json(_roots.read_text(path, MAX_FILE_BYTES, roots=roots))
     except CodeRefused as exc:
         if exc.code == _roots.OUTSIDE_ROOT:
             raise

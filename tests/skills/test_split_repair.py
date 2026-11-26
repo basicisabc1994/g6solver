@@ -133,6 +133,7 @@ def _rendered_paragraphs(text: str) -> list[str]:
             super().__init__()
             self.elements = []
             self.parts, self.paragraphs = [], []
+            self.caption = []
             self.heading_label = False
             self.source = None
 
@@ -147,13 +148,15 @@ def _rendered_paragraphs(text: str) -> list[str]:
 
         def flush(self):
             paragraph = "".join(self.parts)
-            if paragraph.strip():
+            caption = "".join(self.caption)
+            if paragraph.strip() or caption.strip():
                 rendered = Paragraph(paragraph)
+                rendered.caption = caption
                 rendered.source_lines = self.source
                 rendered.label = self.heading_label or bool(
                     self.source and self.source[1] <= front_matter_lines)
                 self.paragraphs.append(rendered)
-            self.parts = []
+            self.parts, self.caption = [], []
             self.source = None
 
         def handle_starttag(self, tag, attrs):
@@ -188,13 +191,12 @@ def _rendered_paragraphs(text: str) -> list[str]:
             if self.elements or self.is_raw():
                 return
             caption = bisect_right(caption_starts, self.position()) - 1
-            if caption >= 0 and self.position() < captions[caption][1]:
-                return
+            in_caption = caption >= 0 and self.position() < captions[caption][1]
             index = bisect_right(starts, self.position()) - 1
             source = spans[index][2] if index >= 0 else None
             if source:
                 self.source = source
-            self.parts.append(data)
+            (self.caption if in_caption else self.parts).append(data)
 
     tree = VisibleHTML()
     tree.feed(html)
@@ -205,15 +207,32 @@ def _rendered_paragraphs(text: str) -> list[str]:
 
 def _paragraph_sentences(paragraphs, *, verbatim=False):
     """Normalize rendered text only; never reinterpret it as Markdown."""
+    def split(text):
+        if not verbatim:
+            text = _instructions(text)
+        return [s for part in re.split(r"\n\s*\n", text)
+                for s in re.split(r"(?<=[.!?])\s+", _normal(part)) if s]
+
     sentences = []
     for paragraph in paragraphs:
         if getattr(paragraph, "label", False):
             continue
-        if not verbatim:
-            paragraph = _instructions(paragraph)
-        for part in re.split(r"\n\s*\n", paragraph):
-            sentences.extend(s for s in re.split(r"(?<=[.!?])\s+", _normal(part)) if s)
+        # Lead ruling (2026-11-21): a numbered-step caption's words are part of
+        # the rule. The caption is kept, and every sentence it captions carries
+        # it, so a changed or qualifying caption changes the census.
+        caption = " ".join(split(getattr(paragraph, "caption", "")))
+        sentences.extend(_Sentence(s, bare=s, caption=True) for s in split(caption))
+        sentences.extend(_Sentence(f"{s} {caption}" if caption else s, bare=s) for s in split(paragraph))
     return sentences
+
+
+class _Sentence(str):
+    """A census sentence; `bare` is its own words without the caption that binds it."""
+
+    def __new__(cls, text, *, bare, caption=False):
+        sentence = super().__new__(cls, text)
+        sentence.bare, sentence.caption = bare, caption
+        return sentence
 
 
 def _sentences(text: str, *, verbatim: bool = False) -> list[str]:
@@ -259,7 +278,8 @@ def _exceptions(original):
         assert set(row) == {"sentence", "reason", "replacement"}, row
         sentence, reason = row["sentence"], row["reason"]
         replacement = "" if row["replacement"] == "-" else row["replacement"]
-        assert sentence in _sentences(original), f"stale sentence exception: {sentence}"
+        # Rows name a sentence by its own words, captioned or not.
+        assert sentence in {s.bare for s in _sentences(original)}, f"stale sentence exception: {sentence}"
         assert sentence not in exceptions, f"duplicate sentence exception: {sentence}"
         assert reason.startswith(("reworded-to: ", "dropped-because: ")) and reason.split(": ", 1)[1], row
         if reason.startswith("reworded-to:"):
@@ -340,7 +360,7 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     """
     original = BASELINE.read_text(encoding="utf-8")
     exceptions = _reviewed_exceptions(original)
-    required = {exceptions.get(s, s) for s in _held_sentences(original, route_id)} - {""}
+    required = {exceptions.get(getattr(s, "bare", s), s) for s in _held_sentences(original, route_id)} - {""}
     root = (GUIDE / "SKILL.md").read_text(encoding="utf-8")
     reachable = _reachable(root, routing.load().routes[route_id])
     available = {s for text in reachable for s in _sentences(text)}
@@ -348,18 +368,21 @@ def test_each_route_reaches_its_original_safety_and_authority_sentences(route_id
     assert not missing, f"{route_id} cannot reach original sentences: {missing}"
     # The whole-sentence equality above protects every visible sentence equally;
     # only approved navigation-location normalization is allowed by _instructions.
-    qualified = sorted((s, candidate) for s in required for candidate in available
+    # A caption's own sentence is a label (e.g. "Review.") that other text may
+    # begin with; its words are guarded by every sentence it captions above.
+    qualified = sorted((s, candidate) for s in required if not getattr(s, "caption", False)
+                       for candidate in available
                        if candidate != s and re.match(re.escape(s.rstrip('.!?')) + r"\b", candidate))
     # An intact duplicate cannot hide a newly appended conditional exception,
     # even across a paragraph break or with a different verb. Original following
     # sentences are allowed exactly as written; no exception wording is hand-kept.
-    original_sentences = set(_sentences(original))
+    original_sentences = {getattr(s, "bare", s) for s in _sentences(original)}
     for text in reachable:
         sentences = _sentences(text)
         qualified.extend((rule, following) for rule, following in zip(sentences, sentences[1:])
                          if rule in required
                          and re.match(r"(?:If|Unless|Except|But|However|Otherwise|When|Although)\b", following)
-                         and following not in original_sentences)
+                         and getattr(following, "bare", following) not in original_sentences)
     assert not qualified, f"{route_id} qualifies original authority rules: {qualified}"
 
 

@@ -4,6 +4,8 @@
 """Bounded differential evidence, executed by the bench; no census authority is inherited."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import json
 import shutil
@@ -212,7 +214,7 @@ def _observe(repo, module, function, inputs, scratch, timeout: float | None = No
     if not ran or not output.is_file():
         return None, receipt
     try:
-        values = json.loads(output.read_text(encoding="utf-8"))
+        values = _decode_json(output.read_text(encoding="utf-8"))
     except (ValueError, OSError, RecursionError, MemoryError):
         return None, receipt
     return (values if isinstance(values, list) and len(values) == len(inputs) else None), receipt
@@ -220,10 +222,9 @@ def _observe(repo, module, function, inputs, scratch, timeout: float | None = No
 
 def run(params: dict, *, venture: str | None) -> dict:
     scope = params["regression"]
-    if "learned" in scope:  # learned guards are deferred with the learning layer: never run, never a pass
-        return {"ok": True, "result": {"probe": {
-            "status": "not_run", "reason": LEARNED_NOT_RUN, "counterexamples": [], "functions": [], "authority": "A0",
-            "guard_id": scope["learned"].get("guard_id", "") if isinstance(scope["learned"], dict) else ""}}}
+    if "learned" in scope:
+        from g6.harness.library_review_gate import check_learned
+        return {"ok": True, "result": {"probe": check_learned(params, venture=venture)}}
     declared = {(d.get("module"), d.get("function")) for d in scope.get("declared") or [] if isinstance(d, dict)}
     probe = {"status": "not_run", "reason": NOT_RUN, "counterexamples": [], "functions": [], "authority": "A0"}
     bailed: set = set()

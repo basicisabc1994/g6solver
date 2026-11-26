@@ -19,6 +19,8 @@ it took (R5: 0 to 480, their word, never a measurement). The archive's formal-re
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import argparse
 import json
 import os
@@ -155,7 +157,7 @@ def main(argv: list[str] | None = None, *, ask: Callable[[str], str] | None = No
         return 2
     try:
         if args.command == "correct":
-            content = json.loads(Path(args.file).read_text(encoding="utf-8"))
+            content = _decode_json(Path(args.file).read_text(encoding="utf-8"))
             found = wf.runtime.correct(args.mission, args.unit, content, reason=args.reason, actor="human",
                                        decided_by=f"terminal:{wf.missions.owner}")
             print(json.dumps(found))

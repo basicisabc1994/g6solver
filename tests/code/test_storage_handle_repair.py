@@ -20,7 +20,7 @@ def test_json_resource_errors_are_code_refusals(error, monkeypatch):
     def fail(_):
         raise error("private-system-details")
 
-    monkeypatch.setattr(_roots.json, "loads", fail)
+    monkeypatch.setattr(_roots, "_decode_json", fail)
     with pytest.raises(CodeRefused) as refused:
         _roots.parse("{}", "G6_CODE_CONFIG")
     assert refused.value.code == _roots.CONFIG_INVALID

@@ -13,6 +13,8 @@ route today (design R-2), so at a check the only change of course is to a person
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from dataclasses import asdict, dataclass
@@ -214,9 +216,9 @@ def on_settle(runtime, mission_id: str, spec, row: dict, lease=None) -> tuple[st
             row["failure_code"]):
         return None
     try:
-        calls = [c for c in json.loads(row["calls_json"] or "[]") if isinstance(c, dict)]
+        calls = [c for c in _decode_json(row["calls_json"] or "[]") if isinstance(c, dict)]
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     unstarted = _never_started(runtime._missions, mission_id, spec, row)  # review M-6: whichever check settles first
     if not unstarted and (not calls or calls[-1].get("state") != BLOCKED or calls[-1].get("refused")):
         return None  # the tool answered (or the door refused before sending): not a tool that is unavailable

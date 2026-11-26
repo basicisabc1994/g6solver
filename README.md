@@ -129,8 +129,8 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
   checked in every later review of that task.
 - The Context Engine: `g6_knowledge_*` (11), a local index of folders under the roots listed in
   `G6_KNOWLEDGE_ROOTS` where the server is registered. Adding a folder asks the person to accept a preview.
-- The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; off unless `G6_WORKFLOW_RECORD=on`
-  is set where the server is registered.
+- The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; on by default, off when
+  `G6_WORKFLOW_RECORD=off` is set where the server is registered.
 - The meta-harness: `metaharness_*` (13), for constructing, measuring and revising applications.
 
 Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given

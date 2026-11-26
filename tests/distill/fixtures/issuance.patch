@@ -1,0 +1,30 @@
+# Test-only declaration hunk for the twelve distill tools.
+# This fixture is not owner issuance and does not modify runtime consent rows.
+--- a/src/g6/core/consent_declarations.py
++++ b/src/g6/core/consent_declarations.py
+@@ -0,0 +1,12 @@
++    'g6_failure_record': contract('client_request'),
++    'g6_distill_start': contract('client_request', 'source:component_data', 'source:host_configuration'),
++    'g6_distill_job': contract('client_request', 'source:jobs'),
++    'g6_library': contract('g6_operational'),
++    'g6_library_decide': contract('client_request'),
++    'g6_self_model': contract('g6_operational'),
++    'g6_simulate': contract('client_request', 'g6_operational'),
++    'g6_extend': contract('client_request', 'client_repository'),
++    'g6_research_start': contract('client_request', 'source:improvement'),
++    'g6_research_stop': contract('client_request', 'source:improvement'),
++    'g6_research_status': contract('client_request', 'source:improvement'),
++    'g6_research_digest': contract('client_request', 'source:improvement'),
+@@ -0,0 +1,12 @@
++    'g6_failure_record': {'kind': 'content', 'family': 'content', 'case_json': 'content', 'note': 'content'},
++    'g6_distill_start': {'family': 'content', 'failure_ids': 'pointer'},
++    'g6_distill_job': {'job_id': 'pointer', 'detail': 'content'},
++    'g6_library': {'op': 'content', 'entry_id': 'pointer'},
++    'g6_library_decide': {'entry_id': 'pointer', 'action': 'content', 'reason': 'content'},
++    'g6_self_model': {'section': 'content', 'detail': 'content'},
++    'g6_simulate': {'action_json': 'content'},
++    'g6_extend': {'request': 'content', 'repo': 'pointer'},
++    'g6_research_start': {'folder': 'pointer'},
++    'g6_research_stop': {'folder': 'pointer', 'reason': 'content'},
++    'g6_research_status': {'folder': 'pointer'},
++    'g6_research_digest': {'folder': 'pointer'},

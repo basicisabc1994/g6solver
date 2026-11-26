@@ -384,7 +384,8 @@ def _outside_the_standard_library(paths) -> set[str]:
                      else [item.module or ""] if isinstance(item, ast.ImportFrom) and not item.level else [])
             for name in names:
                 top = name.split(".")[0]
-                if (top not in sys.stdlib_module_names and top != "__future__" and not name.startswith(SIBLING)
+                if (top not in sys.stdlib_module_names and top != "__future__" and name != "g6._decoder_limits"
+                        and not name.startswith(SIBLING)
                         and not name.startswith("g6.research.mission_bridge")):
                     found.add(top)
     return found

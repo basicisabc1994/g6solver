@@ -26,8 +26,9 @@ _PACKAGE = Path(g6.harness.workflow.__file__).parent
 
 
 def _off(monkeypatch, value):
-    if value is None:
+    if value is None:      # unset with an off default: the default is on since the owner's ruling of 2026-11-25
         monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+        monkeypatch.setattr(policy, "ON_BY_DEFAULT", False)
     else:
         monkeypatch.setenv(policy.RECORD_ENV, value)
     assert policy.enabled()[0] is False

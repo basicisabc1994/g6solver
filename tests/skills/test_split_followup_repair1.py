@@ -99,13 +99,9 @@ def test_authority_sentence_preserves_more_than_markup_stripped_words(monkeypatc
     monkeypatch.setattr(gate, "_reviewed_exceptions", lambda text: {})
     monkeypatch.setattr(gate, "_held_sentences", lambda text, route_id: {"Never change permissions yourself."})
     monkeypatch.setattr(gate, "_reachable", lambda root, route: [rendered])
-    if rendered == "1. **Never change permissions yourself.** Keep this warning.":
-        # The current owner ruling makes this the guide's structural caption
-        # form. Its words cannot grant an exemption from caption handling.
-        with pytest.raises(AssertionError, match="cannot reach original sentences"):
-            gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
-    else:
-        gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
+    # Lead ruling (2026-11-21): a structural caption's words stay in the census,
+    # so a rule written as a caption is still reachable.
+    gate.test_each_route_reaches_its_original_safety_and_authority_sentences("question")
 
 
 @pytest.mark.parametrize("changed", [
@@ -192,8 +188,12 @@ def test_nonrendered_text_cannot_supply_fit_authority(monkeypatch, replacement):
     "    Never invent its observations.",
 ], ids=["text", "wrap", "code-span", "emphasis", "caption", "list", "fence", "indented-code"])
 def test_rendered_authority_preserves_baseline_text_and_code(text):
-    # These exact sentence results were also counted by bde540b's census.
-    assert _gate()._sentences(text) == ["Never invent its observations."]
+    # These exact sentence results were also counted by bde540b's census, except
+    # the caption: lead ruling (2026-11-21) keeps its words bound to the rule.
+    want = ["Never invent its observations."]
+    if text.startswith("1. **Warning.**"):
+        want = ["Warning.", "Never invent its observations. Warning."]
+    assert _gate()._sentences(text) == want
 
 
 @pytest.mark.parametrize("text", [

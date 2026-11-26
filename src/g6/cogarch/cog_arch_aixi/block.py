@@ -11,6 +11,8 @@ a random policy on the same seeds. The three built-in toy worlds have no outward
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import random
@@ -138,7 +140,7 @@ def _load(name: str) -> ag.Agent:
     if not path.is_file():
         raise _Refusal(NO_AGENT, f"no agent named {name!r} is kept")
     try:
-        return ag.Agent.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return ag.Agent.from_dict(_decode_json(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
         if isinstance(exc, (RecursionError, MemoryError)):
             exc = ValueError("a JSON record exceeds decoder limits")

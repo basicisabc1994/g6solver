@@ -119,6 +119,10 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
                           "g6_feedback",
                           "g6_select",   # the staged selector (``g6.mcp.selector``, plan revision 8 phase B)
                           "g6_agentic_run",   # the agentic override kernel v1 (``g6.mcp.agentic``)
+                          # Distillation, library decisions, self-model and bounded research (``g6.mcp.distill``).
+                          "g6_failure_record", "g6_distill_start", "g6_distill_job", "g6_library", "g6_library_decide",
+                          "g6_self_model", "g6_simulate", "g6_extend", "g6_research_start", "g6_research_stop",
+                          "g6_research_status", "g6_research_digest",
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

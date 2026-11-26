@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-26",
+  "before_any_arm": true,
+  "reason": "merge 5 adds the learn route; no session has run",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2684dad8be2be6406669af15493e5296c9c98c9839db4ff49b46b60b887c1741"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "155519f19c8324e01d04a242506acde2e34e7ae3a1cab500a2f695a1ff0ae7d1"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-2684dad8be2b.json",
+    "frozen.json": "frozen.retired-5d440153663b.json"
+  },
+  "routes": "unchanged: every route digest as the 2026-11-26 learn rebind bound it",
+  "added": [
+    "dev.learn.missing_tool.1",
+    "dev.learn.negative.1",
+    "dev.learn.positive.1"
+  ],
+  "fixtures": [
+    "shop"
+  ],
+  "tasks": "every development task of the previous list, unchanged, and the three added",
+  "ruling": "lead ruling, 2026-11-26: the learn route that merge 5 adds gets its development tasks before any session runs, in the form of the 2026-11-21 select development tasks: a positive, a negative and a missing-tool task on a development fixture, with no G6 or route cue in a prompt",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No route digest, earlier task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

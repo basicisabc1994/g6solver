@@ -12,6 +12,8 @@ shipped census's or an assumption the experiment makes so the graph can be scree
 """
 from __future__ import annotations
 
+from g6.research.mission_bridge._decoder_limits import json_value as _decode_json
+
 import json
 from pathlib import Path
 from typing import Any
@@ -24,9 +26,9 @@ NAMES = ("medico_legal", "engineering", "coding")
 
 def _read(stem: str) -> dict[str, Any]:
     try:
-        return json.loads((FOLDER / f"{stem}.json").read_text(encoding="utf-8"))
+        return _decode_json((FOLDER / f"{stem}.json").read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def _named(name: str) -> str:

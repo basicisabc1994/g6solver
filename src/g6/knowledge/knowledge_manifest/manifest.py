@@ -21,6 +21,8 @@ Only ``matches`` passes; every other outcome fails closed.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import sqlite3
 from collections.abc import Callable
@@ -126,11 +128,11 @@ class Store:
             source = Source(uri=src["uri"], sha256=src["sha256"], retrieved_at=src["retrieved_at"],
                             provenance=src["provenance"], licence=src["licence"], published_at=src["published_at"])
             document = Document(text=doc["text"], source=source, media_type=doc["media_type"],
-                                converted_by=doc["converted_by"], unread=tuple(json.loads(doc["unread"])),
+                                converted_by=doc["converted_by"], unread=tuple(_decode_json(doc["unread"])),
                                 title=doc["title"], locator=doc["locator"])
             passage = Passage(id=row["id"], source=source, document_sha256=row["document_sha256"],
                               start=row["span_start"], end=row["span_end"], text=row["text"])
-        except (ValidationError, ValueError, TypeError):
+        except (ValidationError, ValueError, TypeError, RecursionError, MemoryError):
             raise StoreError(STORE, edited) from None
         if passage_problems(passage, document):
             raise StoreError(STORE, edited)

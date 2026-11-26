@@ -42,6 +42,8 @@ question pending (``PENDING``), reported, to be answered later.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import builtins
 import re
@@ -126,9 +128,9 @@ def encoded(value: Any) -> str:
 def decoded(text: str) -> Any:
     """A value ``encoded`` wrote, read back: the one reader of the probe's text."""
     try:
-        return json.loads(text)
+        return _decode_json(text)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 # --- candidates ---------------------------------------------------------------------------------------------------------

@@ -22,6 +22,8 @@ nothing is written. ``list`` applies its ``limit`` in SQL, so it reads back no m
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import random
 import threading
@@ -147,11 +149,11 @@ class Checkpoints(BaseCheckpointSaver[str]):
             return CheckpointTuple(
                 {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": checkpoint_id}},
                 self.serde.loads_typed((row["type"], row["checkpoint"])),
-                json.loads(row["metadata"]) if row["metadata"] is not None else {},
+                _decode_json(row["metadata"]) if row["metadata"] is not None else {},
                 {"configurable": {"thread_id": thread_id, "checkpoint_ns": ns, "checkpoint_id": parent}} if parent else None,
                 self._pending(cur, thread_id, ns, checkpoint_id))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def get_tuple(self, config: dict[str, Any]) -> CheckpointTuple | None:
         conf = config["configurable"]
@@ -193,9 +195,9 @@ class Checkpoints(BaseCheckpointSaver[str]):
             if limit is not None and shown >= limit:
                 return
             try:
-                meta = json.loads(row["metadata"]) if row["metadata"] is not None else {}
+                meta = _decode_json(row["metadata"]) if row["metadata"] is not None else {}
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if filter and any(meta.get(k) != v for k, v in filter.items()):
                 continue
             with self._cursor() as cur:

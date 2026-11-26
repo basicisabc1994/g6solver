@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "f1a7a6c1af76378ee3f527a0754d68c5bff1819ca8d5fa630f9f6c2c09af895d"
+  },
+  "reason": "the record-on-by-default fold (claude/record-on-default) rewrites the workflow route's text in the using-g6 skill and references/workflow.md; no session has run; re-frozen before any arm",
+  "digest": "c84393d26a2df79ecd22a7b5d42e1c639cadea1a5318e405d10586e29643fb3e"
+}

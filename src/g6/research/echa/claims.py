@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 import math
+import json
 import re
 from typing import Any
 
@@ -145,7 +146,7 @@ def evaluate_claim(ledger: Any, claim_id: str) -> dict:
     try:
         claim = ClaimRecord.from_dict(ledger.get("claim", claim_id))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     contaminated = ledger.contaminated_fixtures()
     subject = subject_artefact(claim)
     reasons: list[str] = []

@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextlib
 import errno
 import functools
@@ -225,7 +227,7 @@ class Coordination:
             if not os.path.lexists(path):
                 return None
             plain_file(path)
-            found = json.loads(path.read_text(encoding="utf-8"))
+            found = _decode_json(path.read_text(encoding="utf-8"))
             if not isinstance(found, dict):
                 raise ValueError("not an object")
             name = found["path"]
@@ -345,7 +347,7 @@ class Coordination:
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
+                entry = _decode_json(line)
             except (ValueError, RecursionError, MemoryError):
                 unreadable += 1
                 continue

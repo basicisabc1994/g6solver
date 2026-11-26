@@ -13,6 +13,8 @@ runs a base model with an adapter in this process, for a ``Model(adapter_loader=
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib.util
 import json
 import tempfile
@@ -121,9 +123,9 @@ def sandbox_trainer(spec: LoraSpec, rows: Sequence[tuple[str, str]], out: Path) 
         if name not in ("spec.json", "examples.jsonl"):
             (out / name).write_bytes(data)
     try:
-        return json.loads(ran.stdout.strip().splitlines()[-1])
+        return _decode_json(ran.stdout.strip().splitlines()[-1])
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def train(spec: LoraSpec, rows: Sequence[tuple[str, str]], *,

@@ -4,6 +4,8 @@
 The host and its filesystem permissions remain trusted. A same-user shell with unrestricted
 access can read this data; hiding it from such a shell requires a separate host boundary.
 """
+from g6.core.decoder_limits import json_value as _decode_json
+
 from dataclasses import dataclass
 import json
 import math
@@ -111,9 +113,9 @@ def discover(root: Path) -> dict:
         if not file.resolve().is_relative_to(root.resolve()):
             continue
         try:
-            spec = WorkflowInput.model_validate(json.loads(file.read_text(encoding="utf-8")))
+            spec = WorkflowInput.model_validate(_decode_json(file.read_text(encoding="utf-8")))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if spec.name != file.parent.name:
             raise ValueError("workflow name does not match its directory")
         # The baseline is frozen too: do not silently accept edits to its source.

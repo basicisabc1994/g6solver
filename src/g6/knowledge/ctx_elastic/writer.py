@@ -15,6 +15,8 @@ a spend approval is not deletion consent. No caller names an index: the target c
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -136,7 +138,7 @@ def _bulk(target: Target, batch: Sequence[tuple[str, bytes]], verb: str,
         reply = send(elastic.ELASTICSEARCH, "POST", f"/{target.concrete_index}/_bulk",
                      body=b"".join(payload for _, payload in batch), headers=headers, timeout=elastic.TIMEOUT,
                      max_bytes=elastic.MAX_REPLY)
-        items = json.loads(reply.body)["items"]
+        items = _decode_json(reply.body)["items"]
         if len(items) != len(batch):
             raise ValueError("the reply does not answer every item")
     except (outside.ServiceError, ValueError, KeyError, TypeError, UnicodeDecodeError, OSError, RecursionError, MemoryError) as exc:

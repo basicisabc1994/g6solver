@@ -29,6 +29,8 @@ session reads.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -104,7 +106,7 @@ def _task(session: Path) -> dict:
     """Read the task binding from exactly the bytes its producer completed."""
     try:
         expected = (session / 'task.sha256').read_text(encoding='ascii')
-        asked = json.loads(cloud.read_retained(session / 'task.json', expected))
+        asked = _decode_json(cloud.read_retained(session / 'task.json', expected))
         if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
             raise ValueError('malformed retained task')
         return asked
@@ -162,7 +164,7 @@ def _lines(transcript: object) -> list[dict]:
     found: list[dict] = []
     for line in lines:
         try:
-            item = json.loads(line)
+            item = _decode_json(line)
         except (ValueError, RecursionError, MemoryError):
             continue
         if isinstance(item, dict):
@@ -344,13 +346,13 @@ def _repair(response: object) -> dict | None:
         text = item.get("text") if isinstance(item, dict) else None
         if isinstance(text, str) and text.lstrip().startswith("{"):
             try:
-                found.append(json.loads(text))
-            except (ValueError, RecursionError, MemoryError):
+                found.append(_decode_json(text))
+            except ValueError:
                 pass
     if isinstance(response, str) and response.lstrip().startswith("{"):
         try:
-            found.append(json.loads(response))
-        except (ValueError, RecursionError, MemoryError):
+            found.append(_decode_json(response))
+        except ValueError:
             pass
     return next((one["repair"] for one in found if isinstance(one, dict) and isinstance(one.get("repair"), dict)),
                 None)
@@ -363,6 +365,9 @@ def on_tool(event: dict) -> dict:
     try:
         name = str(event.get("tool_name") or "")
         session = event.get("session_id")
+        if name in {prefix + tool for prefix in G6_SERVER_PREFIXES for tool in ("g6_review_patch", "g6_library")}:
+            from g6.distill.surface import record_reproduction
+            record_reproduction(event)
         if os.environ.get(HINTS, "").strip().lower() == "off" or not isinstance(session, str) or not session \
                 or not re.fullmatch(tool_matcher(), name):
             return {}
@@ -373,7 +378,7 @@ def on_tool(event: dict) -> dict:
         code = repair["code"]
         seen = folder(session) / "repair_hints.json"
         try:
-            codes = set(json.loads(seen.read_text(encoding="utf-8")))
+            codes = set(_decode_json(seen.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError):
             codes = set()
         if code in codes:
@@ -393,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get(CHILD) or not args or args[0] not in HOOKS:
         return 0
     try:
-        said = HOOKS[args[0]](json.loads(sys.stdin.buffer.read().decode("utf-8")))
+        said = HOOKS[args[0]](_decode_json(sys.stdin.buffer.read().decode("utf-8")))
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, the person's turn ends
         if args[0] == "tool":
             return 0                 # this optional hint has no completion-loop verdict

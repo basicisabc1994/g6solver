@@ -6,15 +6,16 @@
     "consent": "013bb1f0dc10102278d594d0b953e1652896a4a1140bf58e2a373f7c0e8d9ab4",
     "context": "dfb8cc3ced54f9806960993bd32a5a4b1e1b29e65ec3158666a27d56138a663a",
     "discover": "e3a616e571b6f4de20f9e90a7bf509a46e8e35f819932b062ffd7c3f174059be",
-    "every-route": "542bc7d1e448e7cf8c0f72860607546531d7b6a0aad116c028bd2672d750de9b",
+    "every-route": "4da418590c2f59e1d7924c0b37852e7a31d7bd31d2366eaa612dbe6a6129c94b",
     "fit": "a8a80df1036be09fd4a70361ca5f46d4a1fb5e49499fc1c6dc994c6e82715b36",
     "improve": "4ab748fce09ac96b20c43f45a8fad8028efe3fc1c5c94ba9438892368751fe69",
+    "learn": "79ff862bd13ff9ac43129d857aabb876c97276223eeb9b84f414488c0436ae8d",
     "mission": "e0f1296a758e75e3deca555cf71f980077c1d169ec25d40a6338696f369bb400",
-    "question": "2cf1e1e8af8d0e96fb39540b38d6dc20ee7fb24df50eaba66d8c569243633436",
+    "question": "5f26170030865c5a66f544c7aa225ba298d08e6902222492643968e233da8e0a",
     "review": "976542ae3e11b6f0e2f42195218cc538acf4e43aaadb159e45e8f93d4e839048",
     "rules": "701615705f3cf10070b83026b1e5586da2cd1006ac821a9fa5cfd55a508a258e",
     "select": "79c843d9b7e799f97da17797146fb1e0f6f9edf931a2e502dfa204603f6a18e0",
-    "workflow": "9ce5e3ef60995bbfc0a09cab005beb28101071642ef3b744030b18847a24c6e8"
+    "workflow": "9dd0b172f2747cc0690ee262858fee47b066b0135cec214a87b23aa2dbb0dcae"
   },
   "tasks": [
     {
@@ -424,6 +425,94 @@
       "expected_calls": [
         {
           "tool": "g6_improve_status"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.learn.missing_tool.1",
+      "route": "learn",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "List the checking methods this tool has built from past failures, with how much authority each one holds and whether any was demoted or withdrawn. Change nothing.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_library"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.learn.negative.1",
+      "route": "learn",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a one-line docstring to shop.prices.total saying it returns the sum of the line prices. Nothing else.",
+      "fixture": "shop",
+      "forbidden": [
+        {
+          "tool": "g6_distill_job"
+        },
+        {
+          "tool": "g6_distill_start"
+        },
+        {
+          "tool": "g6_extend"
+        },
+        {
+          "tool": "g6_failure_record"
+        },
+        {
+          "tool": "g6_library"
+        },
+        {
+          "tool": "g6_library_decide"
+        },
+        {
+          "tool": "g6_research_digest"
+        },
+        {
+          "tool": "g6_research_start"
+        },
+        {
+          "tool": "g6_research_status"
+        },
+        {
+          "tool": "g6_research_stop"
+        },
+        {
+          "tool": "g6_self_model"
+        },
+        {
+          "tool": "g6_simulate"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.learn.positive.1",
+      "route": "learn",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "List the checking methods this tool has built from past failures, with how much authority each one holds and whether any was demoted or withdrawn. Change nothing.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_library"
         }
       ],
       "completion": {

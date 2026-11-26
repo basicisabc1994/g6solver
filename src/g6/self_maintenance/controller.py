@@ -14,6 +14,7 @@ container of a later phase.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -77,14 +78,14 @@ def run_one_cycle(
             return CycleReport("blocked-escalated", "", "", plan.rationale, 0, None, None,
                                (), "measure limiting stage and correct constraints", book.ledger.head())
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     ticket = next(t for t in tickets if t.id == plan.selected)
     if queue is None or not approval:
         try:
             return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
                                (), "a person must approve a bounded disposable-copy run", book.ledger.head())
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     try:
         approved_by = queue.run_approver(venture_id, approval, binding=cycle_binding(ticket, plan.provider, day))
     except (QueueError, LookupError) as exc:
@@ -93,12 +94,12 @@ def run_one_cycle(
                 return CycleReport("blocked-escalated", ticket.id, plan.provider, "approval_mismatch", 0, None, None,
                                    (), "the approval was given for another ticket, provider or day", book.ledger.head())
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             return CycleReport("qualified-draft", ticket.id, plan.provider, "simulation_only", 0, None, None,
                                (), "a person must approve a bounded disposable-copy run", book.ledger.head())
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     path = Path(workspace)
     if not path.is_absolute() or not path.is_dir() or not (path / ".git").exists():
         try:
@@ -106,14 +107,14 @@ def run_one_cycle(
                                0, None, None, (), "provide a separately versioned disposable checkout", book.ledger.head(),
                                approved_by)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not all(allowed_source(f) for f in ticket.files):
         try:
             return CycleReport("blocked-escalated", ticket.id, plan.provider, "protected_scope",
                                0, None, None, (), "change must be routed for independent human review", book.ledger.head(),
                                approved_by)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     reservation = book.reserve(ticket, plan.provider, policy, day)
     observed_tokens, observed_usd = None, None
     claim = "not_started"
@@ -135,7 +136,7 @@ def run_one_cycle(
                                    None, None, (), "no live agent runs in this release; run the mission container",
                                    book.ledger.head(), approved_by)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         claim = str(getattr(agent, "state", "unknown"))
         usage = getattr(agent, "usage", {})
         if isinstance(usage, dict):
@@ -148,7 +149,7 @@ def run_one_cycle(
                                    "inspect refusal; do not retry without a fresh budget decision", book.ledger.head(),
                                    approved_by)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         # The checker is host-owned; no agent claims can replace it.
         checked = independent_checker(path, ticket)
         changed = checked.get("changed_files", ())
@@ -160,14 +161,14 @@ def run_one_cycle(
                                    reservation.reserved_tokens, observed_tokens, observed_usd, (),
                                    "discard candidate and inspect changed paths", book.ledger.head(), approved_by)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if checked.get("test_integrity") != "intact" or checked.get("verdict") != "passed":
             try:
                 return CycleReport("blocked-escalated", ticket.id, plan.provider, "independent_checks_not_passed",
                                    reservation.reserved_tokens, observed_tokens, observed_usd, (),
                                    "discard or send candidate to diagnosis", book.ledger.head(), approved_by)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         # A run may be successful within frozen check scope but never self-approve.
         receipts = tuple(str(x) for x in checked.get("receipt_ids", ()) if isinstance(x, str))[:30]
         if not receipts:
@@ -176,14 +177,14 @@ def run_one_cycle(
                                    reservation.reserved_tokens, observed_tokens, observed_usd, (),
                                    "obtain a host-authored verifier receipt", book.ledger.head(), approved_by)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             return CycleReport("qualified-draft", ticket.id, plan.provider, "candidate_checked_in_scope",
                                reservation.reserved_tokens, observed_tokens, observed_usd, receipts,
                                "open a draft PR for independent human review; never merge automatically",
                                book.ledger.head(), approved_by)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     finally:
         # A provider's self-reported usage is not independent metering.
         book.settle(reservation, day, observed_tokens=observed_tokens,

@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-26",
+  "before_any_arm": true,
+  "reason": "the record-on-by-default fold (claude/record-on-default) rewrites the workflow route's text in the using-g6 skill and references/workflow.md; no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "f1a7a6c1af76378ee3f527a0754d68c5bff1819ca8d5fa630f9f6c2c09af895d"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "eaa089c3c392f599c07bbf0ebefeeced1d52364e030f0c4baae9de236a0a1d75"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-f1a7a6c1af76.json",
+    "frozen.json": "frozen.retired-c84393d26a2d.json"
+  },
+  "routes": {
+    "workflow": {
+      "before": "9ce5e3ef60995bbfc0a09cab005beb28101071642ef3b744030b18847a24c6e8",
+      "after": "9dd0b172f2747cc0690ee262858fee47b066b0135cec214a87b23aa2dbb0dcae"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "lead ruling, 2026-11-26 (standing rule): a fold that moves only a route's reference text is rebound by a dated amendment before any session runs, as the 2026-11-26 review and question rebinds were; the routing trials have run no session and this changes no result",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

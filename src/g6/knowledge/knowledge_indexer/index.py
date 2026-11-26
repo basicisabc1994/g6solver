@@ -29,7 +29,8 @@ source and the offsets, not the words; re-checking the passage against its sourc
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 import sqlite3
 import time
@@ -270,7 +271,7 @@ class SqliteIndex(Retrieves):
         if sha256_hex(row["text"]) != row["text_sha256"]:
             raise IndexRefused(FAILED, edited)
         try:
-            source = Source.model_validate(json.loads(row["source"]))
+            source = Source.model_validate(_decode_json(row["source"]))
             return Passage(id=row["id"], source=source, document_sha256=row["document_sha256"],
                            start=row["span_start"], end=row["span_end"], text=row["text"])
         except (ValidationError, ValueError, TypeError, RecursionError, MemoryError):

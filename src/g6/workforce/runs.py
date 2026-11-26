@@ -21,6 +21,8 @@ open under an older lease is known to be orphaned. The owner's chat's own submis
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import dataclasses
 import hashlib
 import json
@@ -271,10 +273,10 @@ def artifact_sha(content: object) -> str:
 def outcome_of(row: dict) -> Outcome:
     """A stored run's outcome (an open or empty one is blocked: nothing finished)."""
     try:
-        return Outcome.from_record(json.loads(row.get("outcome_json") or "{}"),
+        return Outcome.from_record(_decode_json(row.get("outcome_json") or "{}"),
                                    missing=f"run {row.get('run_id')} has no outcome ({row.get('state')})")
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 @dataclass(frozen=True)
@@ -520,9 +522,9 @@ class RunLedger:
                 raise LeaseLost("a call reservation requires the attempt's current mission lease")
             self._missions.hold(mid, lease)
             try:
-                worker = json.loads(self.instance(mid, row["instance_id"])["spec_json"])
+                worker = _decode_json(self.instance(mid, row["instance_id"])["spec_json"])
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if [contract.component, contract.op] not in worker["allowed"]:
                 raise ValueError("a reservation must name an allowed capability")
             reservations = self._cost_entries("cost.reserved", mid, run_id=run_id)
@@ -704,9 +706,9 @@ class RunLedger:
         if row is None:
             raise LookupError(NOT_FOUND)
         try:
-            return row[0], {"artifact_id": str(artifact_id), "at": row[2], **json.loads(row[1] or "{}")}
+            return row[0], {"artifact_id": str(artifact_id), "at": row[2], **_decode_json(row[1] or "{}")}
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def makers(self, sha256: str) -> set[tuple[str, str]]:
         """The ops that made any of THIS owner's results whose content has this digest, in any of their missions
@@ -756,9 +758,9 @@ class RunLedger:
             reasons = limits.get((verdict["run_id"], verdict["unit_key"], verdict["verifies_key"], verdict["artifact_id"]))
             if reasons:
                 try:
-                    original = Outcome(verdict["state"], reasons=tuple(json.loads(verdict["reasons_json"])))
+                    original = Outcome(verdict["state"], reasons=tuple(_decode_json(verdict["reasons_json"])))
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 effective = contracts.limited_outcome(original, reasons)
                 verdict.update(state=effective.state, reasons_json=json.dumps(effective.reasons))
             found.append(verdict)
@@ -788,10 +790,10 @@ class RunLedger:
             args.append(run_id)
         rows = self._conn.execute(sql + " ORDER BY e.rowid", args).fetchall()
         try:
-            return [CostEntry.from_detail(json.loads(r[2] or "{}"), id=r[0], mission_id=r[1], recorded_at=r[3])
+            return [CostEntry.from_detail(_decode_json(r[2] or "{}"), id=r[0], mission_id=r[1], recorded_at=r[3])
                     for r in rows]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def pending_reservations(self, mission_id: str | None = None, *, unit_key: str | None = None,
                              run_id: str | None = None) -> list[CostEntry]:

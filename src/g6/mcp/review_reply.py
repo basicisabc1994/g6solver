@@ -14,6 +14,8 @@ A reply with no assessment, a refusal, is returned as it is. Nothing here decide
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -120,7 +122,7 @@ def carried(job_id: str, *, expected_sha256: str | None = None) -> tuple | None:
         side = path.with_suffix(".sources.json")
         if not all(stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)):
             return None
-        entry = json.loads(side.read_bytes())
+        entry = _decode_json(side.read_bytes())
         if not isinstance(entry, dict) or entry.get("version") != SOURCES \
                 or entry.get("reply_sha256") != hashlib.sha256(path.read_bytes()).hexdigest() \
                 or expected_sha256 is not None and entry.get("reply_sha256") != expected_sha256 \
@@ -212,7 +214,7 @@ def finish(reply: Any, job_id: str) -> Any:
         copy, refs, _ = detached(reply)
         reply = custody(copy) if callable(custody) else copy
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     # A job entered through a declared producer already carries that contract.
     # Absence of a value receipt is distinct from an explicitly unknown origin;
     # the latter stays in refs and cannot be replaced by the declaration.

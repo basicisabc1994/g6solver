@@ -10,6 +10,8 @@ dates and addresses them by their fetch, never by an address a caller names (:fu
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -81,7 +83,7 @@ def origins(sha256: str) -> list[dict[str, str]]:
     if not path.is_file():
         return []
     try:
-        found = json.loads(path.read_text(encoding="utf-8"))
+        found = _decode_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError, MemoryError):
         found = None
     if not isinstance(found, list) or not all(

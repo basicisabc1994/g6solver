@@ -13,6 +13,8 @@ A :class:`Verifier` is an optional second check the loop runs after the sampled 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import itertools
 import json
 import math
@@ -121,9 +123,9 @@ class InputDomain:
 
 def _json(value: Any) -> Any:
     try:
-        return json.loads(json.dumps(value, allow_nan=False))
+        return _decode_json(json.dumps(value, allow_nan=False))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def answered(oracle: Oracle, inputs: Sequence[Mapping[str, Any]]) -> list[tuple[dict[str, Any], Any]]:

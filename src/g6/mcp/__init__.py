@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-58 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+70 tools: six discovery tools, ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_select``, the staged selector: checked next calls for the agent's situation, and a reroute after a refusal
 (``g6.mcp.selector``);
 ``g6_allowances`` for both providers' quota windows and advisory pacing (``g6.allowance``);
@@ -34,6 +34,12 @@ correct and delete what G6 recorded about its own review work, through files the
 ``g6_suggestion_decide`` asks the person to adopt, dismiss or reopen one suggestion G6 showed, and takes no decision
 itself; ``g6_feedback`` keeps feedback the person volunteers and, only if they opted in, may ask them one question a
 week in the client's dialog (``g6.mcp.workflow``).
+Twelve distillation routes (``g6.mcp.distill``): ``g6_failure_record`` records field failures;
+``g6_distill_start`` and ``g6_distill_job`` manage training-only synthesis jobs; ``g6_library`` and
+``g6_library_decide`` inspect methods and request library decisions; ``g6_self_model`` and ``g6_simulate``
+read measured state and predict without granting authority; ``g6_extend`` records capability requests;
+``g6_research_start``, ``g6_research_stop``, ``g6_research_status`` and ``g6_research_digest`` control
+bounded host research. Research needs owner authority and trusted host capabilities.
 Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -70,12 +76,15 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import asyncio
 import json
 import os
 import uuid
 from typing import Any
 
+from g6.core.decoder_limits import decode, is_undecodable_record
 from g6.mcp._stdio import capture_stdout
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
@@ -145,12 +154,14 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        params = json.loads(params_json or "{}")
-    except json.JSONDecodeError as exc:
-        return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
-    except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
-        return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
-                                             request_id=request_id))
+        params = decode(params_json or "{}")
+    except json.JSONDecodeError as exc:   # guidance_builders.blocked_reply already filters the reply for the agent
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+    except ValueError as exc:
+        if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+            raise
+        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
+                             request_id=request_id)
     if not isinstance(params, dict):
         return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
@@ -275,10 +286,12 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.guidance_builders import blocked_reply
         try:
-            payload = json.loads(composition_json)
+            payload = decode(composition_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json: a JSON record exceeds decoder limits")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
@@ -445,10 +458,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            specification = json.loads(specification_json)
+            specification = decode(specification_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json: a JSON record exceeds decoder limits")
         return mh.start(specification)
 
@@ -481,7 +496,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Stores content by digest; does not edit the evaluator or activate the candidate."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            files = json.loads(files_json)
+            files = _decode_json(files_json)
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
             return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
@@ -524,12 +539,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            profile = json.loads(profile_json) if profile_json else None
+            profile = decode(profile_json) if profile_json else None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", "profile_json: a JSON record exceeds decoder limits")
@@ -793,9 +810,13 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         server.tool()(tool)
     from g6.mcp import agentic
     agentic.register(server, context_type, jobs)   # the override kernel's jobs are polled through metaharness_job
+    from g6.mcp import distill
+    distill.register(server, context_type, jobs)
 
 
 def main() -> None:
+    """Serve over stdio through G6's own writer, so each reply is counted once written (``g6.mcp.stdio.serve``),
+    on the private protocol descriptor ``g6.mcp._stdio.run_stdio`` keeps from children and stray writes."""
     from g6.mcp._stdio import run_stdio
 
     run_stdio(build_server)

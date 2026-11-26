@@ -85,17 +85,20 @@ class _ProtocolPipe:
 
     def __init__(self, stream):
         self.stream = stream
+        self.failed = False
 
     def write(self, text):
         try:
             return self.stream.write(text)
         except (OSError, ValueError):
+            self.failed = True
             raise _ProtocolClosed from None
 
     def flush(self):
         try:
             return self.stream.flush()
         except (OSError, ValueError):
+            self.failed = True
             raise _ProtocolClosed from None
 
     def __getattr__(self, name):
@@ -113,21 +116,25 @@ def _pipe_failure(error):
 async def _serve_stdio(server, protocol):
     import anyio
     from fastmcp.utilities.version_check import check_for_newer_version
-    from mcp.server.stdio import stdio_server
-    from mcp.server.lowlevel import NotificationOptions
+    from g6.mcp.stdio import serve
 
-    # FastMCP.run_stdio_async doesn't accept streams. Preserve its lifespan and
-    # low-level run sequence, using MCP's supported explicit stdout argument.
+    # FastMCP.run_stdio_async doesn't accept streams. g6.mcp.stdio.serve keeps
+    # its lifespan and low-level run sequence over G6's own writer, which counts
+    # each reply once written, here on the private protocol descriptor.
     # Its banner normally runs this setting-aware check. Preserve the person's
     # opt-in with the private transport too; G6's default remains off.
     check_for_newer_version()
-    async with server._lifespan_manager():
-        async with stdio_server(stdout=anyio.wrap_file(protocol)) as (read_stream, write_stream):
-            await server._mcp_server.run(
-                read_stream, write_stream,
-                server._mcp_server.create_initialization_options(
-                    notification_options=NotificationOptions(tools_changed=True)),
-            )
+    try:
+        # A protocol descriptor already closed ends serving before G6's stdin
+        # reader starts: that reader's own descriptor could otherwise reuse the
+        # closed number, which the protocol's close would then close again.
+        os.fstat(protocol.fileno())
+    except (OSError, ValueError):
+        raise _ProtocolClosed from None
+    await serve(server, stdout=anyio.wrap_file(protocol))
+    if getattr(protocol, "failed", False):
+        # G6's writer ends the connection on a failed write; the pipe is still closed.
+        raise _ProtocolClosed
 
 
 def run_stdio(build_server):

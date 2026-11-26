@@ -97,7 +97,7 @@ def test_inventory_binding_checks_the_single_read_and_single_serialization():
     reader = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_review_candidates")
     text = ast.unparse(reader)
     assert text.count('.read_bytes()') == 1
-    assert 'json.loads(saved_bytes)' in text and 'data=saved_bytes' in text
+    assert text.count('_decode_json(saved_bytes)') == 1 and 'data=saved_bytes' in text
     tree = ast.parse((root / 'review_reply.py').read_text())
     writer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'save')
     text = ast.unparse(writer)

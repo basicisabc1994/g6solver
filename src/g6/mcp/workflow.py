@@ -34,8 +34,8 @@ FILES = ("The workflow record stays on this computer. The person can open inspec
          "in this project's folder under workflow in G6's state folder. To share the record with this provider, the "
          "person grants the source named workflow: followed by this repository's identifier (g6_cloud_grant).")
 #: Added to what g6_help returns over MCP.
-HELP = ("G6 can keep a local record of its own review work on a task, off until the person sets G6_WORKFLOW_RECORD=on "
-        "where the server is registered. g6_workflow_export writes inspection.json for the person to open, "
+HELP = ("G6 keeps a local record of its own review work on a task. It is on by default; the person turns it off by "
+        "setting G6_WORKFLOW_RECORD=off where the server is registered. g6_workflow_export writes inspection.json for the person to open, "
         "g6_workflow_correct applies the corrections.json they wrote in the same folder, and g6_workflow_delete "
         "removes a run, a task or the project's record after they confirm in the client's own dialog. Never read "
         "those files back to the person and never answer the dialog.")

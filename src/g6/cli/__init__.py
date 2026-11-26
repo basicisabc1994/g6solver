@@ -3,6 +3,8 @@
 ``doctor``, ``skills``."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import argparse
 import json
 import sys
@@ -286,7 +288,7 @@ def _invoke(args, capture) -> int:
         return exit_code
 
     try:
-        params = json.loads(args.params)
+        params = _decode_json(args.params)
     except (ValueError, RecursionError, MemoryError):
         return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
 

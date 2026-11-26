@@ -18,6 +18,8 @@ still cannot be loaded is written back as a named error, never a crash.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import copy
 import json
 import math
@@ -174,9 +176,9 @@ def child_main() -> None:
     import warnings
 
     try:
-        job = json.loads(Path(JOB).read_text(encoding="utf-8"))
+        job = _decode_json(Path(JOB).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     started = time.monotonic()
     versions: dict[str, str] = {}
     with warnings.catch_warnings(record=True) as caught:
