@@ -1,20 +1,15 @@
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-TEMP = ROOT / 'tests' / '_review_cmfu2_4' / '.tmp'
-TEMP.mkdir(exist_ok=True)
-tempfile.tempdir = str(TEMP)
-os.environ['G6_HOME'] = str(TEMP / 'g6-home')
-for name in ('TEMP', 'TMP', 'TMPDIR'):
-    os.environ[name] = str(TEMP)
-
-
 @pytest.fixture(autouse=True)
-def local_environment(monkeypatch):
+def local_environment(monkeypatch, tmp_path_factory):
+    folder = tmp_path_factory.mktemp("cmfu2-4-environment")
+    monkeypatch.setattr(tempfile, "tempdir", str(folder))
+    monkeypatch.setenv("G6_HOME", str(folder / "g6-home"))
+    for name in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.setenv(name, str(folder))
     original = os.mkdir
 
     def mkdir(path, mode=0o777, *, dir_fd=None):
