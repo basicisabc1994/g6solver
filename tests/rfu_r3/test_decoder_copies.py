@@ -11,7 +11,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "src/g6/_decoder_limits.py"
-HEADER = b"# Generated from src/g6/_decoder_limits.py; run tools/sync_decoder_limits.py --write.\n"
+HEADER = (b"# SPDX-License-Identifier: Apache-2.0\n"
+          b"# Generated from src/g6/_decoder_limits.py; run tools/sync_decoder_limits.py --write.\n")
 COPIES = {
     "src/g6/core/decoder_limits.py",
     "src/g6/self_training/_decoder_limits.py",
@@ -42,6 +43,11 @@ def test_every_decoder_copy_is_known_and_byte_equal_to_the_one_source():
     assert set(sync.discover()) == COPIES
     assert sync.problems() == []
     assert sync.main(["--check"]) == 0
+
+
+@pytest.mark.parametrize("name", sorted(COPIES | {SOURCE}))
+def test_every_decoder_implementation_starts_with_the_license(name):
+    assert (ROOT / name).read_bytes().splitlines()[0] == b"# SPDX-License-Identifier: Apache-2.0", name
 
 
 def test_every_decoder_implementation_imports_only_the_standard_library():
@@ -89,16 +95,18 @@ def test_sync_reports_missing_and_drifted_copies_and_write_is_idempotent(tmp_pat
     assert {name: (tmp_path / name).read_bytes() for name in COPIES} == expected
 
 
-@pytest.mark.parametrize("style", ["header", "no-header", "renamed", "drifted"])
+@pytest.mark.parametrize("style", ["header", "legacy-header", "no-header", "renamed", "drifted"])
 def test_sync_rejects_every_unknown_copy_without_deleting_it(tmp_path, style):
     sync = _tree(tmp_path)
     sync.write(tmp_path)
     body = (tmp_path / SOURCE).read_bytes()
-    filename = "extra.py" if style == "renamed" else "_decoder_limits.py"
+    filename = "extra.py" if style in {"renamed", "legacy-header"} else "_decoder_limits.py"
     unknown = tmp_path / "src/g6/extra" / filename
     unknown.parent.mkdir()
     if style == "header":
         body = HEADER + body
+    elif style == "legacy-header":
+        body = HEADER.split(b"\n", 1)[1] + b"# unrelated body\n"
     elif style == "drifted":
         body = body.replace(b"return int(digits)", b"return 0")
     unknown.write_bytes(body)

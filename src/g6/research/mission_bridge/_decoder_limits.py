@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Generated from src/g6/_decoder_limits.py; run tools/sync_decoder_limits.py --write.
 # SPDX-License-Identifier: Apache-2.0
 """A JSON record past the decoder's limits, or not in its expected shape: unreadable, never passed over for another.

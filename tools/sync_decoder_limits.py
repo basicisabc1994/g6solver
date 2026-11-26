@@ -16,7 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "src/g6/_decoder_limits.py"
-HEADER = b"# Generated from src/g6/_decoder_limits.py; run tools/sync_decoder_limits.py --write.\n"
+GENERATED_HEADER = b"# Generated from src/g6/_decoder_limits.py; run tools/sync_decoder_limits.py --write.\n"
+HEADER = b"# SPDX-License-Identifier: Apache-2.0\n" + GENERATED_HEADER
 COPIES = (
     "src/g6/core/decoder_limits.py",
     "src/g6/research/mission_bridge/_decoder_limits.py",
@@ -32,7 +33,7 @@ def discover(root: Path = ROOT) -> list[str]:
         if name == SOURCE:
             continue
         body = path.read_bytes()
-        if path.name in {"decoder_limits.py", "_decoder_limits.py"} or body.startswith(HEADER):
+        if path.name in {"decoder_limits.py", "_decoder_limits.py"} or body.startswith((HEADER, GENERATED_HEADER)):
             found.append(name)
             continue
         tree = ast.parse(body, filename=name)
