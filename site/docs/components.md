@@ -68,6 +68,7 @@ Every component works on its own. *Requires* lists the other components it impor
 | `debate` | g6.debate — role-named agents answer a question in turn through one model, with two readings of how far they agree. | python | — | — |
 | `decision_making` | g6.cogarch.decision_making — standard, seeded decision rules for what to try next and how many retries to allow, each answer with its working and the same on every run. | python + cli + mcp | `expected_value_of_perfect_information`, `expected_information_gain`, `expected_improvement`, `expected_utility`, `value_iteration`, `plan_next_action`, `bandit_select`, `retry_budget` | — |
 | `design_governance` | g6.code.design_governance — check a codebase's structure for import cycles, layer breaches and pass-through wrappers, and which cycles a change introduced. | python + cli + mcp | `import_graph`, `cycles`, `layer_violations`, `pass_through`, `diff_cycles` | — |
+| `distill` | Training-only method proposals, static test-change observations and independently gated library admission. | python | — | — |
 | `distillation` | g6.distillation — check and run a small distilled function, and test it on held-out cases before anyone relies on it. | python | — | — |
 | `duty_of_care` (built, awaiting its certificate) | Matches a fixed list of English crisis phrases; a paraphrase or another language passes. A match goes to a person. | python + cli + mcp | `screen`, `instruments`, `score`, `directory`, `help` | guards |
 | `epistemic_integrity` | Epistemic integrity: deterministic claim adjudication and evidence gating. | python + cli + mcp | `adjudicate` | — |
@@ -98,6 +99,7 @@ Every component works on its own. *Requires* lists the other components it impor
 | `reliability_pipeline` | g6.reliability_pipeline — task intake, stage values, the curated failure-mode skills and the premortem's bounded replay checks. | python | — | intent_engine |
 | `safety_engine` | g6.safety_engine — trusted runtime ceilings for one run: the policy, the counters, the pre-action check. | python | — | — |
 | `self_maintenance` | g6.self_maintenance — names the constraint of a measured workflow and plans the next maintenance ticket within a token budget, running nothing. | python + cli + mcp | `identify_constraint`, `plan` | action_gating, agent_claude, agent_codex, agents, operator, safety_engine, workspace |
+| `self_model` | An inspectable self-model: immutable facts, discrepancies and pre-action simulations. | python | — | — |
 | `self_training` | Governed self-modification: the promotion authority for proposed harness changes, one governed improvement cycle, and a maturity scorecard. | python | — | — |
 | `shared_workspace` | g6.workspace.shared_workspace — lets several agents share one workspace folder without overwriting each other's work: the first write wins and a stale one is refused. | python + cli + mcp | `read`, `write`, `lock`, `unlock`, `locks`, `conflicts` | — |
 | `solver` | g6.solver — run a goal through a fixed 15-step table of step functions you supply. | python | — | — |

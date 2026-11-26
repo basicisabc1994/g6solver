@@ -356,6 +356,9 @@ def on_tool(event: dict) -> dict:
     try:
         name = str(event.get("tool_name") or "")
         session = event.get("session_id")
+        if name in {prefix + tool for prefix in G6_SERVER_PREFIXES for tool in ("g6_review_patch", "g6_library")}:
+            from g6.distill.surface import record_reproduction
+            record_reproduction(event)
         if os.environ.get(HINTS, "").strip().lower() == "off" or not isinstance(session, str) or not session \
                 or not re.fullmatch(tool_matcher(), name):
             return {}

@@ -1150,6 +1150,25 @@ LEAD = ("Before you say a Python task is done, have G6 check it; when stuck, uns
         "G6 refusal, call g6_select with the task, your phase and the refusal's code.")
 
 
+def rank_library_methods(variants, trials, context, *, admit_trial=None):
+    """Read-only measured library-method ranking through the existing contextual selector.
+
+    M supplies variants and field trials as data. Only the independent evaluator's
+    admission hook can credit a trial; its absence is a cold start. Selection gives
+    order within the task budget, never a verdict or an authority upgrade.
+    """
+    from g6.cognitive_bridge.metacognition import MetacognitiveMethodSelector
+
+    variants = tuple(variants)
+    if not variants:
+        return None
+    if any(v.kind != 'library_method' for v in variants):
+        raise ValueError('library ranking accepts only library_method variants')
+    selector = MetacognitiveMethodSelector(trials, admit_trial=admit_trial, exploration_weight=0.)
+    return selector.select(context, variants, required_methods=('library_check',),
+                           max_optional=min(10, max(0, len(variants) - 1)))
+
+
 def hint(prompt: str) -> str:
     """The few words the prompt hook adds when a task starts (plan revision 8, A): the first two calls
     ``select(prompt, "plan")`` puts first (by its plan-phase rules and shared words), by name only (an op as

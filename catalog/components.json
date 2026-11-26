@@ -1357,6 +1357,17 @@
     "vetting": null
   },
   {
+    "name": "distill",
+    "summary": "Training-only method proposals, static test-change observations and independently gated library admission.",
+    "maturity": "unlabelled",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "distillation",
     "summary": "g6.distillation \u2014 check and run a small distilled function, and test it on held-out cases before anyone relies on it.",
     "maturity": "beta",
@@ -1882,6 +1893,17 @@
       "safety_engine",
       "workspace"
     ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "self_model",
+    "summary": "An inspectable self-model: immutable facts, discrepancies and pre-action simulations.",
+    "maturity": "unlabelled",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
     "sensitive_ops": [],
     "vetting": null
   },
