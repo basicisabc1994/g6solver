@@ -22,9 +22,11 @@ from g6.mcp import build_server  # noqa: E402
 MARKER = "zqxprivateextension"
 
 
-def _calls(calls: list[tuple[str, dict]], client: str = "codex") -> list:
+def _calls(calls: list[tuple[str, dict]], client: str | None = "codex") -> list:
+    """Each call's reply as text; ``client`` None leaves FastMCP's own client name, which G6 does not know."""
     async def run() -> list:
-        async with Client(build_server(), client_info=Implementation(name=client, version="test")) as session:
+        named = {"client_info": Implementation(name=client, version="test")} if client is not None else {}
+        async with Client(build_server(), **named) as session:
             return [str(await session.call_tool(name, arguments)) for name, arguments in calls]
     return asyncio.run(run())
 
@@ -50,6 +52,36 @@ def test_a_fresh_client_gets_the_built_in_catalogue(tmp_path, monkeypatch, clien
     assert "'component': 'grounding'" in found or '"component": "grounding"' in found
     assert "check_claim" in described
     assert "grounding" in listed and "epistemic_integrity" in listed
+
+
+UNNAMED = "some-unnamed-client"
+
+
+@pytest.mark.parametrize("client", [None, UNNAMED])
+def test_a_client_g6_cannot_name_gets_the_built_in_catalogue_and_the_selector(tmp_path, monkeypatch, client):
+    """A client whose name G6 does not know (``cloud:unknown``) can grant nothing, so a reply that held only its own
+    request was withheld with no way on, the selector's among them; G6's catalogue and selector are its own text
+    (the owner's decision 1, 2026-11-16) and now answer it, built-in components only."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "fresh-home"))
+    selected, found, described, listed, helped = _calls([
+        ("g6_select", {"task": "review my patch before I say it is done", "phase": "verify"}),
+        ("g6_find", {"query": "check a claim against its sources"}), ("g6_describe", {"component": "grounding"}),
+        ("g6_components", {}), ("g6_help", {})], client)
+    for reply in (found, described, listed, helped):
+        assert "G6_E_CLOUD_CONSENT_REQUIRED" not in reply, reply[:400]
+    # the selector's reply names the consent code among its remedies; withheld, it would carry cloud_consent_code
+    assert "cloud_consent_code" not in selected and "'candidates'" in selected, selected[:400]
+    assert "g6_review_patch" in selected
+    assert "'component': 'grounding'" in found and "check_claim" in described, (found[:300], described[:300])
+    assert "grounding" in listed and "g6_select" in helped
+    assert "host_facts" in described                            # this computer's facts stay out
+
+
+def test_a_client_g6_cannot_name_gets_no_extension_text(extension):
+    listed, found, described = _calls([("g6_components", {}), ("g6_find", {"query": extension}),
+                                       ("g6_describe", {"component": extension})], UNNAMED)
+    assert extension not in listed and extension not in found and extension not in described, described[:300]
+    assert "G6_E_CLOUD_CONSENT_REQUIRED" not in listed + found + described
 
 
 @pytest.fixture

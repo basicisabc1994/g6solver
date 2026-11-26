@@ -20,12 +20,25 @@ from g6.mcp.consent import request_consent
 _PROVIDER = re.compile(r'(?:anthropic:(?:claude_code|api)|openai:(?:codex|api)|openrouter:api|endpoint:[0-9a-f]{64})\Z')
 _PUBLIC = object()
 _INSIDE: contextvars.ContextVar[bool] = contextvars.ContextVar('g6_tool_body', default=False)
+#: What to record once this call's reply reaches the client (``g6.mcp.repair.observed``), kept by the call's middleware.
+_DELIVERY: contextvars.ContextVar[list | None] = contextvars.ContextVar('g6_reply_delivery', default=None)
 
 
 def public_tool(fn):
     """Host-declared program instructions or opaque consent metadata, never source content."""
     fn._g6_public = _PUBLIC
     return fn
+
+
+def _in_thread(fn, *args, **kwargs):
+    """A synchronous tool body, in its worker thread. It starts only if it claimed its start while its call's
+    connection was open (``g6.mcp.consent_transport.claim_start``, under that connection's lock), and its call was not
+    cancelled. Python cannot stop a thread, so a body already started runs on; its caller is abandoned
+    (``abandon_on_cancel``): the connection does not wait for it, and what it returns is never sent, admitted or
+    counted."""
+    from g6.mcp.consent_transport import claim_start
+    claim_start()
+    return fn(*args, **kwargs)
 
 
 def _source_function(fn):
@@ -52,7 +65,7 @@ def _source_function(fn):
             declared = declaration.sources(arguments) if declaration is not None else ()
             with policy.request_sources(declared):
                 value = fn(*bound.args, **bound.kwargs) if inspect.iscoroutinefunction(fn) else await anyio.to_thread.run_sync(
-                    partial(fn, *bound.args, **bound.kwargs))
+                    partial(_in_thread, fn, *bound.args, **bound.kwargs), abandon_on_cancel=True)
                 if inspect.isawaitable(value):
                     value = await value
             if root:
@@ -98,33 +111,47 @@ def _source_function(fn):
 
 def _repaired(tool, arguments, value, capture):
     """``value`` (a frozen snapshot) with its repair block when it is a refusal; the same object otherwise, or when
-    the repair cannot be made: the block never changes whether or how a call is answered."""
-    from g6.mcp.repair import observe, suppress_declined_dialogs
+    the repair cannot be made: the block never changes whether or how a call is answered. The attempt is counted
+    only once the reply reaches the client, after the consent decision (the call's middleware hands the count to the
+    transport); a reply withheld for consent was never seen, so it is not counted."""
+    from g6.mcp.repair import observed, suppress_declined_dialogs
     try:
         session = capture.client[1] if capture.client else None
-        value = observe(tool, arguments, value, session)
-        return suppress_declined_dialogs(value, session) if tool == 'g6_select' else value
+        value, record = observed(tool, arguments, value, session)
+        delivery = _DELIVERY.get()
+        if delivery is None:
+            record()
+        else:
+            delivery.append(record)
+        if tool != 'g6_select':
+            return value
+        return suppress_declined_dialogs(value, session, capture.client[0] if capture.client else '')
     except Exception:  # noqa: BLE001
         return value
 
 
-def input_refusal(tool: str, fields, *, arguments=None, session=None) -> dict:
+def input_refusal(tool: str, fields, *, arguments=None, session=None, records=None) -> dict:
     """An undeclared argument is refused before executing or admitting any source.
 
-    Only published field names and G6's program text are returned; no argument value is read back.
+    Only published field names and G6's program text are returned; no argument value is read back. With ``records``
+    (the call's middleware), the refusal's ``Record`` is kept there and counted on delivery; else at once.
     """
     from g6.core.guidance_builders import blocked_reply
-    from g6.mcp.repair import observe
+    from g6.mcp.repair import observe, observed
 
     reply = blocked_reply('[G6_E_INPUT_VALIDATION] Undeclared tool argument; use only the declared arguments.')
-    reply = observe(tool, arguments, reply, session)
+    if records is None:
+        reply = observe(tool, arguments, reply, session)
+    else:
+        reply, record = observed(tool, arguments, reply, session)
+        records.append(record)
     if reply.get('repair') is not None and reply['repair']['by'] == 'agent':
         reply['repair']['fill'] = sorted(fields)
     from g6.core.agent_guidance import reply_for_agent
     return reply_for_agent(reply)
 
 
-def input_error_result(tool: str, fields, *, arguments=None, session=None):
+def input_error_result(tool: str, fields, *, arguments=None, session=None, records=None):
     """G6's public validation envelope, retaining the MCP protocol's error status."""
     from fastmcp.tools.tool import ToolResult
     from mcp import types
@@ -133,7 +160,19 @@ def input_error_result(tool: str, fields, *, arguments=None, session=None):
         def to_mcp_result(self):
             return types.CallToolResult(content=self.content, structuredContent=self.structured_content, isError=True)
 
-    return InputErrorResult(structured_content=input_refusal(tool, fields, arguments=arguments, session=session))
+    return InputErrorResult(structured_content=input_refusal(tool, fields, arguments=arguments, session=session,
+                                                             records=records))
+
+
+#: The MCP client names G6 knows, each with the provider its replies reach. Any other client is ``cloud:unknown``,
+#: which no grant covers.
+CLIENTS = {'claude-code': 'anthropic:claude_code', 'claude code': 'anthropic:claude_code',
+           'codex': 'openai:codex', 'codex-mcp-client': 'openai:codex'}
+#: G6's catalogue and selector (the owner's decision 1, 2026-11-16): built-in text. A reply of one of them to a client
+#: G6 cannot name is marked as the reply to the client's own request (``requester``), so admission may send that
+#: client back the exact bytes it supplied, unless the person revoked them, recording the disclosure; every other
+#: source of the reply still needs what admission always needs, and ``cloud:unknown`` has no grant.
+CATALOGUE_TOOLS = frozenset({'g6_select', 'g6_find', 'g6_describe', 'g6_components', 'g6_help'})
 
 
 def client_provider(ctx: Any) -> str:
@@ -142,8 +181,7 @@ def client_provider(ctx: Any) -> str:
     except (AttributeError, RuntimeError, TypeError):
         return 'cloud:unknown'
     # Exact protocol names, never a caller-supplied provider argument or a substring match.
-    return {'claude-code': 'anthropic:claude_code', 'claude code': 'anthropic:claude_code',
-            'codex': 'openai:codex', 'codex-mcp-client': 'openai:codex'}.get(name, 'cloud:unknown')
+    return CLIENTS.get(name, 'cloud:unknown')
 
 
 async def request_grant(ctx: Any, source: str, provider: str, *, description: str = '', label: str = '') -> dict:
@@ -193,11 +231,14 @@ def withheld_reply(result=None, *, job=None, metadata=None, provider='cloud:unkn
     empty_result = control.pop('empty_result', None)
     review_provider = control.pop('review_provider', '')
     has_report, has_text = control.pop('has_report', False), control.pop('has_text', False)
+    from g6.mcp.repair import consent_block, unnamed_client_step
     message = ('Results were withheld from a source not shared with this provider. Tell the person. ' +
                policy.withheld_message(provider, sources).removeprefix(policy.WITHHELD).lstrip())
+    if not _PROVIDER.fullmatch(provider):           # no grant covers it: the dialog cannot help
+        provider = 'cloud:unknown'
+        message += ' ' + unnamed_client_step()
     refused = {**blocked_reply(f'[{code}] {message}'), **control}
     refused['cloud_consent_code'] = policy.REQUIRED
-    from g6.mcp.repair import consent_block
     refused['repair'] = consent_block(session, sources, provider)
     if empty_result is not None:
         refused['result'] = empty_result
@@ -271,6 +312,7 @@ def install(server) -> None:
     class ConsentEgress(Middleware):
         async def on_call_tool(self, context, call_next):
             from g6.mcp.consent_transport import call_body, install as install_transport, prepare
+            from g6.mcp.repair import Record
             ctx = context.fastmcp_context
             session = None
             try:
@@ -279,7 +321,7 @@ def install(server) -> None:
             except (AttributeError, RuntimeError):
                 supported = False
             if not supported:
-                return ToolResult(structured_content=withheld_reply(session=session))
+                return ToolResult(structured_content=withheld_reply(session=session, provider=client_provider(ctx)))
             args = context.message.arguments or {}
             with policy.collect_sources() as capture:
                 capture.client_arguments = deepcopy(args)
@@ -289,10 +331,12 @@ def install(server) -> None:
                 # them, including an agent's purported answer to a dialog.
                 # Enforce the published argument names before that conversion.
                 if set(args) - tool.parameters.get('properties', {}).keys():
+                    refusals: list = []
                     result = input_error_result(context.message.name, tool.parameters.get('properties', {}),
-                                                arguments=args, session=session)
+                                                arguments=args, session=session, records=refusals)
                     wire = result.to_mcp_result().model_dump(mode='json', by_alias=True, exclude_none=True)
-                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire,
+                            delivered=refusals[0] if refusals else None)
                     return result
                 capture.expected_tool = getattr(getattr(tool, 'fn', None), '_g6_tool_identity', None)
                 capture.client = client_provider(ctx), session
@@ -311,7 +355,14 @@ def install(server) -> None:
                         for child in value:
                             inputs(child)
                 inputs(args)
-                result = await call_next(context)
+                records: list = []
+                token = _DELIVERY.set(records)
+                try:
+                    result = await call_next(context)
+                finally:
+                    _DELIVERY.reset(token)
+                delivered = Record(lambda evidence: [record.sent(evidence) for record in records],
+                                   lambda evidence: [record(evidence) for record in records])
                 returned = capture.returned
                 # The rendered reply is serialised once, here. The frozen return is
                 # matched against that serialisation and the ticket is cut from it,
@@ -322,11 +373,13 @@ def install(server) -> None:
                 public = matches and returned[3]
                 refs = (() if public else returned[2]) if matches else None
                 if refs == ():
-                    prepare(session, ctx.request_context.request_id, result, (), body=wire)
+                    prepare(session, ctx.request_context.request_id, result, (), body=wire, delivered=delivered)
                     return result
                 sources = refs if refs is not None else (policy.UNKNOWN,)
+                requester = capture.client[0] == 'cloud:unknown' and context.message.name in CATALOGUE_TOOLS
                 prepare(session, ctx.request_context.request_id, result, sources, capture.supplied, capture.job,
-                        metadata=returned[4] if matches else None, body=wire)
+                        metadata=returned[4] if matches else None, body=wire, delivered=delivered,
+                        requester=requester)
                 return result
     server.add_middleware(ConsentEgress())
 

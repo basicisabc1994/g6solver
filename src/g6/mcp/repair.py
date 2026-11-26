@@ -16,7 +16,12 @@ Nothing here grants anything or answers for the person.
 
 Bounded retries: a refusal is never retried unchanged. ``retries_left`` counts down per (tool, code) in each MCP
 session from ``MAX_RETRIES``; a call sent again with the same arguments after a refusal (a ``retry`` class aside)
-leaves none. The digest of a refused call's arguments is kept in memory only, for that comparison.
+leaves none. The digest of a refused call's arguments is kept in memory only, for that comparison. Only a reply
+delivered to the client counts: one withheld for consent was never seen by the agent, so the same call made again
+after the person's grant is its first attempt. ``observed`` returns the reply and its ``Record``. Where G6 owns the
+writer (its stdio server, ``g6.mcp.stdio``; ``G6MemoryTransport`` in process) every effect runs from that message's
+own callback once all of it was written, with evidence ``written``; a failed or short write runs nothing. On any
+other transport every effect runs at the handoff (``consent_transport._handed``), with evidence ``inferred``. A count applies to the session's count as it is then, so a late one never gives back a retry.
 
 The repair log (``g6.core.repair_log``, ``repairs/repairs.jsonl`` under G6's state folder) is append-only and holds
 codes and ids only, never an argument or a word of text: one ``refused`` row per repair block, and one ``next`` row
@@ -37,7 +42,7 @@ import re
 import threading
 import uuid
 import weakref
-from typing import Any
+from typing import Any, Callable
 
 from g6.core.repair_log import append as _log
 from g6.core.repair_log import repair_stats
@@ -76,19 +81,38 @@ def declined_block(status: str) -> dict[str, Any]:
             "call": None, "fill": [], "validated": False, "retries_left": 0}
 
 
-def suppress_declined_dialogs(value: Any, session: Any) -> Any:
-    """Apply session decisions to G6's selector guidance, including generic dialog templates."""
+#: The provider of a client G6 cannot name (``g6.mcp.cloud_consent.client_provider``), which no grant covers.
+UNNAMED = "cloud:unknown"
+
+
+def unnamed_client_step() -> str:
+    """What to do when a reply is withheld from a client G6 cannot name: the dialog cannot help, since no grant
+    covers a provider G6 cannot name, so the client must name itself as one G6 knows."""
+    from g6.mcp.cloud_consent import CLIENTS
+
+    names = sorted(CLIENTS)
+    return (f"This client did not name itself as one G6 knows (an MCP client name of {', '.join(names[:-1])} or "
+            f"{names[-1]}), so G6 cannot tell which provider its replies reach, and no grant covers a provider G6 "
+            "cannot name. Tell the person: use G6 from Claude Code or Codex, where a withheld reply names the sources "
+            "to share and the person shares each with that client's provider in the dialog g6_cloud_grant opens.")
+
+
+def suppress_declined_dialogs(value: Any, session: Any, client: str = "") -> Any:
+    """Apply session decisions to G6's selector guidance, including generic dialog templates; for a client G6
+    cannot name (``client`` is ``UNNAMED``), no dialog template at all, since no grant can cover it."""
     if isinstance(value, list):
-        return [suppress_declined_dialogs(v, session) for v in value]
+        return [suppress_declined_dialogs(v, session, client) for v in value]
     if not isinstance(value, dict):
         return value
-    out = {k: suppress_declined_dialogs(v, session) for k, v in value.items()}
+    out = {k: suppress_declined_dialogs(v, session, client) for k, v in value.items()}
     call = value.get("call")
     if not isinstance(call, dict) or call.get("tool") != "g6_cloud_grant":
         return out
     args = call.get("arguments", {})
     source, provider = args.get("source", ""), args.get("provider", "")
-    if source and provider and not source.startswith("<") and not provider.startswith("<"):
+    if client == UNNAMED:
+        status = UNNAMED
+    elif source and provider and not source.startswith("<") and not provider.startswith("<"):
         from g6.core import cloud_consent as policy
 
         status = declined(session, policy.source_id(source), provider)
@@ -96,7 +120,7 @@ def suppress_declined_dialogs(value: Any, session: Any) -> Any:
         with _LOCK:
             status = next(iter(_state(session).get("_declined", {}).values()), "")
     if status:
-        step = declined_block(status)["step"]
+        step = unnamed_client_step() if status == UNNAMED else declined_block(status)["step"]
         out.update(call=None, by="person", tell_person=True, fill=[], validated=False, step=step)
         for field in ("say", "action"):
             if field in out:
@@ -208,23 +232,63 @@ def block(tool: str, reply: dict[str, Any], *, data: dict[str, Any] | None = Non
 
 
 def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
-    """``reply`` as the agent gets it: with its repair block when it is a refusal, the session's retry count applied;
-    the repair log told how the last repair of this tool in the session ended. Never fails the call."""
+    """``reply`` as the agent gets it, counted at once: for a reply that is delivered whatever it holds (G6's own
+    input refusal, a call with no MCP transport). Never fails the call."""
+    reply, record = observed(tool, arguments, reply, session)
+    record()
+    return reply
+
+
+#: How a delivery effect knows the reply reached the client: ``written``, seen at a writer G6 owns (its stdio writer
+#: after the line's write and flush, ``G6MemoryTransport`` as the in-process client takes it); ``inferred``, from the
+#: handoff on a transport G6 cannot see. Every row says which, so the log never claims more than it saw.
+WRITTEN, INFERRED = "written", "inferred"
+
+
+class Record:
+    """What to record about one reply. ``sent(evidence)``: the reply reached the client, so the repair log learns how
+    the last repair of this tool in the session ended, as that call came back. Calling the record also counts the
+    attempt (a refusal's retry count and its ``refused`` row). Each step runs once; a reply withheld in place of this
+    one, or one whose write failed, runs neither."""
+
+    def __init__(self, ended: Callable[[str], None], counted: Callable[[str], None] | None = None) -> None:
+        self._ended, self._counted, self._done = ended, counted, set()
+
+    def sent(self, evidence: str = INFERRED) -> None:
+        if "sent" not in self._done:
+            self._done.add("sent")
+            self._ended(evidence)
+
+    def __call__(self, evidence: str = INFERRED) -> None:
+        self.sent(evidence)
+        if self._counted is not None and "counted" not in self._done:
+            self._done.add("counted")
+            self._counted(evidence)
+
+
+def observed(tool: str, arguments: Any, reply: Any, session: Any = None) -> tuple[Any, Record]:
+    """``reply`` as the agent would get it, with its repair block when it is a refusal and the session's retry count
+    applied, and its ``Record``: ``sent()`` once it was handed to the client, called once it is seen written. A reply
+    withheld for consent is never recorded, so it is not an attempt the agent saw. Neither fails the call."""
     state = _state(session)
     with _LOCK:
         token = state.setdefault("_session", uuid.uuid4().hex[:12])
-        pending = state.pop(("pending", tool), None)
     is_refused = refused(reply)
-    if pending is not None:
-        _log({"event": "next", "id": pending["id"], "session": token, "tool": tool, "code": pending["code"],
-              "outcome": "not" if is_refused else "resolved"})
+
+    def ended(evidence: str) -> None:
+        with _LOCK:
+            pending = state.pop(("pending", tool), None)
+        if pending is not None:
+            _log({"event": "next", "id": pending["id"], "session": token, "tool": tool, "code": pending["code"],
+                  "outcome": "not" if is_refused else "resolved", "evidence": evidence})
+
     if not is_refused or "job_id" in reply:
         # a job's reply is bound to the digest of the result the job recorded (g6.metaharness.jobs), so no word is
         # added to it here; its refusal is repaired through g6_select, which reads the job's reply
-        return reply
+        return reply, Record(ended)
     found = block(tool, reply)
     if found is None:
-        return reply
+        return reply, Record(ended)
     if tool == "g6_cloud_grant" and isinstance(arguments, dict):
         from g6.core import cloud_consent as policy
 
@@ -234,39 +298,53 @@ def observe(tool: str, arguments: Any, reply: Any, session: Any = None) -> Any:
             status = ""
         if status:
             found = {**declined_block(status), "code": found["code"]}
-    digest = _digest(arguments)
+    digest, person, retry = _digest(arguments), found["by"] == "person", found["fix_by"] == "retry"
+
+    def remaining(row: dict[str, Any] | None) -> int:
+        """The retries left after this attempt, from the session's count as ``row`` holds it."""
+        if person:
+            return 0
+        if row is None:
+            return MAX_RETRIES
+        if row["digest"] == digest and not retry:
+            return 0                                    # the same call again, unchanged
+        return max(0, row["left"] - 1)
+
     with _LOCK:
-        row = state.get((tool, found["code"]))
-        if found["by"] == "person":
-            left = 0
-        elif row is None:
-            left = MAX_RETRIES
-        elif row["digest"] == digest and found["fix_by"] != "retry":
-            left = 0                                    # the same call again, unchanged
-        else:
-            left = max(0, row["left"] - 1)
-        state[(tool, found["code"])] = {"left": left, "digest": digest}
+        left = remaining(state.get((tool, found["code"])))
     if left == 0 and found["by"] == "agent":
         found = {**found, "by": "person", "step": found["step"] + (
             " This refusal came back again with no repair left (or the same call was sent unchanged): tell the "
             "person what it says, and stop.")}
     found["retries_left"] = left
-    repair_id = uuid.uuid4().hex[:12]
-    _log({"event": "refused", "id": repair_id, "session": token, "tool": tool, "code": found["code"],
-          "fix_by": found["fix_by"], "by": found["by"]})
-    if found["by"] == "person":
-        _log({"event": "next", "id": repair_id, "session": token, "tool": tool, "code": found["code"],
-              "outcome": "person"})
-    else:
+    code, fix_by, by = found["code"], found["fix_by"], found["by"]
+
+    def counted(evidence: str) -> None:
         with _LOCK:
-            state[("pending", tool)] = {"id": repair_id, "code": found["code"]}
-    return {**reply, "repair": found}
+            # counted from the session's count as it is now, never from the one this reply was built on: a reply
+            # delivered late after others never gives back a retry they spent
+            state[(tool, code)] = {"left": remaining(state.get((tool, code))), "digest": digest}
+        repair_id = uuid.uuid4().hex[:12]
+        _log({"event": "refused", "id": repair_id, "session": token, "tool": tool, "code": code, "fix_by": fix_by,
+              "by": by, "evidence": evidence})
+        if by == "person":
+            _log({"event": "next", "id": repair_id, "session": token, "tool": tool, "code": code,
+                  "outcome": "person", "evidence": evidence})
+        else:
+            with _LOCK:
+                state[("pending", tool)] = {"id": repair_id, "code": code}
+
+    return {**reply, "repair": found}, Record(ended, counted)
 
 
 def consent_block(session: Any = None, sources=(), provider: str = "") -> dict[str, Any]:
-    """The repair block of a reply withheld for consent: the person decides, in the dialog ``g6_cloud_grant`` opens."""
+    """The repair block of a reply withheld for consent: the person decides, in the dialog ``g6_cloud_grant`` opens;
+    from a client G6 cannot name, which no grant covers, the person's step is to use a client G6 knows."""
     from g6.core import refusals
 
+    if provider == UNNAMED:
+        return {"code": "G6_E_CLOUD_CONSENT_REQUIRED", "fix_by": "person", "by": "person",
+                "step": unnamed_client_step(), "call": None, "fill": [], "validated": False, "retries_left": 0}
     for source in sources:
         status = declined(session, source.source_id, provider)
         if status:
@@ -282,4 +360,4 @@ def consent_block(session: Any = None, sources=(), provider: str = "") -> dict[s
             "fill": ["provider", "source"], "validated": True, "retries_left": 0}
 
 
-__all__ = ["MAX_RETRIES", "block", "consent_block", "observe", "refused", "repair_stats"]
+__all__ = ["MAX_RETRIES", "block", "consent_block", "observe", "observed", "refused", "repair_stats"]

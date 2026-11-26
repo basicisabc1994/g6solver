@@ -796,6 +796,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
 
 def main() -> None:
+    """Serve over stdio through G6's own writer, so each reply is counted once written (``g6.mcp.stdio.serve``),
+    on the private protocol descriptor ``g6.mcp._stdio.run_stdio`` keeps from children and stray writes."""
     from g6.mcp._stdio import run_stdio
 
     run_stdio(build_server)
