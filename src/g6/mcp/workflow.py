@@ -194,9 +194,14 @@ def _reply(project: str, item: str, result: dict, summary: str, next_step: str) 
 
 
 def _project(repo: str) -> str | None:
-    """The project for ``repo``; None when it is not a full path to a folder."""
+    """The project for ``repo``; None when it is not a full path to a folder. A network or device path is None on its
+    words, before anything asks the file system about it (``storage._elsewhere``, as ``repo_tests.checked_repo``)."""
     from pathlib import Path
 
+    from g6.core.storage import _elsewhere
+
+    if not isinstance(repo, str) or _elsewhere(repo):
+        return None
     try:
         return project_id(repo) if isinstance(repo, str) and Path(repo).is_absolute() and Path(repo).is_dir() else None
     except (ValueError, OSError):

@@ -1070,13 +1070,22 @@ def _index_path(repo: Path, rel: str, linked: dict[Path, bool] | None = None) ->
 
 
 def checked_repo(path: str | Path) -> Path:
-    """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top."""
+    """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top. A network or
+    device path is refused on its words, before anything asks the file system about it (``storage._elsewhere``, the
+    rule every path entry point applies first): asking Windows about a share opens it over the network. The folder it
+    resolves to is held to the same rule."""
+    from g6.core.storage import _elsewhere
+
+    if why := _elsewhere(str(path)):
+        raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     given = Path(str(path))
     if not given.is_absolute():
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["not_absolute"])
     if not given.is_dir():
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["not_a_folder"])
     repo = given.resolve()
+    if why := _elsewhere(str(repo)):
+        raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     try:
         top = _git(repo, "rev-parse", "--show-toplevel").decode("utf-8", "replace").strip()
     except RepoRefused as refused:

@@ -120,7 +120,11 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
     from g6.core.cloud_consent import Source, bind_output, repository_source
+    from g6.core.storage import _elsewhere
     from g6.harness import completion_loop
+    if why := _elsewhere(str(repo)):     # refused on its words, as ``repo_tests.checked_repo``: nothing asks about it
+        from g6.core.guidance_builders import blocked_reply
+        return bind_output(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}"), ())
     result = _step(repo, task, session, base, reason)
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
