@@ -8,9 +8,11 @@ import pytest
 from g6.mcp import build_server
 
 # Each value json.loads cannot read but whose text is not malformed: too deep (RecursionError), and an integer longer
-# than the interpreter converts (a plain ValueError, not a JSONDecodeError), positive or negative.
+# than the interpreter converts (a plain ValueError, not a JSONDecodeError), positive or negative. The depth is past
+# CPython's C recursion limit on every platform: 5,000 levels decode on Linux, whose limit is higher than Windows's.
 DIGITS = sys.get_int_max_str_digits() or 4300
-PAST = {"deep": "[" * 5000 + "0" + "]" * 5000,
+DEPTH = 100_000
+PAST = {"deep": "[" * DEPTH + "0" + "]" * DEPTH,
         "integer": "1" * (DIGITS + 1),
         "negative_integer": "-" + "9" * (DIGITS + 1)}
 KINDS = pytest.mark.parametrize("kind", list(PAST))
