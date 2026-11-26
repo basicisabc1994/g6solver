@@ -174,8 +174,9 @@ def test_adapter_failure_never_fails_the_review(repo, home, tmp_path, monkeypatc
 
 @pytest.mark.parametrize("value", [None, "off", "sometimes"])
 def test_collection_off_writes_nothing(repo, home, tmp_path, monkeypatch, value):
-    if value is None:
+    if value is None:      # unset with an off default: the default is on since the owner's ruling of 2026-11-25
         monkeypatch.delenv(policy.RECORD_ENV)
+        monkeypatch.setattr(policy, "ON_BY_DEFAULT", False)
     else:
         monkeypatch.setenv(policy.RECORD_ENV, value)
     session = tmp_path / "session-a"

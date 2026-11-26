@@ -33,8 +33,8 @@ The MCP server is the main surface. It goes from 20 tools to 56; the core librar
   evidenced result, with the reviewer loop that ends clean or says why not.
 - **The Context Engine** (`g6_knowledge_*`): knowledge search over folders the person names in `G6_KNOWLEDGE_ROOTS`.
   Adding a source asks the person to accept a preview in the dialog.
-- **The workflow record** (`g6_feedback`, `g6_suggestion_decide`, `g6_workflow_*`): off unless
-  `G6_WORKFLOW_RECORD=on` is set where the server is registered.
+- **The workflow record** (`g6_feedback`, `g6_suggestion_decide`, `g6_workflow_*`): on by default, off when
+  `G6_WORKFLOW_RECORD=off` is set where the server is registered.
 - **Routing**: the `using-g6` skill routes to every tool that ships.
 
 Merging stays the person's decision.

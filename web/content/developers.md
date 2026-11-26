@@ -270,7 +270,7 @@ nothing. A local loopback model needs no cloud grant. Claude Code and Codex sign
 ## The workflow record
 
 G6 can keep a local record of its own review work on a task (runs, rounds, questions, tool calls and their times). It is
-off until the person sets `G6_WORKFLOW_RECORD=on` where the server is registered. It is the person's data and has its own
+on by default; the person turns it off with `G6_WORKFLOW_RECORD=off` where the server is registered. It is the person's data and has its own
 source, `workflow:<the repository's identifier>`, which a grant for the repository does not cover.
 
 - `g6_workflow_export(repo)` writes `inspection.json` for the person to open; the reply never repeats the file.

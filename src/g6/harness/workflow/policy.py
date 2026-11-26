@@ -42,14 +42,14 @@ DELETION = {RUN_SUFFIX: "file", ANNOTATIONS: "entries", DECISIONS: "entries", FE
 WRITTEN_WHEN_OFF = (INSPECTION, RECEIPTS)
 
 RECORD_ENV = "G6_WORKFLOW_RECORD"
-#: Ruling (for the owner): the record is kept only after the person turns it on. On from first use is this one line.
-ON_BY_DEFAULT = False
+#: Owner ruling, 2026-11-25: the record is on by default; the person turns it off with G6_WORKFLOW_RECORD=off.
+ON_BY_DEFAULT = True
 
 
 def enabled() -> tuple[bool, str]:
     """Whether G6 records workflow events, and why not when it does not. The switch is read from the server's own
-    environment (``G6_WORKFLOW_RECORD``: ``on`` or ``off``), which an agent cannot set; a value G6 cannot read turns
-    collection off, and is not repeated."""
+    environment (``G6_WORKFLOW_RECORD``: ``on`` or ``off``; unset is ``ON_BY_DEFAULT``), which an agent cannot set; a
+    value G6 cannot read turns collection off, and is not repeated."""
     raw = os.environ.get(RECORD_ENV)
     if raw == "on" or raw is None and ON_BY_DEFAULT:
         return True, ""

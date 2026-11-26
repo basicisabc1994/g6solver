@@ -722,8 +722,8 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_UNKNOWN_OP": ("input", "core"),
     "G6_E_UNSAFE_OUTPUT": ("none", "core"),
     "G6_E_WORKFLOW_NOT_ADMITTED": ("person", "mcp",
-        "G6's workflow record is off or this call is not one it keeps: tell the person, who may set "
-        "G6_WORKFLOW_RECORD=on."),
+        "G6's workflow record is off or this call is not one it keeps: tell the person. The record is on by "
+        "default; G6_WORKFLOW_RECORD=off turns it off."),
     "G6_E_WORKFLOW_RECORD": ("tool:g6_workflow_export", "mcp", "Look at what G6 recorded, in a file the person opens."),
     "G6_E_WORKFLOW_RECORD_OFF": ("none", "harness"),
     "G6_E_WORKFLOW_RECORD_UNREADABLE": ("none", "harness"),
