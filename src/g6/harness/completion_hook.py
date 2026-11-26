@@ -12,12 +12,14 @@ ended loop does not leave the rest of a session unreviewed. Its base is HEAD at 
 arms a new loop) the agent is also told, after anything the scouts found, which G6 calls may fit the task and when to call
 G6 (``_hint``): at most 60 words, never the prompt's own, off where the person's key file says ``G6_HINTS=off``.
 
-``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
+``stop`` checks each Python change by default with a model-free patch review, after the boundary check. The reviewer
+loop is an opt-in extra. With no reviewer approved the report goes only to the person: no repair feedback or blocked turn.
+``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;
 when the stop rule fires the turn ends and ``systemMessage`` shows the report. What the agent said as it stopped goes with
 each call, from the hook's ``last_assistant_message`` where Claude Code gives one and else from the transcript, as it is the
-agent's reason if it left the code as it was. Where a loop did not run, ``systemMessage`` says what did not run and why, in
-one line: a turn never ends with the work silently untested.
+agent's reason if it left the code as it was. Where the reviewer loop did not run, ``systemMessage`` shows the model-free
+review and how to opt in, or the guard that prevented any check: a turn never ends with the work silently untested.
 
 ``tool``: on ``PostToolUse`` after a G6 tool, one line of ``additionalContext`` when the reply's ``repair`` block is the
 agent's to make (``g6.mcp.repair``), once per code in a session; off with ``G6_HINTS=off``.

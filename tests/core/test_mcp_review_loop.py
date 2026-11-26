@@ -163,7 +163,10 @@ def test_a_step_that_finds_a_failure_says_continue_with_the_text_for_the_agent(r
     rig.edit()
     got = rig.step()
     assert got["ok"] is True and got["action"] == "continue"
-    assert "rule one" in got["text"] and got["text"].endswith(loop.harness().review_ask)
+    # the reviewer's words, then the cases the parent rule admits (owner's ruling R4; 38628f4c)
+    assert "rule one" in got["text"] and loop.harness().review_ask in got["text"]
+    assert got["text"].endswith("Only these cases are defects (each fails at parent and patch):\n"
+                                "critic:test_critic.py::test_critic")
     assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_REVIEW_UNTIL_CLEAN"
     assert got["evidence"][0]["summary"].startswith("review 1: defect")
     enveloped(got)
@@ -278,7 +281,10 @@ def test_nothing_approved_is_blocked_with_how_to_turn_it_on(rig, monkeypatch):
     monkeypatch.setattr(keys, "read", lambda: {})
     rig.edit()
     got = rig.step()
-    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == keys.KEY_MISSING
+    # The owner's ruling R1 (2026-11-23; stop-exact-review 38628f4c): with no reviewer approved the step runs the
+    # model-free patch review, shows its report and ends untested, with how to turn the loop on.
+    assert (got["completion_state"], got["action"], got["ending"]) == ("qualified-draft", "stop", "untested")
+    assert "THE REVIEW" in got["report"]
     # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
     assert "G6_LOOP_CRITIC" not in got["report"] and "a setting named in G6's documentation" in got["report"]
     assert "to turn on the review-until-clean loop" in got["report"]
@@ -341,10 +347,12 @@ def test_repeating_a_failed_review_keeps_its_state_and_its_stable_code(rig):
 def test_repeating_a_refused_step_keeps_its_state_and_its_stable_code(rig, monkeypatch):
     monkeypatch.setattr(keys, "read", lambda: {})
     rig.edit()
-    rig.step()
+    first = rig.step()
     again = rig.step()
-    assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
-        False, "blocked-escalated", keys.KEY_MISSING)
+    # The owner's ruling R1 (2026-11-23; stop-exact-review 38628f4c): the default step ran the model-free review, and a
+    # repeat gives its report again and runs nothing.
+    assert (again["ok"], again["completion_state"], again["ending"]) == (True, "qualified-draft", "untested")
+    assert again["report"] == first["report"]
     # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
     assert "G6_LOOP_CRITIC" not in again["report"] and "a setting named in G6's documentation" in again["report"]
 

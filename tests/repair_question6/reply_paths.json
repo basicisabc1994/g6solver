@@ -804,6 +804,7 @@
       "if one.get('left_out')",
       "if critic is None",
       "if critic.get('error')",
+      "if critic is not None",
       "if failing"
     ],
     "_loop_lines": [
@@ -811,6 +812,22 @@
     ],
     "_times": [
       "{1: 'once', 2: 'twice'}.get(count, f'{count} times')"
+    ],
+    "legacy_review_notes/branches": [
+      "if result == 'failed' and (not run.get('observations', {}).get(file))"
+    ],
+    "legacy_review_notes": [
+      "{file: list(cases.values()) for file, cases in notes.items()}"
+    ],
+    "_note_lines": [
+      "[f\"- **Note:** {code(note.get('case') or file, 200)} ({code(file)}): {code(note.get('reason', ''), 300)}.\" for file, cases in notes.items() for note in cases]"
+    ],
+    "admitted_cases/branches": [
+      "if not observed.get('patch') or not observed.get('parent')"
+    ],
+    "admitted_cases": [
+      "set()",
+      "reviewer_cases(ProbeRun(**observed['patch']), ProbeRun(**observed['parent']))[0]"
     ],
     "findings/branches": [
       "if reviews"
@@ -823,8 +840,10 @@
     ],
     "_review_lines/branches": [
       "if reviews",
+      "if reviews",
       "if loop.get('ending')",
       "if count",
+      "if any((cases for cases in notes.values()))",
       "if loop.get('left')",
       "if loop.get('no_clean')",
       "if reviews",
@@ -835,8 +854,10 @@
       "if one.get('verdict') == 'defect' and one not in (*fixed, *still)",
       "if said == NOT_JUDGED",
       "if said == 'did not run' and one.get('unrun')",
+      "if said == 'notes only'",
       "if said == 'passed'",
       "if said is None",
+      "if said == 'notes only'",
       "if masked",
       "if masked != 1",
       "if loop.get('boundary')"

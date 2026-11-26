@@ -433,8 +433,13 @@ def test_the_loops_report_says_which_critic_read_the_patch():
 
 
 def review(n: int, verdict: str = "defect", results: dict | None = None, **more) -> dict:
+    # The parent rule (owner's ruling R4): a file that failed is one whose case failed at the parent and on the patch, as
+    # the run's saved observations say (``patch_report.admitted_cases``).
+    failed = {"exit": 1, "results": {"test_critic": "failed"}, "texts": {}}
+    observed = {file: {"patch": failed, "parent": failed} for file, said in (results or {}).items() if said == "failed"}
     return {"n": n, "verdict": verdict, "rule": f"rule {n}", "why": f"why {n}", "test": "", "error": "", "patch": "d",
-            "file": f"test_critic_{n}.py", "results": results or {}, **more}
+            "file": f"test_critic_{n}.py", "results": results or {}, **({"observations": observed} if observed else {}),
+            **more}
 
 
 CLEAN = {"reason": "a review reproduced nothing", "repairs": 1, "max_repairs": 3, "left": "", "no_clean": False, "boundary": "",

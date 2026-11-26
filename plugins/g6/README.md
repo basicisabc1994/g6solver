@@ -3,9 +3,10 @@
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 Coding agents say a task is finished when the code handles the example they were given. This plugin tests that claim. When
-Claude Code finishes a Python task, a reviewer from another model family reads the patch and must show a failure, not just
-name one. G6 sends what it shows back to the agent, has the repair read again until a review reproduces nothing or the stop
-rule fires, and then tells you what was found, what was fixed and what stayed open.
+Claude Code finishes a Python task, the Stop hook runs G6's model-free patch review of the change and shows you its report.
+With the reviewer loop turned on, Codex reads the patch and must show a failure, not just name one. G6 sends what it shows
+back to the agent, has the repair read again until a review reproduces nothing or the stop rule fires, and then tells you
+what was found, what was fixed and what stayed open.
 
 ## Install
 
@@ -29,9 +30,24 @@ Or run `g6 setup --client claude --allow patch_review.review`, which registers G
 servers, and only that one allows the review. To keep one, use `/plugin` to disable this plugin's server, or `claude mcp
 remove --scope user g6` to remove the other.
 
-## Turn it on
+## What runs by default
 
-The loop spends your Codex sign-in, so it does nothing until you approve that. Add this line to your key file, `~/.g6/.env`:
+With no line in your key file, when the agent stops and Python files have changed against the base commit, the Stop hook
+runs G6's model-free patch review of the change, with your task's text as its one requirement. It asks no model and spends
+no sign-in. It runs the repository's own tests that touch the changed modules, inside an operating-system boundary with no
+network, and a test that fails on the patch counts only if it passed at the base commit. It also compares the changed test,
+test-runner and continuous-integration files with the base commit. So it can find a test of a changed module that the patch
+breaks, a weakened test or a changed test runner, and an import that the repository's own import-linter contract forbids. It
+cannot find a defect that no existing test exercises, and it cannot tell whether the change does what you asked: no check
+states the task, so its outcome is at most `insufficient_evidence`. A test file counts as touching a changed module when it
+names the module, so a file that only mentions it is run too. The report says how many seconds the review took and how to
+turn the reviewer loop on. It goes to you only: nothing goes back to the agent, and your turn ends as usual. A stop with the
+same patch as the last review runs no second review.
+
+## Turn on the reviewer loop
+
+The reviewer loop is the opt-in extra. Its reviewer is Codex, on your Codex sign-in, so it does nothing until you approve
+that. Add this line to your key file, `~/.g6/.env`:
 
 ```
 G6_LOOP_CRITIC=codex
@@ -39,21 +55,28 @@ G6_LOOP_CRITIC=codex
 
 Lines set only in an agent's environment do not count: an agent's environment is not your approval.
 
-With that line, the review-until-clean loop runs. With no such line, and `G6_LLM_PROVIDER=claude_code`, the scouts' loop
-below runs instead. With neither, nothing is tested, and the report says which line to add.
+With that line, the review-until-clean loop runs, and the model-free review sits below its report. With no such line, and
+`G6_LLM_PROVIDER=claude_code`, the scouts' loop below runs instead. With neither, only the model-free review runs, its
+report says which line to add, and the loop's ending is `untested`, as no reviewer loop ran.
 
 ## What happens
 
+With the reviewer loop on:
+
 1. What you ask before G6 first tests the work is the task, and the commit you are on at your first prompt is the base.
    Uncommitted work you had then counts as part of the change.
-2. When the agent finishes and Python files have changed, a reviewer from another model family reads the task, the patch and
-   the files it touches, as they were at the base. It sees none of the agent's reasoning. It must state a rule, its reasons
-   and a test, and it may find nothing.
-3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run goes back
-   to the reviewer once, with the error. If it still will not run, the loop ends with no clean review: a defect was claimed
-   and could not be reproduced.
-4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
-   finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
+2. When the agent finishes and Python files have changed, Codex reads the task, the patch and the files it touches, as they
+   were at the base. When the agent is Claude Code's Claude, that is a reviewer from another model family; an agent that is
+   itself Codex gets no reviewer from another family. It sees none of the agent's reasoning. It must state a rule, its
+   reasons and a test, and it may find nothing.
+3. G6 runs the reviewer's test on the patch and at the parent, the base commit's code, inside an operating-system boundary,
+   with no network. A reviewer's test counts as a defect only when it fails both before and after the patch: at the parent
+   and on the patch. A test that fails only on the patch, or whose run at the parent gave no usable result, is shown in the
+   report as a note, with the case and the reason, and is never sent back as a defect. A test that will not run on the patch
+   goes back to the reviewer once, with the error. If it still will not run, the loop ends with no clean review: a defect
+   was claimed and could not be reproduced.
+4. If a case fails at the parent and on the patch, the rule, the reasons and the test go back to the agent in the same
+   session. The agent may reject the finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
    Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and its reply
    asks anything, by a question mark anywhere in it, that rejects nothing: the turn ends so you can answer, and the loop goes
    on when the agent next stops. A reply that asks with no question mark reads as a rejection, with its words in the report.
@@ -68,7 +91,7 @@ A new prompt after a loop has ended arms a new one, on the commit you are on at 
 earlier task stays in it, as the patch still holds that work, and a patch a loop has already come to a result on is not read
 again, so a "thanks" spends nothing. On a new commit it is read again, even if the diff is the same, as its parent is not.
 After a review that failed the next stop tries again. If a turn ends with nothing to test and the commit then moves, your
-next prompt starts on the new commit. Wherever a loop did not run, you get one line saying what did not run and why.
+next prompt starts on the new commit. Wherever nothing ran, you get one line saying what did not run and why.
 
 When a G6 tool refuses a call and its reply's `repair` block says the agent can fix the call itself, a hook gives the
 agent one line saying so, once per refusal code in a session. A refusal only you can resolve gets no line: the reply
@@ -76,15 +99,18 @@ tells the agent to ask you. Set `G6_HINTS=off` in Claude Code's environment to t
 
 ## What the report says, and what it does not
 
-The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no
-reviewer's test failed on it; `fixed`, when each test that failed now passes and a fresh review reproduced nothing;
-`contested`, when a test fails and the agent left the code as it was; `open`, when a test that failed has not been shown to
-pass; `untested`, when nothing tested this patch to a result. A tool's reply gives the same word as `ending`.
+The report starts with how the run ended, in one word: `clean`, when no reviewer's case fails at the parent and on the
+patch; `fixed`, when each such case now passes and a fresh review found no new one; `contested`, when such a case fails and
+the agent left the code as it was; `open`, when such a case has not been shown to pass; `untested`, when no reviewer loop
+came to a result on this patch, as when only the model-free review ran: its own outcome is in its report. A tool's reply
+gives the same word as `ending`.
 
-Then come the reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
-the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test still
-failing, or when the agent rejected it, with the agent's reason if it gave one. On the training bugs an open finding did not
-always mean a wrong patch, so read it as a question for you.
+Then come the reproduced findings: what was found, what was fixed, and what stayed open, and then the notes: each
+reviewer's case that failed only on the patch, or whose parent run gave no usable result, with why. A finding is fixed only
+when the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test
+still failing, or when the agent rejected it, with the agent's reason if it gave one. On the training bugs, under the
+earlier rule (a failure on the patch alone), an open finding did not always mean a wrong patch, so read it as a question for
+you.
 
 A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure it could show. A
 model wrote the tests, so none of them passes a requirement, and they are never given to the patch review as evidence.
@@ -101,6 +127,8 @@ installed only by the person after [previewing its settings and rollback](../../
 This loop is the worked examples' arm K, and it has been measured on seven training bugs only. It has no measurement on a bug
 kept out of training. It also differs from what was measured:
 
+- The parent rule: a reviewer's case is a defect only when it fails at the parent and on the patch. The measured runner sent
+  back a test that failed on the patch, whatever it did at the parent.
 - The reviewer here receives a text pack with no tools: the task, the patch, and the files the patch touches as they were at
   the base, up to 120,000 characters. Only those files may be cut: a task and patch too long to send whole get no review, and
   so no clean review. The measured reviewer read a folder holding the whole repository.
@@ -124,7 +152,9 @@ G6. It never repeats your prompt, and `G6_HINTS=off` in your key file, `~/.g6/.e
 ## From another client
 
 The Stop hook is Claude Code's. Any other client, or an agent without the plugin, can run the same loop one step at a time
-with `g6_review_until_clean`, which needs the same `patch_review.review` allowance as `g6_review_patch`. It takes the
+with `g6_review_until_clean`, which needs the same `patch_review.review` allowance as `g6_review_patch`. With no loop turned
+on in your key file it runs the same model-free review as the Stop hook. Its reviewer is Codex too, so it is from another
+model family only when the agent calling it is not Codex. It takes the
 repository, the task, a session name and the base commit, and returns a job to poll with `metaharness_job`. The result says
 continue, with the text for the agent, or stop, with the report. The first call fixes the session's repository, task and
 base, and a call for another repository or task is refused. A session takes one step at a time: a call that finds another
@@ -175,9 +205,9 @@ change G6's state, or read G6's files.
 
 Hidden probes live outside the repository, in G6's state folder, and the agent is never told where. That protects them from
 the agent reading them by accident or habit, not against code running as the same user. The reviewers' tests live there too,
-and a failing one goes back to the agent.
+and one that fails at the parent and on the patch goes back to the agent.
 
-Without an operating-system boundary, G6 refuses to run model-written tests, asks no model, and says so. `g6 doctor` says
-what your computer needs.
+Without an operating-system boundary, G6 runs no test at the stop, the model-free review's included, asks no model, and says
+so. `g6 doctor` says what your computer needs.
 
 The loop tests Python changes only.

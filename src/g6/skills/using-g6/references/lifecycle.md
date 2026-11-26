@@ -77,8 +77,9 @@ which the person grants; never change permissions yourself.
 Claude Code's plugin runs this loop from its Stop hook. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
 file, call `g6_review_until_clean` when you finish, with the folder, the task and one session name for the task, then poll
 `metaharness_job`. Repeat the same task on each call: another is refused. It needs the host permission
-`patch_review.review`. Another model family reads your patch without your reasoning, and must state a rule, reasons and a
-test. `continue` gives that finding when its test fails on your patch: check it against the task, then repair the cause, or
+`patch_review.review`. Codex reads your patch without your reasoning (another model family only if you are not Codex), and
+must state a rule, reasons and a test. `continue` gives that finding when its test fails at the parent and on your patch (one
+that fails only on your patch is a note): check it against the task, then repair the cause, or
 leave the code as it was, and call again, with `reason` in one line if you leave it: only a reason rejects a finding, and a
 call with neither gets the same finding back. `wait` means another step is running, so wait for its result, or that your
 reason was a question, which rejects nothing, so ask the person first. A fresh review reads each repair, at most 3 repairs. `stop` gives the report: show it as it is, and `ending` says how the run ended: clean,
