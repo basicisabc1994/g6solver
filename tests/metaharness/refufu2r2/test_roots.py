@@ -235,17 +235,25 @@ def test_session_launch_uses_captured_ownership(fake_host, review_dir, monkeypat
 def test_reader_and_ownership_inventory_from_the_code():
     tree = ast.parse(Path(usage.__file__).read_text(encoding="utf-8"))
     calls = {}
+    decoding_sites = []
 
     def walk(node, scope=""):
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
             scope = f"{scope}.{node.name}".lstrip(".")
         if isinstance(node, ast.Call):
             calls.setdefault(ast.unparse(node.func), set()).add(scope)
+            if ast.unparse(node.func) in {"json.loads", "_decode_json"}:
+                decoding_sites.append((scope, ast.unparse(node)))
         for child in ast.iter_child_nodes(node):
             walk(child, scope)
 
     walk(tree)
-    assert calls["json.loads"] == {"_reply_events", "read_limits.talk"}
+    assert calls["_decode_json"] == {"_reply_events", "read_limits.talk"}
+    assert "json.loads" not in calls
+    assert sorted(decoding_sites) == sorted([
+        ("_reply_events", "_decode_json(text)"), ("_reply_events", "_decode_json(line)"),
+        ("read_limits.talk", "_decode_json(line)"),
+    ])
     # Other JSON reads concern account readings; every host reply read is inventoried here.
     assert calls["host_models._result"] == {"_read_reply"}
     assert calls["_reply_events"] == {"_read_reply"}

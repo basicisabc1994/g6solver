@@ -25,6 +25,8 @@ keeps its intent alone, so nothing it changed counts as made through ctx_git.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import shlex
@@ -308,7 +310,7 @@ def records(repo: Path) -> list[dict[str, Any]]:
     calls: dict[str, dict[str, Any]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
-            entry = json.loads(line)
+            entry = _decode_json(line)
         except (ValueError, RecursionError, MemoryError):
             continue
         if not isinstance(entry, dict) or entry.get("repo") != str(repo):

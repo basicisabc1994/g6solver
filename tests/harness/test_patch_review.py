@@ -1073,7 +1073,7 @@ def test_the_check_provenances_later_phases_use_are_named_and_unused():
     import typing
 
     assert typing.get_args(patch_review.CheckProvenance) == (
-        "stated", "derived", "structural", "proposed", "adopted_proposal")
+        "stated", "derived", "structural", "proposed", "adopted_proposal", "library")
     assert typing.get_args(patch_review.RequirementProvenance) == (
         "stated", "repository_stated", "person_confirmed", "inferred", "model_hypothesis")
     assert patch_review.NORMATIVE == {"stated", "repository_stated", "person_confirmed"}

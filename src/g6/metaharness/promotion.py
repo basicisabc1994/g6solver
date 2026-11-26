@@ -2,6 +2,7 @@
 """Optional readiness cap. Modes do not authorise actions or bypass the existing meta-gate."""
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -94,7 +95,7 @@ def assess(mh, request: PromotionRequest | None = None):
         try:
             mh.ledger.append("ticket", f"promotion-{len(mh.ledger.rows('ticket'))}-{digest(row)}", row)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     state = "qualified-draft" if mode == wanted else "blocked-escalated"
     return _envelope(state, "G6_E_META_PROMOTION" if state == "qualified-draft" else "G6_E_META_PROMOTION_REQUIRED",
                      reason, mode=mode, requested=wanted, claims=claims, pass_rate=rate, report_digest=ident)

@@ -1578,7 +1578,8 @@
       "cegis"
     ],
     "introduced_by": [
-      "adapt_healing"
+      "adapt_healing",
+      "distill"
     ],
     "planned": [],
     "awaiting_review": []
@@ -1623,7 +1624,8 @@
       "graph_reasoning"
     ],
     "introduced_by": [
-      "adapt_bayesian"
+      "adapt_bayesian",
+      "self_model"
     ],
     "planned": [
       "g6.ml.science_harness"
@@ -1851,7 +1853,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "self_model"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2057,7 +2061,8 @@
     "guarded_by": [
       "australian_legal_corpus",
       "ctx_ace",
-      "ctx_contexthub"
+      "ctx_contexthub",
+      "self_model"
     ],
     "introduced_by": [],
     "planned": [],
@@ -2146,7 +2151,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "distill"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2716,6 +2723,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "distill",
       "learning"
     ],
     "introduced_by": [],

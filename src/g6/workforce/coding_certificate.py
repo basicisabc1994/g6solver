@@ -246,11 +246,13 @@ def certify(missions, ledger, mission_id: str) -> Certificate:
     artifact = Artifact(latest["sha256"], f"worker:{latest['producer']}", at[latest["artifact_id"]])
     # EVIDENCE-01: the controls and receipts G6's runs recorded for this mission go to a ledger the issuer resolves
     # them in; a repeated id is refused, never resolved twice.
-    observed = ChainLedger()
     try:
+        observed = ChainLedger()
         certificates.record(observed, *(c for found in controls.values() for c in found), *receipts)
     except LedgerError as exc:
         raise certificates.CertificateRefused([str(exc)]) from None
+    except (RecursionError, MemoryError):
+        raise certificates.CertificateRefused(["a recorded control or receipt exceeds the decoder's limits"]) from None
     return certificates.issue(facts, artifact, checks, receipts, decisions=_approved(missions, mission_id, facts.gates),
                               ledger=observed)
 

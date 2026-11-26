@@ -4,6 +4,8 @@
 A job may carry ``compact``: run in the job once its operation returns, with the result and the job's id, it gives the
 reply ``status`` returns by default; ``status(..., detail="full")`` returns the result itself. Should ``compact`` fail,
 ``status`` returns the result itself."""
+from g6.core.decoder_limits import json_value as _decode_json
+
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
@@ -39,9 +41,9 @@ class _FrozenResult:
     def completed(cls, ident, result_body, *, authored_envelope=True, external=()):
         # Legacy flag grants no exemption. Raw JSON always has default ownership.
         try:
-            result = restore(json.loads(result_body), external)
+            result = restore(_decode_json(result_body), external)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return cls.of({"ok": True, "job_id": ident, "status": "completed", "result": result})
 
     def read(self):
@@ -49,9 +51,9 @@ class _FrozenResult:
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
         try:
-            return restore(json.loads(body), self.external)
+            return restore(_decode_json(body), self.external)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class Jobs:
@@ -103,7 +105,7 @@ class Jobs:
                         # the producer's mutable result under its old receipt.
                         # A result's process-local custody (a review's task binding) goes with the copy.
                         custody = getattr(result, "custody", None)
-                        copy = restore(json.loads(body), receipts(result))
+                        copy = restore(_decode_json(body), receipts(result))
                         detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
                                                      metadata=metadata.read())
                         shown = compact(detached, ident)
@@ -120,6 +122,11 @@ class Jobs:
             except Exception as exc:
                 # Exception objects can mutate too. Polling never formats them.
                 refs = shown_refs = cloud.boundary_sources(carried=(cloud.UNKNOWN, *capture.sources))
+                from g6.distill.ledger import CommittedStepsRefusal, PartialAuthorityWrite
+                from g6.distill.refusal import refusal
+                if isinstance(exc, (PartialAuthorityWrite, CommittedStepsRefusal)):
+                    metadata = shown_metadata = _FrozenResult.of({'error_code': exc.code})
+                    return _FrozenResult.of({**refusal(exc), 'job_id': ident, 'status': 'failed'})
                 metadata = shown_metadata = _FrozenResult.of({'error_code': 'G6_E_JOB_FAILED'})
                 try:
                     message = f"[G6_E_JOB_FAILED] {type(exc).__name__}: {exc}"
@@ -170,7 +177,7 @@ class Jobs:
         if result['status'] == 'failed':
             # This code describes the host's failed future, not its opaque
             # exception text. Withholding that text must retain the stable code.
-            metadata['error_code'] = 'G6_E_JOB_FAILED'
+            metadata.setdefault('error_code', 'G6_E_JOB_FAILED')
         capture.job = {"job_id": ident, "status": result["status"], "digest": digest(result),
                        "review_unsent": stored.get("review_unsent", False),
                        "metadata": metadata}

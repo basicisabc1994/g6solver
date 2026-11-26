@@ -4,6 +4,8 @@
 """Compile a bounded Python repository objective into the existing workforce."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import difflib
 import fnmatch
@@ -1347,11 +1349,11 @@ def focused(missions, ledger, mission_id: str, unit: str, artifact_id: str, *, s
         if verdict["artifact_id"] != artifact_id or verdict["result"] != "fail" or not verdict["executed"]:
             continue
         try:
-            reasons = json.loads(verdict["reasons_json"] or "[]")
+            reasons = _decode_json(verdict["reasons_json"] or "[]")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
-            answered = json.loads(next((r[len(_ANSWERED):] for r in reasons if r.startswith(_ANSWERED)), "{}"))
+            answered = _decode_json(next((r[len(_ANSWERED):] for r in reasons if r.startswith(_ANSWERED)), "{}"))
         except (ValueError, RecursionError, MemoryError):  # cut short in the record: the check's own words stand instead
             answered = {}
         # Partial checks have full observations in the existing run receipt; the

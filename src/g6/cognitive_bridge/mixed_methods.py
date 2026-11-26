@@ -8,7 +8,8 @@ explicitly approved Python-side action against the real G6 registry.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import uuid
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
@@ -273,7 +274,7 @@ class MixedMethodExecutor:
         door turned false, outside a warning card, or a nested result outside the makers' format), fails the step with
         its code, the reason naming each place; that answer is not kept."""
         try:
-            reply = self._invoke(step, json.loads(params))  # a fresh copy of the bytes that were checked
+            reply = self._invoke(step, _decode_json(params))  # a fresh copy of the bytes that were checked
             card, request_id = reply["warning_card"], reply["request_id"]
             door = {"warning_card": dict(card), "request_id": request_id}
             if "result" not in reply:  # refused, or failed, before any answer: the door's error and card say why

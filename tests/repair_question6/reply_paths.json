@@ -520,11 +520,13 @@
       "if 'evidence' in stages",
       "if first_action and outcome == INSUFFICIENT",
       "if unknowns",
+      "if run.get('provenance') == 'library'",
       "if issuer_inputs is not None",
-      "if confirmed is not None"
+      "if confirmed is not None",
+      "if library_block"
     ],
     "_reply": [
-      "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
+      "{**envelope_fields(reliability_label='blocked-escalated' if library_block else 'qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
     ],
     "_listing/branches": [
       "if type(key) is not str or key not in LISTINGS",
@@ -846,7 +848,7 @@
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
       "if callable(custody)",
       "except (RecursionError, MemoryError)",
-      "raise ValueError('a JSON record exceeds decoder limits')",
+      "raise json.JSONDecodeError('a JSON record exceeds decoder limits', '', 0)",
       "if refs is not None",
       "if saved",
       "if recorded is not None"

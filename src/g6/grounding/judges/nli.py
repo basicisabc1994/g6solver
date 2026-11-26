@@ -2,6 +2,8 @@
 """An explicitly injected NLI reviewer, with no model selection or import-time work."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 
 from g6.core.llm import LLMCaller
@@ -24,9 +26,9 @@ class NLIJudge:
             '{"verdict":"entails"}, {"verdict":"contradicts"}, or {"verdict":"neutral"}.',
             json.dumps({"premise": passage, "hypothesis": claim}), max_tokens=64)
         try:
-            parsed = json.loads(reply)
+            parsed = _decode_json(reply)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if not isinstance(parsed, dict) or set(parsed) != {"verdict"}:
             raise ValueError("[G6_E_GROUNDING_JUDGE_FAILED] invalid NLI reply")
         verdict = parsed["verdict"]
@@ -57,7 +59,7 @@ class LocalNLICaller(LLMCaller):
 
         _start_model_call()
         try:
-            pair = json.loads(user)
+            pair = _decode_json(user)
             premise, hypothesis = pair["premise"], pair["hypothesis"]
             if not all(isinstance(t, str) for t in (premise, hypothesis)) or len(user) > 50_000:
                 raise ValueError("invalid or oversized NLI input")

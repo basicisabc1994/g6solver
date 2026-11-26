@@ -63,6 +63,7 @@ candidate. These rank after MCP calls, take at most ``LIBRARY_SLOTS``, and are n
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
 
 import copy
 import itertools
@@ -326,7 +327,7 @@ def _read(outcome: str) -> dict[str, str]:
     seen = dict.fromkeys(("code", "state", "word", "component", "op", "pair"), "")
     text = (outcome or "").strip()
     try:
-        value = json.loads(text) if text.startswith("{") else None
+        value = _decode_json(text) if text.startswith("{") else None
     except (ValueError, RecursionError, MemoryError):
         value = None
     lead = ""
@@ -595,7 +596,7 @@ def _items(considering: Any) -> list[Any]:
     text = considering.strip()
     if text.startswith(("[", "{")):
         try:
-            parsed = json.loads(text)
+            parsed = _decode_json(text)
         except (RecursionError, MemoryError, ValueError, TypeError):
             raise _Refusal("considering starts as JSON but does not decode") from None
         items = parsed if isinstance(parsed, list) else [parsed]
@@ -628,11 +629,7 @@ def _check_op(entry: dict[str, Any], args: Any) -> tuple[bool, list[str]]:
     unknown = sorted(set(args) - set(entry.get("fields", ())))
     if unknown:
         issues.append(f"{component}.{op}'s typed input takes no field {', '.join(unknown)}")
-    try:
-        template = json.loads(entry["call"]["arguments"]["params_json"])
-    except (ValueError, TypeError, RecursionError, MemoryError):
-        return False, [f"{component}.{op}'s template is not JSON G6 can read"]
-    missing = sorted(set(template) - set(args))
+    missing = sorted(set(_decode_json(entry["call"]["arguments"]["params_json"])) - set(args))
     if missing:
         issues.append(f"{component}.{op} needs the field {', '.join(missing)}")
     return not issues, issues
@@ -798,7 +795,7 @@ def _validate(entry: dict[str, Any], call: dict[str, Any]) -> tuple[bool, list[s
         if call == entry["call"]:                   # the template: the door's own check, made when the corpus was built
             return bool(entry["validated"]), list(entry["issues"])
         try:
-            params = json.loads(call["arguments"].get("params_json", "{}"))
+            params = _decode_json(call["arguments"].get("params_json", "{}"))
         except (ValueError, RecursionError, MemoryError, TypeError):
             return False, ["params_json is not JSON"]
         return _check_op(entry, params)
@@ -833,10 +830,7 @@ def invoke_sketch(steps: list[str], data: dict[str, Any] | None = None) -> str:
         if entry is None or entry["sensitive"] or not entry["validated"] or entry["issues"]:
             return ""
         component, op = step.split(".", 1)
-        try:
-            params = repr(json.loads(entry["call"]["arguments"]["params_json"]))
-        except (ValueError, TypeError, RecursionError, MemoryError):
-            return ""
+        params = repr(_decode_json(entry["call"]["arguments"]["params_json"]))
         lines.append(f'step{index} = g6.invoke("{component}", "{op}", {params})')
     return "\n".join(lines)
 
@@ -1148,6 +1142,25 @@ HINT_PREFIX = "G6 calls that may fit at the start of a task: "
 #: It is kept here because core imports no component and not ``g6.mcp`` (pyproject's first import contract).
 LEAD = ("Before you say a Python task is done, have G6 check it; when stuck, unsure which G6 tool fits, or after a "
         "G6 refusal, call g6_select with the task, your phase and the refusal's code.")
+
+
+def rank_library_methods(variants, trials, context, *, admit_trial=None):
+    """Read-only measured library-method ranking through the existing contextual selector.
+
+    M supplies variants and field trials as data. Only the independent evaluator's
+    admission hook can credit a trial; its absence is a cold start. Selection gives
+    order within the task budget, never a verdict or an authority upgrade.
+    """
+    from g6.cognitive_bridge.metacognition import MetacognitiveMethodSelector
+
+    variants = tuple(variants)
+    if not variants:
+        return None
+    if any(v.kind != 'library_method' for v in variants):
+        raise ValueError('library ranking accepts only library_method variants')
+    selector = MetacognitiveMethodSelector(trials, admit_trial=admit_trial, exploration_weight=0.)
+    return selector.select(context, variants, required_methods=('library_check',),
+                           max_optional=min(10, max(0, len(variants) - 1)))
 
 
 def hint(prompt: str) -> str:

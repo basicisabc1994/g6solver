@@ -7,7 +7,8 @@ measurement (audit 008, ST-010). The caller invokes the component itself and pas
 """
 from __future__ import annotations
 
-import json
+from g6.self_training._decoder_limits import json_value as _decode_json
+
 import time
 from pathlib import Path
 from typing import Any
@@ -155,7 +156,7 @@ class RubricRegistry:
         count = 0
         for path in sorted(directory.glob("*.json")):
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = _decode_json(path.read_text(encoding="utf-8"))
                 rubrics = [ComponentRubric.model_validate(item) for item in (data if isinstance(data, list) else [data])]
             except Exception as exc:  # noqa: BLE001 - one bad file does not stop the others loading
                 self.load_errors.append(f"{path.name}: {exc}")

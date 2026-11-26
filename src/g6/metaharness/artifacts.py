@@ -8,6 +8,8 @@ is the digest of its files' manifest (``g6.integrity``).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import shutil
@@ -65,9 +67,9 @@ class ArtifactStore:
 
     def admission(self, sha: str) -> dict[str, Any]:
         try:
-            return json.loads((self.root / "distillates" / sha / "admission.json").read_text(encoding="utf-8"))
+            return _decode_json((self.root / "distillates" / sha / "admission.json").read_text(encoding="utf-8"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     # adapters -----------------------------------------------------------------------------------------------------
     def put_adapter(self, folder: str | Path) -> str:

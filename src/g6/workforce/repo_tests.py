@@ -59,6 +59,8 @@ invoked here.
 from __future__ import annotations
 from g6.core.guidance_builders import confine_not_started, confine_record, confine_refusal, confine_refused, confine_summary
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import base64
 import configparser
@@ -298,7 +300,7 @@ def probe_observations(output: str) -> list[dict] | None | str:
         if len(line) > MAX_OBSERVATION_CHARS:
             return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
         try:
-            item = json.loads(line, object_pairs_hook=_report_object)
+            item = _decode_json(line, object_pairs_hook=_report_object)
         except (ValueError, RecursionError, MemoryError):
             return f"an observation is not JSON: {line[:80]!r}"
         if not (type(item) is dict and set(item) == {"input", "output"}):
@@ -796,9 +798,9 @@ def read_observation(raw: object) -> dict | None:
             and found["verdict"] == OBSERVED_VERDICTS[found["g6_observation"]["result"]]):
         return None
     try:
-        return json.loads(json.dumps(found, allow_nan=False))
+        return _decode_json(json.dumps(found, allow_nan=False))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class RepoRefused(ValueError):
@@ -851,7 +853,7 @@ def _argument(value: str | bytes) -> str | bytes:
 
 
 def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
-         index: Path | None = None) -> bytes:
+         index: Path | None = None, isolated_config: bool = False) -> bytes:
     """One read-only git command in ``repo`` (``_GIT``'s options first), in ``git_env.safe_git_env``'s clean
     environment (none of git's own redirections such as GIT_DIR, no transport, no lazy fetch) with every config key
     that would start a program switched off, the drivers any config defines included (one ``git_env.DRIVER_QUERY``
@@ -862,15 +864,20 @@ def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: 
     if find_program("git") is None:
         raise RepoRefused("G6_E_GIT_MISSING_BINARY", SAID["no_git"])
     args = tuple(_argument(arg) for arg in args)
+    def environment(scratch, drivers=()):
+        env = git_env.safe_git_env(Path(scratch), drivers)
+        if isolated_config:
+            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_GLOBAL=os.devnull)
+        return env
     try:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors, \
                 tempfile.TemporaryDirectory(prefix="g6-git-") as scratch:
             with component_process.window(timeout_s):
                 code = component_process.run_process([git_env.git_program(), "-C", str(repo), *git_env.DRIVER_QUERY],
-                                                     env=git_env.safe_git_env(Path(scratch)), stdout=output,
+                                                     env=environment(scratch), stdout=output,
                                                      stderr=errors)
                 output.seek(0)
-                env = git_env.safe_git_env(Path(scratch), git_env.driver_settings(code, output.read()))
+                env = environment(scratch, git_env.driver_settings(code, output.read()))
                 if index is not None:
                     env["GIT_INDEX_FILE"] = str(index)
                 output.seek(0)
@@ -2540,7 +2547,7 @@ def _repo_env() -> dict[str, str]:
     if not raw.strip():
         return {}
     try:
-        found = json.loads(raw)
+        found = _decode_json(raw)
     except (ValueError, RecursionError, MemoryError):
         found = None
     if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str)
@@ -2897,7 +2904,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
     typed identity hints survive so unknown observations can reach issuance.
     """
     try:
-        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+        raw = _decode_json(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
     except (OSError, ValueError, RecursionError, MemoryError):
         raw = None
     # Progress has no process verdict yet. An incomplete diagnostic reads its
@@ -2927,7 +2934,7 @@ def _loaded(path: Path) -> tuple[dict[str, str], bool]:
     try:
         if path.stat().st_size > LOADED_BYTES:
             return {}, False
-        found = json.loads(path.read_text(encoding="utf-8"))
+        found = _decode_json(path.read_text(encoding="utf-8"))
         return {str(name): str(file) for name, file in found["modules"].items()}, found["complete"] is True
     except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError):
         return {}, False

@@ -100,7 +100,7 @@ def test_stats_skips_recursion_and_other_decoder_exceptions(monkeypatch):
             raise RuntimeError("bad row")
         return loads(text)
 
-    monkeypatch.setattr(json, "loads", decode)
+    monkeypatch.setattr(repair_log, "_decode_json", decode)
     assert repair_log.repair_stats(Lines())["G6_E_INPUT_VALIDATION"]["refused"] == 1
 
 

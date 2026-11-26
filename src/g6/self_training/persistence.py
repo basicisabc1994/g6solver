@@ -19,12 +19,15 @@ A ``scorecard.json`` that cannot be read raises rather than starting empty, sinc
 """
 from __future__ import annotations
 
+from g6.self_training._decoder_limits import json_value as _decode_json
+
 import json
 import os
 import time
 from pathlib import Path
 from typing import Any
 
+from g6.self_training._decoder_limits import decode, is_undecodable_record, shaped
 from g6.self_training.schema import (
     PUBLICATION_THRESHOLD,
     TIER_NAMES,
@@ -32,6 +35,10 @@ from g6.self_training.schema import (
     ComponentScorecard,
     MaturityScore,
 )
+
+
+#: The fields of a logged audit that promotion reads, with their exact types: a line without them is not known.
+AUDIT_SHAPE = {"component": str, "tier": int, "passed_threshold": bool, "rubric_reviewed": bool}
 
 
 class PromotionRefused(ValueError):
@@ -67,9 +74,9 @@ def _promotion_refusal(existing: MaturityScore | None, history: list[dict[str, A
         if not history:
             return f"T{tier} needs a passing audit, and there is none on record"
         latest = history[-1]
-        if not latest.get("passed_threshold"):
+        if latest.get("passed_threshold") is not True:
             return f"T{tier} needs the latest audit to have passed, and it did not (tier {latest.get('tier')})"
-        if not latest.get("rubric_reviewed"):
+        if latest.get("rubric_reviewed") is not True:
             return f"T{tier} needs the latest audit to have used a reviewed rubric, and it did not"
     return None
 
@@ -88,7 +95,7 @@ class ScorecardStore:
         self._scores: dict[str, MaturityScore] = {}
         if self._scorecard_path.exists():
             try:
-                data = json.loads(self._scorecard_path.read_text(encoding="utf-8"))
+                data = _decode_json(self._scorecard_path.read_text(encoding="utf-8"))
                 self._scores = {name: MaturityScore.model_validate(s) for name, s in data.get("scores", {}).items()}
             except Exception as exc:  # noqa: BLE001 - re-raised: an unreadable scorecard must not drop its flags
                 raise ValueError(f"cannot read the scorecard at {self._scorecard_path}: {exc}; move it aside to "
@@ -134,11 +141,18 @@ class ScorecardStore:
 
     def promote(self, component: str, tier: int) -> MaturityScore:
         """Set ``component``'s tier by decision. Raises :class:`PromotionRefused` while it is flagged (to raise it), or
-        for T5 and above unless its latest audit passed on a reviewed rubric. Never clears a flag (audit 008, ST-009)."""
+        for T5 and above unless its latest audit passed on a reviewed rubric, which an audit line G6 cannot read after
+        its last readable one leaves unknown. Never clears a flag (audit 008, ST-009)."""
         if tier not in TIER_NAMES:
             raise ValueError(f"tier must be 0-6, got {tier!r}")
         existing = self._scores.get(component)
-        refusal = _promotion_refusal(existing, self.audit_history(component), tier)
+        logged = self._logged()
+        mine = [i for i, entry in enumerate(logged) if entry is not None and entry.get("component") == component]
+        if tier >= PUBLICATION_THRESHOLD and None in logged[mine[-1] + 1 if mine else 0:]:
+            # a line G6 cannot read after its last readable audit may be its latest: no older audit stands in for it
+            raise PromotionRefused(f"refusing to promote {component} to T{tier}: its audit log holds a line G6 cannot "
+                                   "read after its last readable audit, so its latest audit is not known")
+        refusal = _promotion_refusal(existing, [logged[i] for i in mine], tier)
         if refusal is not None:
             raise PromotionRefused(f"refusing to promote {component} to T{tier}: {refusal}")
         base = existing or MaturityScore(component=component)
@@ -170,7 +184,8 @@ class ScorecardStore:
         return score
 
     def audit_history(self, component: str | None = None) -> list[dict[str, Any]]:
-        """The logged audits, oldest first, optionally for one component. Lines that do not parse are skipped."""
+        """The logged audits, oldest first, optionally for one component. Lines that do not parse are skipped; a line
+        past the decoder's limits raises :class:`UndecodableRecord`, since it may be the latest audit."""
         if not self._audit_log.exists():
             return []
         found = []
@@ -178,15 +193,30 @@ class ScorecardStore:
             if not line.strip():
                 continue
             try:
-                try:
-                    entry = json.loads(line)
-                except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                entry = decode(line)
             except json.JSONDecodeError:
                 continue
             if isinstance(entry, dict) and (component is None or entry.get("component") == component):
                 found.append(entry)
         return found
+
+    def _logged(self) -> list[dict[str, Any] | None]:
+        """Every audit line in order: its entry, or ``None`` for a line G6 cannot read (malformed, past the decoder's
+        limits, or not in the shape promotion reads, ``AUDIT_SHAPE``), whose component is not known."""
+        if not self._audit_log.exists():
+            return []
+        out: list[dict[str, Any] | None] = []
+        for line in self._audit_log.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = decode(line)
+            except ValueError as exc:
+                if not (is_undecodable_record(exc) or isinstance(exc, json.JSONDecodeError)):
+                    raise
+                entry = None
+            out.append(entry if shaped(entry, AUDIT_SHAPE) else None)
+        return out
 
 
 __all__ = ["PromotionRefused", "ScorecardStore"]

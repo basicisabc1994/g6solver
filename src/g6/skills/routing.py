@@ -22,6 +22,8 @@ detail file) in the same commit; entries are one per line and sorted, so two suc
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 from collections.abc import Collection, Mapping, Sequence
@@ -133,9 +135,9 @@ def loads(text: str) -> Manifest:
     ``ManifestError``."""
     try:
         try:
-            data = json.loads(text, object_pairs_hook=_pairs)
+            data = _decode_json(text, object_pairs_hook=_pairs)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except json.JSONDecodeError as exc:
         raise ManifestError(f"not JSON: {exc}") from exc
     data = _fields("the manifest", data, {"format", "release", "routes", "entries"})
@@ -193,7 +195,7 @@ def load(path: Path | None = None) -> Manifest:
     try:
         return loads((path or manifest_path()).read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def dumps(manifest: Manifest) -> str:

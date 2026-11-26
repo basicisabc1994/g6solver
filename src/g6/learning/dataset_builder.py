@@ -7,6 +7,8 @@ utility for the caller; the runner never subsamples an arm (audit 006, LL-004).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import random
@@ -35,9 +37,9 @@ class DatasetBuilder:
                 continue
             try:
                 try:
-                    obj = json.loads(line)
+                    obj = _decode_json(line)
                 except (RecursionError, MemoryError):
-                    raise ValueError("a JSON record exceeds decoder limits") from None
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             except json.JSONDecodeError as exc:
                 raise ValueError(f"G6_E_LEARNING_DATASET_INVALID: line {line_num} is not JSON: {exc}") from exc
             if not isinstance(obj, dict):

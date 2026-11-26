@@ -43,6 +43,8 @@ a stop or status never imports the tick, so neither can fail for the reasons a t
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import subprocess
@@ -922,7 +924,7 @@ def _recognised(out: Any) -> tuple[dict[str, Any] | None, str]:
     if not lines:
         return None, "no reply"
     try:
-        reply = json.loads(lines[-1])
+        reply = _decode_json(lines[-1])
     except (ValueError, RecursionError, MemoryError):
         return None, "a last line that does not read as JSON"
     if not isinstance(reply, dict):

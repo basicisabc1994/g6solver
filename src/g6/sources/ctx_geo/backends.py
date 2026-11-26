@@ -24,6 +24,8 @@ Nothing is cached: every call asks the service.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 from collections import Counter
@@ -144,7 +146,7 @@ class GoogleBackend:
             raise _Failed(GeoAnswer(outcome, reason=said, sent=sent)) from None
         read = [Source.of(shown(reply.url), reply.body, provenance="fetched").model_dump()]
         try:
-            return json.loads(reply.body), read
+            return _decode_json(reply.body), read
         except (ValueError, UnicodeDecodeError, RecursionError, MemoryError):
             raise _Failed(GeoAnswer("parse_failed", reason=f"{self.service} answered with something that is not JSON",
                                     sent=sent, read=read)) from None

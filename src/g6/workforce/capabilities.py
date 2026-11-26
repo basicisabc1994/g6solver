@@ -27,6 +27,8 @@ reply``, which is the single door (``calls.py``).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import functools
 import hashlib
 import importlib.util
@@ -255,9 +257,9 @@ class ParamContract:
             body["cost_ceiling"] = Money.from_dict(body["cost_ceiling"])
         if "operational" in data:  # after the digest (lead ruling L-1): its own digest, so no probe goes stale
             try:
-                body["operational"] = json.loads(json.dumps(data["operational"]))
+                body["operational"] = _decode_json(json.dumps(data["operational"]))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             body["operational_sha256"] = hashlib.sha256(json.dumps(
                 data["operational"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         contract = cls(**body, sha256=sha)
@@ -303,7 +305,7 @@ def _read(directory: Path, pattern: str) -> dict[tuple[str, str], ParamContract]
     out: dict[tuple[str, str], ParamContract] = {}
     for path in sorted(directory.glob(pattern)):
         try:
-            contract = ParamContract.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            contract = ParamContract.from_dict(_decode_json(path.read_text(encoding="utf-8")))
         except (ValueError, RecursionError, MemoryError) as exc:
             if isinstance(exc, (RecursionError, MemoryError)):
                 exc = ValueError("a JSON record exceeds decoder limits")

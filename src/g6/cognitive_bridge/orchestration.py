@@ -27,6 +27,8 @@ checked (``tests/cognitive_bridge/test_credit_inventory.py``, ``test_claim_inven
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import uuid
 from typing import Any, Iterable, Mapping, Sequence
@@ -273,9 +275,9 @@ class CognitiveAssuranceOrchestrator:
         except (TypeError, ValueError):
             return None
         try:
-            return json.loads(record[2])
+            return _decode_json(record[2])
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @staticmethod
     def _every_step_ran(compiled: CompiledResearch, executed: Mapping[str, Any]) -> bool:

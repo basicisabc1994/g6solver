@@ -276,7 +276,7 @@ def test_every_place_the_act_path_reads_a_child_is_listed_and_an_acts_status_goe
     used = [n for n in ast.walk(run_act) if isinstance(n, ast.Name) and n.id in outputs and isinstance(n.ctx, ast.Load)]
     assert used and all(id(n) in given for n in used), "a child's output is read outside the one reader"
     decoders = [owner for owner, node in _functions(SRC / "mcp/improve.py").items() for call in ast.walk(node)
-                if isinstance(call, ast.Call) and ast.unparse(call.func) == "json.loads"]
+                if isinstance(call, ast.Call) and ast.unparse(call.func) in {"json.loads", "_decode_json"}]
     assert decoders == ["_recognised"], "a child's reply is decoded outside the one reader"
     hands = _reply_hands()
     assert set(hands) == set(REPLY_HANDS), "an act's reply is handed somewhere new: list it with what it does there"

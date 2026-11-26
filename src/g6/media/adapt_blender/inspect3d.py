@@ -18,6 +18,8 @@ STL, GLB and FBX here; and, before Blender is given a mesh to import, refusing o
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import re
@@ -99,7 +101,7 @@ def inspect_glb(path: Path | str) -> Inspection:
         size, kind = struct.unpack("<I4s", data[12:20])
         if version == 2 and length == len(data) and kind == b"JSON" and 20 + size <= len(data):
             try:
-                found = json.loads(data[20:20 + size])
+                found = _decode_json(data[20:20 + size])
             except (ValueError, RecursionError, MemoryError):
                 found = None
     if not isinstance(found, dict):
@@ -170,9 +172,9 @@ def _gltf(path: Path) -> Any:
             raise ValueError("its first chunk is not its JSON")
         data = data[20:20 + size]
     try:
-        return json.loads(data.decode("utf-8-sig"))
+        return _decode_json(data.decode("utf-8-sig"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def self_contained(path: Path) -> None:

@@ -35,6 +35,8 @@ the deadline worker; late replies are unused. See the agentic override kernel de
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextvars
 import functools
 import hashlib
@@ -391,10 +393,7 @@ def _json_copy(value: Any) -> Any:
     text = _child.canonical(value)
     if len(text) > JSON_CHARS:
         raise ValueError("JSON character limit")
-    try:
-        return json.loads(text)
-    except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+    return _decode_json(text)
 
 
 def _plain_budget(value: Any) -> Budget:
@@ -1488,13 +1487,13 @@ def override(pending: Pending, *, confirmation: Confirmation | None = None) -> d
                 supplied = (object.__getattribute__(confirmation, "digest")
                             if type(confirmation) is Confirmation else None)
                 if type(supplied) is not str or type(retained.bound) is not str or supplied != retained.bound:
-                    data = json.loads(retained.text)
+                    data = _decode_json(retained.text)
                     return _refused(DIGEST_MISMATCH, "the legacy digest does not match the sealed preparation",
                                     original=data["original"], request_id=data["request_id"])
             _PREPARED[:] = [(entry[0], entry[1], True) if entry is saved else entry for entry in _PREPARED]
         text, sealed_snapshot, expected, owned, pins = (retained.text, retained.snapshot, retained.bound,
                                                        retained.owned, retained.pins)
-        data = json.loads(text)
+        data = _decode_json(text)
         original = data["original"]
         _check_pins(pins)
         public_snapshot = object.__getattribute__(pending, "caller")

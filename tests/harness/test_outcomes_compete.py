@@ -279,7 +279,7 @@ SLICE = ("harness/behaviour_question.py", "harness/question_store.py", "mcp/beha
          "harness/confirmed_expectation.py")
 #: The keys and attributes by which code reads an outcome or what the probe observed.
 OUTCOME_KEYS = frozenset({"returns", "raises", "effect", "equals", "outcomes", "returned", "raised", "base", "patch"})
-ENCODINGS = frozenset({"dumps", "loads", "canonical", "_canonical", "digest", "repr", "ascii", "encoded", "decoded",
+ENCODINGS = frozenset({"dumps", "loads", "_decode_json", "canonical", "_canonical", "digest", "repr", "ascii", "encoded", "decoded",
                        "shown_call", "shown_outcome", "_value", "_said", "_call", "competition", "_question_sha256",
                        "_meaning", "_scenario", "latest_confirmed"})
 
@@ -336,7 +336,7 @@ RECORD = ("a record's identity by its digest or its canonical bytes (slice 2's r
           "exactly when the one encoding is (test_the_one_encoding_is_the_probe_s_and_example_v1_s...)")
 PLACES: dict[tuple[str, str, str], str] = {
     ("harness/behaviour_question.py", "encoded", "vs._canonical(value)"): "the one encoding: the probe's own",
-    ("harness/behaviour_question.py", "decoded", "json.loads(text)"): "its one reader",
+    ("harness/behaviour_question.py", "decoded", "_decode_json(text)"): "its one reader",
     ("harness/behaviour_question.py", "competition", "encoded(a['returns']) == encoded(b['returns'])"): THROUGH,
     ("harness/behaviour_question.py", "competition", "encoded(a['returns'])"): THROUGH,
     ("harness/behaviour_question.py", "competition", "encoded(b['returns'])"): THROUGH,
@@ -406,7 +406,7 @@ PLACES: dict[tuple[str, str, str], str] = {
     ("mcp/behaviour.py", "confirm", "digest(repo_tests.snapshot(root))"): "the artefact's digest, not an outcome",
     ("mcp/behaviour.py", "_review_candidates", "digest(a)"): RECORD,
     ("mcp/behaviour.py", "_review_candidates", "owned.get(a.get('check')) == digest(a)"): RECORD,
-    ("mcp/behaviour.py", "_review_candidates", "json.loads(saved_bytes)"): (
+    ("mcp/behaviour.py", "_review_candidates", "_decode_json(saved_bytes)"): (
         "one decode of the exact saved bytes whose task and probe custody are checked"),
     ("mcp/behaviour.py", "_review_candidates", "saved.get('artifact_digest') != artifact"): RECORD,
     ("harness/behaviour_question.py", "_get", "decoded(self.data)"): THROUGH,
@@ -427,19 +427,27 @@ PLACES: dict[tuple[str, str, str], str] = {
 SLICE_2 = ("slice 2's record, held and compared as its canonical bytes, whose equality is the one encoding's")
 PLACES.update({("harness/confirmed_expectation.py", function, expression): SLICE_2 for function, expression in (
     ("__init__", "_canonical(record)"), ("__init__", "chosen.question_sha256 != shown.sha256"),
-    ("__init__", "json.loads(data)"), ("__post_init__", "_meaning(one)"), ("__post_init__", "_scenario(one)"),
+    ("__init__", "_decode_json(data)"), ("__post_init__", "_meaning(one)"), ("__post_init__", "_scenario(one)"),
     ("__post_init__", "before != meaning"), ("_canonical", "canonical(value)"),
     ("_meaning", "_canonical(one.instance.bindings)"),
     ("_options_sha256", "digest({'outcomes': shown['outcomes'], 'options': shown['options']})"),
-    ("_parsed", "_canonical(record)"), ("_parsed", "again != data"), ("_parsed", "json.loads(data)"),
+    ("_parsed", "_canonical(record)"), ("_parsed", "again != data"), ("_parsed", "_decode_json(data)"),
     ("_scenario", "_canonical({'function': shown['function'], 'args': shown['args'], 'kwargs': shown['kwargs'"),
-    ("_scenario", "json.loads(one._question)"), ("contradicted_by", "_meaning(new)"),
+    ("_scenario", "_decode_json(one._question)"), ("contradicted_by", "_meaning(new)"),
     ("contradicted_by", "_meaning(one)"), ("contradicted_by", "_meaning(one) != meaning"),
     ("contradicted_by", "_scenario(new)"), ("contradicted_by", "_scenario(one)"),
     ("contradicted_by", "_scenario(one) == scenario"), ("from_record", "_canonical(pair['answer'])"),
     ("from_record", "_canonical(pair['question'])"),
-    ("record", "_canonical({'question': json.loads(self._question), 'answer': json.loads(self._answer)})"),
-    ("record", "json.loads(self._answer)"), ("record", "json.loads(self._question)"),
+    ("record", "_canonical({'question': _decode_json(self._question), 'answer': _decode_json(self._answer)"),
+    ("record", "_decode_json(self._answer)"), ("record", "_decode_json(self._question)"),
+    ("__get__", "_decode_json(obj.record)"),
+    ("answered_by", "_decode_json(self._answer)"), ("artefact_sha256", "_decode_json(self._question)"),
+    ("instance", "_decode_json(self._question)"), ("option", "_decode_json(self._answer)"),
+    ("options", "_decode_json(self._record)"),
+    ("options_sha256", "_decode_json(self._question)"), ("options_sha256", "_decode_json(self._record)"),
+    ("requirement_id", "_decode_json(self._question)"), ("scope", "_decode_json(self._question)"),
+    ("to_dict", "_decode_json(self._answer)"), ("to_dict", "_decode_json(self._question)"),
+    ("to_dict", "_decode_json(self._record)"),
     ("sha256", "digest({'answers': [one.answer_sha256 for one in self.expectations], 'revision': self.revi"),
     ("latest_confirmed", "_scenario(one)"),
     ("with_expectation", "latest_confirmed((*self.expectations, new))"))})

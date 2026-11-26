@@ -183,8 +183,11 @@ def append(body: Mapping[str, Any]) -> str:
         _readable(target)
         try:
             return ChainLedger(target).append(KIND, uuid.uuid4().hex, checked)
-        except (RecursionError, MemoryError):    # _readable bounds each line first; the decoder's limits hold anyway
-            raise ValueError("a JSON record exceeds decoder limits") from None
+        except (RecursionError, MemoryError):
+            # The bound ledger implementation also reads existing records; an unreadable ledger cannot be appended.
+            from g6.core.ledger import LedgerError
+
+            raise LedgerError("the override ledger could not be read") from None
 
 
 __all__ = ["KIND", "Entry", "append", "entry", "path"]
