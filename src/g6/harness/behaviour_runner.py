@@ -412,16 +412,35 @@ def path_inside(root, path):
         return False
 
 
+def ownership_location(path):
+    """Directories have filesystem identity; archive member directories retain exact spelling."""
+    archives = globals().get('_ownership_archives', ())
+    if archives:
+        folder, members = os.path.abspath(path), []
+        while True:
+            key = path_key(folder)
+            if key in archives:
+                return key, tuple(reversed(members))
+            parent, entry = os.path.split(folder)
+            if parent == folder:
+                break
+            folder = parent
+            members.append(entry)
+    return path_key(path), ()
+
+
 def find_owned(name, locations):
-    """Only held/deleted module files beneath locations used for this find can own it."""
-    candidates = globals().get('_owned_module_files', ())
+    """Only exact entries at locations Python used, or its selected closed package, can own a find."""
+    if locations is None:
+        return False
+    candidates = globals().get('_owned_module_entries', ())
     leaf = name.rsplit('.', 1)[-1]
-    return any(path_key(os.path.join(location or os.getcwd(), leaf + suffix)) in candidates
-               for location in locations if type(location) is str
-               for suffix in ('.py', '/__init__.py'))
+    return (any((ownership_location(location or os.getcwd()), leaf + suffix) in candidates
+                for location in locations if type(location) is str for suffix in ('.py', ''))
+            or own_import_absent(ModuleNotFoundError(name=name), (), locations=locations))
 
 
-def own_import_absent(exc, args):
+def own_import_absent(exc, args, *, locations=None):
     """Read explicit host module ownership first, then unambiguous regular packages."""
     if not exception_matches(exc, ImportError):
         return False
@@ -437,15 +456,18 @@ def own_import_absent(exc, args):
     # A recorded find, not a potential-name inventory or a replay of precedence,
     # decides which held/deleted file could supply the missing module.
     owners = {name for name, owned in globals().get('_find_ownership', {}).items() if owned}
-    if missing_module and name in owners:
+    if missing_module and locations is None and name in owners:
         return True
     if not missing_module:
+        # A closed package owns absent child modules, but that inference cannot bypass
+        # the guarded-export check for an attribute. Only a held/deleted child can.
         trace = BaseException.__dict__['__traceback__'].__get__(exc)
         while trace is not None:
             instruction = next((one for one in dis.get_instructions(trace.tb_frame.f_code)
                                 if one.offset == trace.tb_lasti), None)
             if (instruction is not None and instruction.opname == 'IMPORT_FROM'
-                    and name + '.' + instruction.argval in owners):
+                    and name + '.' + instruction.argval in owners
+                    and name + '.' + instruction.argval in globals().get('data', {}).get('own_modules', ())):
                 return True
             trace = trace.tb_next
 
@@ -509,6 +531,10 @@ def own_import_absent(exc, args):
     def regular(spec):
         if spec is None or spec.submodule_search_locations is None:
             return False
+        if locations is not None and (type(spec.origin) is not str or not any(
+                type(where) is str and ownership_location(where or os.getcwd()) ==
+                ownership_location(os.path.dirname(spec.origin)) for where in locations)):
+            return False
         try:
             source = spec.loader.get_source(spec.name)
             # These packages may have portions G6's isolated interpreter cannot load.
@@ -518,7 +544,7 @@ def own_import_absent(exc, args):
             return False
 
     # Preserve the established closed-package/export failure decisions from the
-    # package Python loaded. They do not grant failed-find ownership to R1'.
+    # package Python loaded, constrained to its used search location when observing a find.
     if missing_module:
         if len(parts) > 1 and regular(owned_spec(name.rpartition('.')[0])):
             return True
@@ -553,17 +579,42 @@ def track_imports():
     import threading
 
     global _missing_preparation_imports, _missing_imports, _missing_import_requests, _pending_imports
-    global _missing_request_identities, _failed_import_finds, _call_failed_finds, _find_ownership, _owned_module_files
-    global _selected_import_specs
+    global _missing_request_identities, _failed_import_finds, _run_failed_finds, _find_ownership, _owned_module_entries
+    global _selected_import_specs, _ownership_archives
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     _missing_request_identities, _failed_import_finds = set(), []
-    _call_failed_finds, _find_ownership = [], {}
+    _run_failed_finds, _find_ownership = [], {}
     _selected_import_specs = {}
     tree = globals().get('root', os.getcwd())
-    _owned_module_files = {path_key(os.path.join(tree, path))
-                           for paths in globals().get('data', {}).get('own_module_files', {}).values() for path in paths}
+    inventory = globals().get('data', {})
+    # The host supplies decoded copy spellings only, never guarded git names.
+    files = {name: list(paths) for name, paths in inventory.get('own_module_files', {}).items()}
+    for prefix, masks in inventory.get('own_module_layout', ()):
+        for suffix, mask in zip(('.py', '/__init__.py'), masks):
+            bits = int(mask, 16)
+            while bits:
+                bit = bits & -bits
+                name = inventory['own_modules'][bit.bit_length() - 1]
+                files.setdefault(name, []).append(prefix + name.replace('.', '/') + suffix)
+                bits -= bit
+    _ownership_archives = {path_key(os.path.join(tree, prefix))
+                          for prefix in inventory.get('own_module_paths', {})
+                          if not os.path.isdir(os.path.join(tree, prefix))}
+    entries = set()
+    for name, paths in files.items():
+        for path in paths:
+            folder, entry = os.path.split(os.path.join(tree, path))
+            entries.add((folder, entry))
+            levels = len(name.split('.')) - (entry != '__init__.py')
+            for _ in range(levels):
+                folder, entry = os.path.split(folder)
+                entries.add((folder, entry))
+    # Shared namespace ancestors and multiple import roots need one directory identity each.
+    locations = {folder: ownership_location(folder) for folder in {folder for folder, _ in entries}}
+    _owned_module_entries = {(locations[folder], entry) for folder, entry in entries}
     load = importlib._bootstrap._find_and_load
     find = importlib._bootstrap._find_spec
+    namespace_path = importlib._bootstrap_external._NamespacePath
     unlocked = importlib._bootstrap._find_and_load_unlocked.__code__
     importing, reloading = builtins.__import__, importlib.reload
     library_roots = tuple(path_key(prefix) for prefix in (sys.base_prefix, sys.prefix))
@@ -580,7 +631,11 @@ def track_imports():
         return active.requests
 
     def failed_find(name, path, target=None):
-        locations = tuple(sys.path if path is None else path)
+        used = sys.path if path is None else path
+        # Exact built-in containers and the interpreter's reusable namespace path only.
+        # Subclasses/custom iterables belong to the code: the observer must not consume them.
+        locations = (tuple(used) if type(used) is list or type(used) is tuple
+                     or type(used) is namespace_path else None)
         spec = find(name, path, target)
         if spec is None:
             if not hasattr(active, 'finds'):
@@ -588,7 +643,8 @@ def track_imports():
             active.finds.append(name)
             owned = find_owned(name, locations)
             _find_ownership[name] = owned
-            _call_failed_finds.append((name, owned))
+            if requester(sys._getframe(1)) is not False:
+                _run_failed_finds.append((name, owned))
         else:
             _find_ownership.pop(name, None)
             _selected_import_specs[name] = spec
@@ -618,8 +674,11 @@ def track_imports():
     def requested_absent(name):
         # Only absence of the requested owned module is a code failure here. Never let the missing name
         # of a dependency erase an escaping failure of an existing requested module.
-        if name in _find_ownership:
-            return _find_ownership[name] or own_import_absent(ModuleNotFoundError(name=name), ())
+        parts = name.split('.')
+        for end in range(1, len(parts) + 1):
+            parent = '.'.join(parts[:end])
+            if parent in _find_ownership:
+                return _find_ownership[parent]
         return False
 
     def requester(frame):
@@ -776,7 +835,8 @@ def track_imports():
                 for item in pending:
                     retain(*item)
 
-    observer_codes = {scoped.__code__, tracked.__code__, tracked_import.__code__, tracked_reload.__code__}
+    observer_codes = {scoped.__code__, tracked.__code__, tracked_import.__code__, tracked_reload.__code__,
+                      failed_find.__code__}
     importlib._bootstrap._find_spec = failed_find
     importlib._bootstrap._find_and_load = tracked
     builtins.__import__ = tracked_import
@@ -971,7 +1031,7 @@ BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
              + inspect.getsource(ObservationUnavailable) + '\n'
              + inspect.getsource(path_key) + '\n' + inspect.getsource(path_inside) + '\n'
-             + inspect.getsource(find_owned) + '\n'
+             + inspect.getsource(ownership_location) + '\n' + inspect.getsource(find_owned) + '\n'
              + inspect.getsource(own_import_absent) + '\n'
              + inspect.getsource(track_imports) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
@@ -1247,7 +1307,7 @@ def observe(request):
 def observe_calls():
     global errors, outcomes, alive
     global _missing_imports, _missing_import_requests
-    global _missing_request_identities, _failed_import_finds, _call_failed_finds
+    global _missing_request_identities, _failed_import_finds
     try:
         function = load(data["function"])
     except CheckSetupError as exc:
@@ -1273,9 +1333,7 @@ def observe_calls():
         _missing_request_identities = set(preparation_identities)
         _failed_import_finds = list(preparation_finds)
         args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
-        # R1' reads only the dynamic extent of this call, including caught finds
-        # and finds on worker threads. Preparation and previous calls are excluded.
-        _call_failed_finds = []
+        # R1'-W retains relevant finds from loading, setup and earlier calls, including cached failures.
         try:
             result = function(*args, **kwargs)
         except CheckSetupError as exc:
@@ -1284,7 +1342,7 @@ def observe_calls():
             if ((execution_control(exc) and (raised_during_setup(exc) or not exception_matches(exc, KeyboardInterrupt)))
                     or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError))):
                 raise
-            call_finds = tuple(_call_failed_finds)
+            call_finds = tuple(_run_failed_finds)
             preparation = setup_outcome(exc)
             if preparation is not None:
                 return setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
@@ -1300,7 +1358,7 @@ def observe_calls():
                 # An import that did not run cannot establish even a confirmed raises-ImportError outcome.
                 outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
         else:
-            call_finds = tuple(_call_failed_finds)
+            call_finds = tuple(_run_failed_finds)
             errors = resolved()
             one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
             if data["probe"]:
@@ -1758,12 +1816,31 @@ def located(copy: Path, data: dict) -> dict:
 def request(data: dict, *, budget_s: float = 10) -> dict:
     """Only setup and inputs reach the child. The chosen outcome stays in G6's process."""
     calls = data.get("cases", data.get("calls", []))
+    ownership = {'own_module_files': data['own_module_files']} if 'own_module_files' in data else {}
+    if len(_encoded(ownership)) > 8192:
+        # Lossless indices into names already in the request, grouped by decoded copy root and file kind.
+        indices = {name: index for index, name in enumerate(data.get('own_modules', ()))}
+        layout, remaining = {}, {}
+        for name, paths in ownership['own_module_files'].items():
+            for path in paths:
+                for kind, suffix in enumerate(('.py', '/__init__.py')):
+                    stem = name.replace('.', '/') + suffix
+                    if name in indices and path.endswith(stem):
+                        masks = layout.setdefault(path[:-len(stem)], [0, 0])
+                        masks[kind] |= 1 << indices[name]
+                        break
+                else:
+                    remaining.setdefault(name, []).append(path)
+        ownership = {'own_module_layout': [[prefix, [format(bits, 'x') for bits in masks]]
+                                         for prefix, masks in sorted(layout.items())]}
+        if remaining:
+            ownership['own_module_files'] = remaining
     return {"function": data["function"], "calls": [{"args": c["args"], "kwargs": c.get("kwargs", {})} for c in calls],
             "errors": data.get("errors", [case["error"] for case in calls if case.get("expect") == "raises"]),
             "probe": "cases" not in data, "mode": data.get("mode", "outputs"), 'budget_s': budget_s,
             **({'own_modules': data['own_modules']} if 'own_modules' in data else {}),
             **({'own_module_paths': data['own_module_paths']} if 'own_module_paths' in data else {}),
-            **({'own_module_files': data['own_module_files']} if 'own_module_files' in data else {}),
+            **ownership,
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 
@@ -1787,7 +1864,8 @@ def example_text(slot: str) -> str:
         exception_name, exception_matches, exception_detail, exception_message,
         setup_call, call_absent, register_setup_error,
         _unique, _encoded, _fingerprint, _valid_encoding, _matches_encoding,
-        _import_roots, path_key, path_inside, located, request, own_import_absent, setup_outcome, read_frame, finish))
+        _import_roots, path_key, path_inside, ownership_location, located, request, own_import_absent,
+        setup_outcome, read_frame, finish))
     packed = base64.b85encode(zlib.compress(preparation.encode('utf-8'), 9)).decode('ascii')
     return ("import base64, zlib, concurrent.futures, hashlib, importlib.machinery, json, struct, subprocess, tempfile, sys, os\nfrom pathlib import Path\n"
             "TEMPLATE = 'example.v1'\nBINDINGS = " + slot

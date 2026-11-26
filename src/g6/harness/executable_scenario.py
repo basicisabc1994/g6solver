@@ -49,7 +49,9 @@ if 'own_modules' in host:
 if 'own_module_paths' in host:
     data['own_module_paths'] = host['own_module_paths']
 if 'own_module_files' in host:
-    data['own_module_files'] = host['own_module_files']"""
+    data['own_module_files'] = host['own_module_files']
+if 'own_module_layout' in host:
+    data['own_module_layout'] = host['own_module_layout']"""
     return (confine.CHILD_PRELUDE + '\nSCENARIO = ',
             '\n' + runner._fixed_source(runner.BOOTSTRAP).replace('data = json.loads(raw)', request, 1))
 
