@@ -34,8 +34,8 @@ sections below are routes too: Deliver (review), Find (discover), Compose and Fi
   `graph_reasoning`, through `g6_invoke` (`references/rules.md`).
 - **abstraction.** Only where the person registered the separate server, `python -P -m g6.abstraction.server`: its
   tools search a design space for abstractions that hold up (`references/abstraction.md`).
-- **workflow.** G6's local record of its own review work, off unless `G6_WORKFLOW_RECORD=on` is set where the server
-  is registered: `g6_workflow_export`, `g6_workflow_correct`, `g6_workflow_delete`, `g6_suggestion_decide` and
+- **workflow.** G6's local record of its own review work, on by default and off when `G6_WORKFLOW_RECORD=off` is set
+  where the server is registered: `g6_workflow_export`, `g6_workflow_correct`, `g6_workflow_delete`, `g6_suggestion_decide` and
   `g6_feedback`. Never write its files or answer its dialogs for the person.
 
 ## Deliver a coding task with G6

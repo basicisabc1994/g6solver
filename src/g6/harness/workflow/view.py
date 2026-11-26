@@ -9,7 +9,9 @@ value to the person's work is not measured unless a measurement exists.
 
 How much is shown is ``level()``: never above ``ADMITTED_LEVEL``, which code raises only together with the recorded
 result of the gate that admits the next level (``validation/workflow_value/decisions.json``); the person may lower it
-(``G6_WORKFLOW_VIEW``), an agent cannot change it, and with the workflow record off there is no view at all.
+(``G6_WORKFLOW_VIEW``), an agent cannot change it, and with the workflow record off there is no view at all. The record
+is on by default (owner ruling, 2026-11-25) but the view is not: it is shown only when the person set
+``G6_WORKFLOW_RECORD=on`` or named a level in ``G6_WORKFLOW_VIEW``.
 
 Everything in the view is the person's workflow data: ``build`` returns only a withholding notice unless the source
 ``workflow:<project>`` is shared with the provider that will read it.
@@ -47,11 +49,14 @@ MISSING_WORDS = {
 
 
 def level() -> str:
-    """The level in force: off when the workflow record is off; else what the person set (``G6_WORKFLOW_VIEW``),
-    when that is a level at or below the admitted one; else the admitted level."""
+    """The level in force: off when the workflow record is off, or on only by default and no level was asked for;
+    else what the person set (``G6_WORKFLOW_VIEW``), when that is a level at or below the admitted one; else the
+    admitted level."""
     if not policy.enabled()[0]:
         return "off"
     asked = os.environ.get(VIEW_ENV)
+    if asked is None and os.environ.get(policy.RECORD_ENV) is None:
+        return "off"
     top = LEVELS.index(ADMITTED_LEVEL)
     return asked if asked in LEVELS and LEVELS.index(asked) <= top else ADMITTED_LEVEL
 

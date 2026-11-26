@@ -12,8 +12,9 @@ G6 itself cost on the task.
 
 ## What it is and is not
 
-- It is the person's data, kept on their computer under `$G6_HOME/workflow/<project-id>/`. It is off until the
-  person sets `G6_WORKFLOW_RECORD=on` where the G6 server is registered. You cannot turn it on.
+- It is the person's data, kept on their computer under `$G6_HOME/workflow/<project-id>/`. It is on by default;
+  the person turns it off by setting `G6_WORKFLOW_RECORD=off` where the G6 server is registered. You cannot turn it
+  on or off.
 - It records G6's own activity only. Work done outside G6 is unknown to it, and G6 says so.
 - An entry holds codes, counts, times and digests. It holds no task text, code or answers.
 - G6 reports an obstacle with a receipt, a hypothesis, or "unknown". It never says it found the constraint on the
