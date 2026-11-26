@@ -671,8 +671,12 @@ def disclosures() -> list[dict]:
         return [row['body'] for row in ledger.entries() if row['kind'] == 'disclosure']
 
 
-def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], supplied: Sequence[str]) -> None:
-    """Admission's one rule: every source of a send is shared with its recipient, or the send is refused."""
+def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], supplied: Sequence[str],
+                     requester: bool = False) -> None:
+    """Admission's one rule: every source of a send is shared with its recipient, or the send is refused. A
+    recipient G6 cannot name (``cloud:unknown``) has no grant and is refused, except for ``requester``: the reply
+    to the request it came in on (G6's MCP catalogue and selector), which may carry that client's own exact input
+    back, unless a decision (a revocation) is on record for it."""
     def allowed(source):
         row = decisions.get((source.source_id, provider))
         granted, revision = (row['kind'] == 'grant', row['entry_sha256']) if row is not None else (False, '')
@@ -680,8 +684,10 @@ def _refuse_unshared(decisions: dict, provider: str, refs: Sequence[Source], sup
         # through a path, repository or retained-record handle.
         literal = (source.source_id in supplied and source.source_id.startswith('input:')
                    and source.source_id == 'input:' + source.content_sha256)
+        if provider == 'cloud:unknown':
+            return source.recorded and literal and not revision
         return source.recorded and (granted or literal and not revision)
-    if provider == 'cloud:unknown' or not all(allowed(source) for source in refs):
+    if provider == 'cloud:unknown' and not requester or not all(allowed(source) for source in refs):
         capture = _CAPTURE.get()
         if capture is not None:
             capture.refused_provider = provider
@@ -704,8 +710,9 @@ def refuse_unshared(provider: str, sources: Sequence[Source], *, local: bool = F
 
 @contextmanager
 def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, local: bool = False,
-              supplied: Sequence[str] = (), disclose: bool = True) -> Iterator[None]:
-    """One check, at send time. Holding the lock through send gives revocation a single order.
+              supplied: Sequence[str] = (), disclose: bool = True, requester: bool = False) -> Iterator[None]:
+    """One check, at send time. Holding the lock through send gives revocation a single order. ``requester``
+    marks the reply to the request it came in on (``_refuse_unshared``).
 
     Disclosure is an attempt, durably logged first: a crash/transport error cannot say
     whether the recipient received it. Local computation needs no sharing state.
@@ -721,7 +728,7 @@ def admission(provider: str, sources: Sequence[Source], payload_sha256: str, *, 
     try:
         with lock.guard:
             decisions = _decisions(lock.ledger)
-            _refuse_unshared(decisions, provider, refs, supplied)
+            _refuse_unshared(decisions, provider, refs, supplied, requester)
             # A check inside an admitted send of this context to the same recipient, of no source that send did not
             # disclose, is that send's own step (a host session's launch): it is checked, and disclosed once.
             enclosing = joined.send if joined is not None else None
