@@ -49,13 +49,13 @@ MISSING_WORDS = {
 
 
 def level() -> str:
-    """The level in force: off when the workflow record is off, or on only by default and no level was asked for;
+    """The level in force: off when the workflow record is off, or on only by default and no level was named;
     else what the person set (``G6_WORKFLOW_VIEW``), when that is a level at or below the admitted one; else the
     admitted level."""
     if not policy.enabled()[0]:
         return "off"
     asked = os.environ.get(VIEW_ENV)
-    if asked is None and os.environ.get(policy.RECORD_ENV) is None:
+    if asked not in LEVELS and os.environ.get(policy.RECORD_ENV) is None:
         return "off"
     top = LEVELS.index(ADMITTED_LEVEL)
     return asked if asked in LEVELS and LEVELS.index(asked) <= top else ADMITTED_LEVEL

@@ -148,6 +148,21 @@ def test_level_off_gives_the_existing_reply_exactly(granted, repo, tmp_path, mon
     assert view.level() == "narrow"
 
 
+@pytest.mark.parametrize("value", ["", " ", "none", "None", "narow", "on", "NARROW", "off"])
+def test_with_the_record_on_only_by_default_a_view_value_that_is_no_level_leaves_the_view_off(monkeypatch, value):
+    # dogfood 2: an empty value, "none" or a typo is not a request for the view
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+    monkeypatch.setenv(view.VIEW_ENV, value)
+    assert policy.enabled()[0] is True and view.level() == "off"
+
+
+@pytest.mark.parametrize("value", ["narrow", "diagnosis", "suggestions"])
+def test_with_the_record_on_only_by_default_a_named_level_turns_the_view_on(monkeypatch, value):
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+    monkeypatch.setenv(view.VIEW_ENV, value)
+    assert view.level() == view.ADMITTED_LEVEL                 # never above the admitted level
+
+
 def test_withheld_view_holds_only_the_notice(granted, repo, tmp_path):
     built = _fixtures(granted, repo, tmp_path)["withheld"]
     assert built == {"level": "narrow", "withheld": True, "policy_version": policy.POLICY_VERSION}
