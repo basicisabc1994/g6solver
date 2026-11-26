@@ -44,6 +44,7 @@ import typing
 from pathlib import Path
 from typing import Any
 
+from g6.invariants import ERROR_CODE_PATTERN
 from g6.skills.corpus import COSTS, FORMAT, PATH, PHASES
 
 _REVIEW = ("meets_the_task", "missed_a_boundary", "broke_kept_behaviour", "tests_too_weak", "misleading_environment")
@@ -451,7 +452,6 @@ def _door_check(instance: Any, name: str, op: str, params: dict[str, Any],
 RUN_AT_BUILD = frozenset({
     "action_gating", "action_logic", "adapt_physical_ai", "algorithm_design", "coding_agent_gate", "complexity",
     "decision_making", "design_governance", "epistemic_integrity", "graph_reasoning", "knowledge_chunker"})
-_G6_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
 
 
 def _fill(said: str, params: dict[str, Any], fields: dict[str, Any]) -> list[str]:
@@ -518,7 +518,7 @@ def _run_as_given(name: str, op: str, params: dict[str, Any],
     card = ran.get("warning_card") or {}
     said = " ".join(str(card.get(k, "")) for k in ("message", "why")) + " " + str(ran.get("error", ""))
     fill = _fill(said, params, fields)
-    code = card.get("code", "") if _G6_CODE.fullmatch(str(card.get("code", ""))) else "G6_E_BLOCKED"
+    code = card.get("code", "") if ERROR_CODE_PATTERN.match(str(card.get("code", ""))) else "G6_E_BLOCKED"
     what = f"fill {', '.join(fill)} with your own values" if fill else "fill the fields the op needs"
     return False, [f"[{code}] {name}.{op}: the op refuses this template as given; {what} "
                    f"(g6_describe {name} lists them)"], fill
