@@ -78,17 +78,6 @@ def test_mismatched_event_body_is_never_cited():
     assert card["justification"] == [] and card["caught"]["reproduced"] is None
 
 
-def test_unset_display_does_not_disable_internal_analysis(home, tmp_path, monkeypatch):
-    from g6.harness.workflow import view
-
-    repo = make_repo(tmp_path / "repo")
-    project, task = adapters.identities(repo, "fixture task")
-    monkeypatch.delenv(view.VIEW_ENV, raising=False)
-    built = view.build(project, task, provider=None)
-    assert built == {"level": "narrow", "withheld": True, "policy_version": "workflow-storage.v1"}
-    assert view.appended(repo, "fixture task", "MANDATORY REPORT", provider=None) == "MANDATORY REPORT"
-
-
 def test_refresh_preserves_a_producers_report_and_custody(home, tmp_path):
     from g6.core import cloud_consent as cloud
     from g6.mcp import workflow

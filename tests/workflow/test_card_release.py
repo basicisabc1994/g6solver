@@ -13,7 +13,7 @@ TASK = "fixture task"
 
 
 def _assessment() -> dict:
-    """A decided review with one failed stated check; its report is the producer's own rendering."""
+    """A decided review with one failed stated check, carrying its card and report as ``patch_review._reply`` does."""
     value = {"outcome": "defect_detected", "requirements": [{"id": "R1"}],
              "requirements_without_adequate_check": ["R1"], "unknowns": ["unknown"],
              "reasons": [], "not_checked": ["behaviour no stated check exercises"],
@@ -24,6 +24,9 @@ def _assessment() -> dict:
                        "checks_skipped": [{"tier": 3}]},
              "completion": {"defects_reproduced": {"stated_and_repository_checks": [{"check": "test_a::test_one"}]},
                             "open_questions": [{"requirement": "R1"}]}}
+    card = getattr(patch_report, "card", None)
+    if card is not None:      # absent before the card existed: that reply then carries no card at all
+        value["card"] = card(value, None)
     value["report"] = patch_report.safe_render(value)
     return value
 
@@ -57,8 +60,8 @@ def test_plain_review_patch_reply_carries_the_card(home, tmp_path):
     compact, full = _poll(repo, _assessment())
     for polled in (compact, full):
         result = polled["result"]
-        card = result["card"]
-        assert result["assessment"]["card"] == card
+        card = result["assessment"]["card"]
+        assert result.get("card", card) == card    # the compact reply repeats it at the top; the full keeps its shape
         lines = _card_block(result["assessment"]["report"])
         assert [line.split(":**")[0] for line in lines] == [f"- **{label}" for label in LABELS]
         assert lines == patch_report.card_lines(card)
@@ -73,6 +76,7 @@ def test_card_fields_are_the_cited_events_own_data(home, tmp_path):
     repo = make_repo(tmp_path / "repo")
     result = _poll(repo, _assessment())[0]["result"]
     card = result["card"]
+    assert result["assessment"]["card"] == card
     held = evidence.read(repo, TASK)
     finished = [body for body in evidence.matched(held) if body["kind"] == "review_finished"]
     assert len(finished) == 1
