@@ -7,6 +7,7 @@ can be resolved from the inspection file without trusting report wording.
 from __future__ import annotations
 
 import ast
+import builtins
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 import re
@@ -41,8 +42,10 @@ def source_digests(root, checks: Iterable[str]) -> dict[str, str]:
 def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
     """Bind test machinery before execution, without importing repository code.
 
-    R3': follow code that runs at collection, including called helper bodies;
+    R3'/R5: follow collection code and every referenced in-repo callable body;
     recognised fixtures, collected tests and returned test wrappers run at test time.
+    R5' keeps recognised fixture bodies at setup even when referenced at collection.
+    R6 includes constructed-class protocols, not body-only named methods.
     R3'-u: unused imports count only in pytest's attribute-collecting modules.
     Whole files are hashed; unresolved machinery withholds identity. Oracle calls
     hidden in product bodies remain outside scope.
@@ -125,6 +128,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
         files, scanned, active, done = {}, set(), set(), set()
         dependency_scanned = set()
         function_active = set()
+        local_active = set()
+        receivers = []
         classes = []
         collected_classes = set()
         plugins, plugin_scanned = [], set()
@@ -240,6 +245,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             source, node = scope
             bases = []
             for base in node.bases:
+                if isinstance(base, ast.Name) and base.id in {"object", "type"}:
+                    continue
                 target = definition_source(source, parts_of(base))
                 if target is None or not isinstance(target[1], ast.ClassDef):
                     raise ValueError("unresolved class base")
@@ -255,6 +262,15 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 ordered.append(candidate)
                 pending = [seq[1:] if seq and seq[0] == candidate else seq for seq in pending]
             return ordered
+
+        def class_attribute(scope, parts, role):
+            # Look up the class MRO before module globals. A missing/dynamic
+            # attribute has no definite source and cannot borrow a global name.
+            for current in class_order(scope):
+                if parts[0] in bindings_in(current[1].body):
+                    resolve(current, parts, role)
+                    return
+            raise ValueError("unresolved class attribute")
 
         def fixture(path, name):
             # Union the fixture pytest executes with A'' defining-module chains.
@@ -381,13 +397,27 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 return qualified(path, target, seen)
             return ""
 
-        def dependencies(path, node, locals_=frozenset(), nested=None):
+        def dependencies(path, node, locals_=frozenset(), nested=None, role="call", wrapper_return=False):
             """Read collection-time dependencies, never execute candidate code.
 
-            Uncalled function bodies are deferred. A collection call promotes its
-            body, while a returned decorator wrapper's body stays deferred.
+            Callable references promote bodies, except recognised fixtures and
+            inner test wrappers returned by an applied decorator (R3'/R5').
             """
             nested = nested or {}
+            if isinstance(node, ast.Return):
+                if node.value is not None:
+                    dependencies(path, node.value, locals_, nested, role, role == "decorator")
+                return
+            if isinstance(node, ast.Lambda):
+                for default in (*node.args.defaults, *node.args.kw_defaults):
+                    if default is not None:
+                        dependencies(path, default, locals_, nested, role)
+                if wrapper_return:
+                    return  # the returned lambda is the test wrapper; defaults still run now
+                names = {a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
+                names |= {a.arg for a in (node.args.vararg, node.args.kwarg) if a}
+                dependencies(path, node.body, locals_ | names, nested, role)
+                return
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 raise ValueError("unresolved collection scope mutation")
             if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -406,7 +436,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 annotations += [a.annotation for a in (node.args.vararg, node.args.kwarg) if a]
                 for header in (*node.args.defaults, *node.args.kw_defaults, *annotations, node.returns):
                     if header is not None:
-                        dependencies(path, header, locals_, nested)
+                        dependencies(path, header, locals_, nested, role)
                 return
             if isinstance(node, ast.ClassDef):
                 scope = (path[0] if isinstance(path, tuple) else path, node)
@@ -421,7 +451,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     for keyword in node.keywords:
                         expression(path, keyword.value, "metaclass" if keyword.arg == "metaclass" else "value")
                     for statement in node.body:
-                        dependencies(scope, statement, locals_, nested)
+                        dependencies(scope, statement, locals_, nested, role)
                     unused_imports(scope, node, bindings_in(node.body))
                 finally:
                     if collecting:
@@ -429,13 +459,16 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 return
             if isinstance(node, ast.Call):
                 target = node.func
-                if isinstance(target, ast.Name) and target.id in nested:
-                    collection_function(path, nested[target.id], "call", locals_, nested)
+                try:
+                    parts = parts_of(target)
+                except ValueError:
+                    parts = ()
+                receiver = next((scope for name, scope in reversed(receivers) if len(parts) > 1 and parts[0] == name), None)
+                if receiver is not None:
+                    class_attribute(receiver, parts[1:], "call")
+                elif isinstance(target, ast.Name) and target.id in nested:
+                    local_reference(path, target.id, locals_, nested, "call")
                 else:
-                    try:
-                        parts = parts_of(target)
-                    except ValueError:
-                        parts = ()
                     if parts and parts[0] not in locals_ and parts[0] in read(path)[2]:
                         resolve(path, parts, "call")
                     elif parts and parts[0] in locals_:
@@ -448,38 +481,75 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 try:
                     parts = parts_of(node)
                 except ValueError:
+                    # The inherited protocol walk covers super's implicit
+                    # receiver. Other computed receivers have no definite type.
+                    if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Call)
+                            and isinstance(node.value.func, ast.Name) and node.value.func.id == "super"
+                            and node.attr.startswith("__") and node.attr.endswith("__")):
+                        raise ValueError("unresolved collection attribute receiver") from None
                     parts = ()
+                receiver = next((scope for name, scope in reversed(receivers) if parts and parts[0] == name), None)
+                if receiver is not None and len(parts) > 1 and isinstance(node.ctx, ast.Load):
+                    class_attribute(receiver, parts[1:], "value")
+                    return
+                if isinstance(node, ast.Attribute) and parts and parts[0] in locals_:
+                    if isinstance(node.ctx, ast.Load):
+                        raise ValueError("unresolved collection-local attribute")
+                    return
+                if parts and parts[0] in nested and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    if not wrapper_return:
+                        local_reference(path, parts[0], locals_, nested,
+                                        "decorator" if role == "decorator_factory" else "call")
+                    return
                 if parts and parts[0] not in locals_ and parts[0] in read(path)[2]:
                     if not isinstance(node, ast.Name) or isinstance(node.ctx, ast.Load):
                         resolve(path, parts, "value")
                     return
+                if (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                        and node.id not in locals_ and not hasattr(builtins, node.id)):
+                    raise ValueError("unresolved collection reference")
             for child in ast.iter_child_nodes(node):
-                dependencies(path, child, locals_, nested)
+                # A call in a returned expression still executes at collection;
+                # only references to the returned wrapper itself are deferred.
+                dependencies(path, child, locals_, nested, role, wrapper_return and not isinstance(node, ast.Call))
+
+        def local_reference(path, name, locals_, nested, role):
+            key = path, name, nested[name]
+            if key in local_active:
+                raise ValueError("cyclic collection-local reference")
+            local_active.add(key)
+            try:
+                value = nested[name]
+                if isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not recognised_fixture(path, value):
+                        collection_function(path, value, role, locals_, nested)
+                else:
+                    dependencies(path, value, locals_, nested, role)
+            finally:
+                local_active.remove(key)
 
         def collection_function(path, node, role, outer=frozenset(), nested=None):
             key = path, node
             if key in function_active:
                 raise ValueError("cyclic collection call")
             function_active.add(key)
+            arguments = [*node.args.posonlyargs, *node.args.args]
+            receiver = isinstance(path, tuple) and node in path[1].body and bool(arguments)
+            if receiver:
+                receivers.append((arguments[0].arg, path))
             try:
                 local = bindings_in(node.body)
                 nested = {**(nested or {}), **{name: value for name, (kind, value) in local.items()
-                                              if kind == "definition" and not isinstance(value, ast.ClassDef)}}
+                                              if kind in {"definition", "value"} and value is not None
+                                              and not isinstance(value, ast.ClassDef)}}
                 names = outer | set(local) | {a.arg for a in (*node.args.posonlyargs, *node.args.args,
                                                             *node.args.kwonlyargs)}
                 names |= {a.arg for a in (node.args.vararg, node.args.kwarg) if a}
                 for statement in node.body:
-                    dependencies(path, statement, names, nested)
-                # A function referenced/returned by collection code can execute as
-                # machinery too. Only the decorator's returned inner wrapper gets
-                # the explicit test-time exception in R3'.
-                returned = {n.value.id for n in ast.walk(node) if isinstance(n, ast.Return)
-                            and isinstance(n.value, ast.Name)}
-                if role != "decorator":
-                    for name in returned & nested.keys():
-                        collection_function(path, nested[name],
-                                            "decorator" if role == "decorator_factory" else "call", names, nested)
+                    dependencies(path, statement, names, nested, role)
             finally:
+                if receiver:
+                    receivers.pop()
                 function_active.remove(key)
 
         def name_loads(node, bound=frozenset()):
@@ -510,13 +580,17 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                         continue
                     source = module(path, value[0].module or "", value[0].level) if kind == "from" else module(path, value)
                     if source is not None:
-                        resolve(path, (name,), "value")
+                        resolve(path, (name,), "test" if name.startswith(("test_", "Test")) else "value")
 
         def scan_dependencies(path):
             _, tree, bindings = read(path)
             for statement in tree.body:
                 dependencies(path, statement)
             unused_imports(path, tree, bindings)
+
+        def recognised_fixture(path, node):
+            return any(qualified(path, d.func if isinstance(d, ast.Call) else d) == "pytest.fixture"
+                       for d in node.decorator_list)
 
         def fixture_options(path, name):
             """Discover explicit fixture registration through static re-exports."""
@@ -600,6 +674,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 inspect_definition(path, node, role, inherited)
 
         def inspect_definition(path, node, role, inherited):
+            if isinstance(node, ast.ClassDef) and role in {"value", "mark", "decorator", "decorator_factory"}:
+                role = "call"  # R5 class references may be invoked; apply R6's protocol boundary.
             direct = set(inherited)
             mark = read(path)[2].get("pytestmark") if role == "test" else None
             if mark:
@@ -628,7 +704,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     if mark[0] == "value":
                         direct.update(mark_names(scope, mark[1]))
                 for name in local:
-                    if (role in {"call", "metaclass"} or role == "base" and name == "__init_subclass__"
+                    if (role == "metaclass" or role == "call" and name.startswith("__") and name.endswith("__")
+                            or role == "base" and name == "__init_subclass__"
                             ) and local[name][0] == "definition":
                         definition(scope, local[name][1], "call")
                     elif fixture_options(scope, name).get("autouse"):
@@ -643,7 +720,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             for default in (*node.args.defaults, *node.args.kw_defaults):
                 if default is not None:
                     expression(path, default)
-            if role in {"call", "decorator", "decorator_factory", "metaclass"}:
+            if role not in {"test", "fixture"} and not recognised_fixture(path, node):
                 collection_function(path, node, role)
             if role in {"test", "fixture"}:
                 for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
@@ -693,10 +770,25 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     definition(path, value, role)
                 elif isinstance(value, ast.ClassDef):
                     source = path[0] if isinstance(path, tuple) else path
-                    resolve((source, value), parts[1:], role)
+                    class_attribute((source, value), parts[1:], role)
                 else:
                     raise ValueError("unresolved function attribute")
-            elif kind == "value" and len(parts) == 1:
+            elif kind == "value":
+                if len(parts) > 1:
+                    if isinstance(value, (ast.Name, ast.Attribute)):
+                        resolve(path, (*parts_of(value), *parts[1:]), role)
+                    elif isinstance(value, ast.Call):
+                        target = definition_source(path, parts_of(value.func))
+                        if target is None or not isinstance(target[1], ast.ClassDef):
+                            raise ValueError("unresolved constructed instance")
+                        expression(path, value)
+                        source = target[0][0] if isinstance(target[0], tuple) else target[0]
+                        class_attribute((source, target[1]), parts[1:], role)
+                    else:
+                        raise ValueError("unresolved value attribute")
+                    active.remove(key)
+                    done.add(key)
+                    return
                 if value is None or any(
                         isinstance(n, (ast.Await, ast.NamedExpr)) or isinstance(n, ast.Call)
                         and not (parts[0] == "pytestmark" and qualified(path, n.func).startswith("pytest.mark."))
@@ -740,7 +832,7 @@ def outcome_sources(statuses: Mapping, sources: Mapping) -> dict:
     names = sorted(n for n, v in statuses.items() if v in ("passed", "failed"))[:50]
     return {"check_sources_sha256": [sha256(n) + ":" + sources[n] for n in names if sources.get(n)],
             "source_incomplete_sha256": [sha256(n) for n in names if n in sources and not sources[n]],
-            "identities_incomplete": len(statuses) > len(names),
+            "identities_incomplete": len(statuses) > len(names) or any(n in sources and not sources[n] for n in names),
             "identities_omitted": len(statuses) - len(names),
             "failed_identities_omitted": sum(statuses[n] == "failed" for n in sorted(statuses)[50:])}
 
@@ -802,8 +894,8 @@ def review_data(assessment: Mapping, repo=None) -> dict:
                         report_covers(c, str(check["id"])) for c in loading_rejected)):
                     verdict = "changed_code_not_loaded"
                 statuses.setdefault(str(check["id"]), []).append(verdict)
-    sources, captured, executed_names = {}, set(), set()
-    withheld_sources, legacy_selections = set(), set()
+    sources, executed_names, expanded_selections = {}, set(), set()
+    withheld_sources = set()
     has_capture = False
     for run in runs:
         for name, source in (run.get("check_sources") or {}).items():
@@ -812,9 +904,8 @@ def review_data(assessment: Mapping, repo=None) -> dict:
             sources[name] = source
         if "check_sources" in run:
             has_capture = True
-            captured.update(run.get("tests") or [])
-        else:
-            legacy_selections.update([*(run.get("tests") or []), *(run.get("executed_outcomes") or {})])
+        if run.get("executed_outcomes"):
+            expanded_selections.update(run.get("tests") or [])
         for name, verdict in (run.get("executed_outcomes") or {}).items():
             statuses.setdefault(name, []).append(verdict)
             executed_names.add(name)
@@ -824,17 +915,20 @@ def review_data(assessment: Mapping, repo=None) -> dict:
                     # their declared scope; do not manufacture bytes after a run.
                     raise ValueError("executed check source identity was not captured")
                 withheld_sources.add(name)
-    # A file/class selection is not an additional test beside its observed nodes.
+    # A run selection is not an additional test beside its observed nodes, even
+    # when collection remaps those nodes outside the selection's textual scope.
+    replaced_selections = (set(statuses) & expanded_selections) - executed_names
     statuses = {name: values for name, values in statuses.items() if name in executed_names
-                or not any(report_covers(name, node) for node in executed_names)}
+                or name not in replaced_selections and not any(report_covers(name, node) for node in executed_names)}
     terminal = {n: "failed" if "failed" in v else "passed" if v and all(x == "passed" for x in v) else "unknown"
                 for n, v in statuses.items()}
     terminal = {n: terminal[n] for n in sorted(terminal) if terminal[n] in ("passed", "failed")}
-    if any(n not in sources and any(report_covers(c, n) for c in captured) for n in terminal):
+    if any("check_sources" in run and not run.get("executed_outcomes")
+           and n not in (run.get("check_sources") or {})
+           and any(report_covers(c, n) for c in run.get("tests") or []) for run in runs for n in terminal):
         raise ValueError("executed check source identity was not captured")
     if has_capture:
-        withheld_sources.update(n for n in terminal if n not in sources
-                                and not any(report_covers(c, n) for c in legacy_selections))
+        withheld_sources.update(n for n in terminal if n not in sources)
     sources.update(dict.fromkeys(withheld_sources, ""))
     retained = dict(list(terminal.items())[:50])
     failed = sorted(sha256(n) for n, v in retained.items() if v == "failed")
@@ -856,6 +950,11 @@ def review_data(assessment: Mapping, repo=None) -> dict:
             "person_checks": _count((assessment.get("confirmed_expectations") or {}).get("expectations")),
             "isolation": str(((scope.get("environment") or {}).get("isolation") or {}).get("backend") or "")[:100]}
     data.update(outcome_sources(terminal, sources))
+    # Empty selection captures still explain the warning, not another finding.
+    selection_gaps = {sha256(n) for n in replaced_selections if n in sources and not sources[n]}
+    if selection_gaps:
+        data["source_incomplete_sha256"] = sorted(set(data["source_incomplete_sha256"]) | selection_gaps)[:50]
+        data["identities_incomplete"] = True
     data["reproduced"] = _reproduced_count(failed, [data])
     data["repair_blocked"] = repair_blocked(assessment)
     data["review_returned"] = any(a.get("model_calls") and a.get("result") == "replied" for a in activities)
@@ -1012,7 +1111,8 @@ def check_counts(events: Iterable[Event]) -> dict:
         observed = max(len(e.data.get("failed_sha256") or []) + e.data["failed_identities_omitted"] for e in missing)
         totals["open"] += max(known["open"], observed - known["repaired"], 1) - known["open"]
     return {**totals,
-            "identities_incomplete": any(e.data.get("identities_incomplete") for e in rows)}
+            "identities_incomplete": any(e.data.get("identities_incomplete") or e.data.get("source_incomplete_sha256")
+                                         for e in rows)}
 
 
 def finding_labels(events: Iterable[Event], targets: Iterable[str]) -> list[dict]:

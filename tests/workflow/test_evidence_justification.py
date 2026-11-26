@@ -1519,3 +1519,359 @@ def test_unused_base_class_imports_bind_without_promoting_defining_module_import
         assert evidence.capture_sources(repo, ["test_case.py"]) == before
         registration.write_text(original + "# changed inherited attribute\n", encoding="utf-8")
         assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+# Repair 3: acceptance first; the lead runs these under the NO-LANE override.
+def test_collection_callable_references_bind_callback_and_returned_decorator(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    oracle = repo / "oracle.py"
+    for collector, factory in (
+        ("import pytest\nfrom factory import cases\n"
+         "@pytest.mark.parametrize('value', cases())\ndef test_case(value): pass\n",
+         "from oracle import direction\ndef rank(i): return direction(i)\n"
+         "def cases(): return sorted([2, 3], key=rank)\n"),
+        ("from factory import checked\n@checked()\ndef test_case(): pass\n",
+         "from oracle import direction\ndef checked():\n"
+         "    def decorate(fn):\n        direction(1)\n        return fn\n"
+         "    return (decorate,)[0]\n"),
+        ("from factory import registered\nREFERENCES = (registered,)\ndef test_case(): pass\n",
+         "from oracle import direction\ndef registered(): return direction(1)\n"),
+    ):
+        (repo / "test_case.py").write_text(collector, encoding="utf-8")
+        (repo / "factory.py").write_text(factory, encoding="utf-8")
+        oracle.write_text("def direction(i): return i\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        oracle.write_text("def direction(i): return -i\n", encoding="utf-8")
+        after = evidence.capture_sources(repo, ["test_case.py"])
+        assert after["test_case.py"]
+        assert after != before
+
+
+def test_one_captured_check_disables_legacy_credit_for_the_entire_review():
+    from dataclasses import replace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from tests.harness.test_patch_review import result
+    from tests.workflow.kit import event
+
+    node, other = "test_case.py::test_case", "test_other.py::test_other"
+    for mixed in (True, False):
+        rows = []
+        for number, verdict in enumerate(("failed", "passed")):
+            value = assessment()
+            value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": verdict}]}]
+            value["scope"]["checks_run"] = [patch_review._record(
+                1, "checks", [node], result(**{verdict: [node]}))]
+            if mixed:
+                value["scope"]["checks_run"].append(patch_review._record(
+                    2, "checks", [other], result(passed=[other]), sources={other: sha("other source")}))
+            data = evidence.review_data(value)
+            assert data["source_incomplete_sha256"] == ([sha(node)] if mixed else [])
+            rows.append(replace(event(str(number) * 32, "review_finished", seconds=number, data=data),
+                                artifact_sha256=sha(str(number))))
+        counts = record_md.counts(rows)
+        assert counts["repaired"] == int(not mixed)
+        assert counts["open"] == int(mixed)
+
+
+def test_explicit_empty_capture_is_unknown_on_a_selected_job_everywhere(home, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import lifecycle, record_md
+    from g6.workforce import coding_certificate
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text("def test_case(): pass\n", encoding="utf-8")
+    for number, verdict in enumerate(("failed", "passed")):
+        (repo / "module.py").write_text(f"VALUE = {number}\n", encoding="utf-8")
+        value = assessment()
+        value["scope"]["artifact_digest"] = sha(str(number))
+        value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": verdict}]}]
+        value["scope"]["checks_run"] = [patch_review._record(
+            1, "checks", [node], result(**{verdict: [node]}), sources={node: ""})]
+        assert adapters.observe_review(repo, "capture gap", str(number), {"assessment": value},
+            started_at=at(number * 2), finished_at=at(number * 2 + 1)) == ""
+    held = evidence.read(repo, "capture gap", origin_kind="review_job", origin_id="1")
+    assert held["selected_run"]
+    card = patch_report.card({"workflow_evidence": held})
+    assert (card["repaired"], card["open"], card["identities_incomplete"]) == (None, None, True)
+    rows = [evidence.Event.from_body(body) for body in held["events"]]
+    counts = record_md.counts(rows)
+    assert (counts["repaired"], counts["open"], counts["identities_incomplete"]) == (0, 1, True)
+    project, _ = adapters.identities(repo, "capture gap")
+    readable = lifecycle.export(project).with_name("RECORD.md").read_text(encoding="utf-8")
+    assert "identities are incomplete" in readable
+    monkeypatch.setattr(coding_certificate.bench, "_repo", lambda *args: repo)
+    missions = SimpleNamespace(get=lambda _: {"venture_id": "fixture", "objective": "capture gap"})
+    companion = coding_certificate.workflow_justification(missions, "mission", {"repository": "repo"})
+    assert companion["events"] == held["justification"]
+    assert companion["identities_incomplete"]
+
+
+def test_constructed_instance_keeps_body_only_named_method_product_repair(tmp_path):
+    from dataclasses import replace
+
+    from g6.harness.workflow import record_md
+    from tests.workflow.kit import event
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text(
+        "from helper import Worker\nworker = Worker()\n"
+        "def test_case(): assert worker.run() == 2\n", encoding="utf-8")
+    (repo / "helper.py").write_text(
+        "from product import calculate\nclass Worker:\n"
+        "    def __init__(self): pass\n    def run(self): return calculate()\n", encoding="utf-8")
+    product = repo / "product.py"
+    identities = []
+    for number in (3, 2):
+        product.write_text(f"def calculate(): return {number}\n", encoding="utf-8")
+        identities.append(evidence.capture_sources(repo, [node]))
+        assert identities[-1][node]
+    assert identities[0] == identities[1]
+    rows = [replace(event(str(number) * 32, "review_finished", seconds=number, data={
+        **evidence.outcome_sources({node: verdict}, identities[number]),
+        ("failed_sha256" if number == 0 else "passed_sha256"): [sha(node)]}),
+        artifact_sha256=sha(str(number))) for number, verdict in enumerate(("failed", "passed"))]
+    held = {**evidence.bundle(rows), "selected_run": rows[-1].run}
+    assert patch_report.card({"workflow_evidence": held})["repaired"] == record_md.counts(rows)["repaired"] == 1
+
+
+def test_body_only_product_function_repairs_beside_collection_callable_references(tmp_path):
+    from dataclasses import replace
+
+    from g6.harness.workflow import record_md
+    from tests.workflow.kit import event
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::test_case"
+    (repo / "test_case.py").write_text(
+        "from factory import cases\nfrom product import calculate\n"
+        "REGISTERED = cases()\ndef test_case(): assert calculate() == 2\n", encoding="utf-8")
+    (repo / "factory.py").write_text(
+        "from oracle import direction\ndef rank(i): return direction(i)\n"
+        "def cases(): return sorted([2, 3], key=rank)\n", encoding="utf-8")
+    (repo / "oracle.py").write_text("def direction(i): return i\n", encoding="utf-8")
+    identities = []
+    for value in (3, 2):
+        (repo / "product.py").write_text(f"def calculate(): return {value}\n", encoding="utf-8")
+        identities.append(evidence.capture_sources(repo, [node]))
+        assert identities[-1][node]
+    assert identities[0] == identities[1]
+    rows = [replace(event(str(number) * 32, "review_finished", seconds=number, data={
+        **evidence.outcome_sources({node: verdict}, identities[number]),
+        ("failed_sha256" if number == 0 else "passed_sha256"): [sha(node)]}),
+        artifact_sha256=sha(str(number))) for number, verdict in enumerate(("failed", "passed"))]
+    held = {**evidence.bundle(rows), "selected_run": rows[-1].run}
+    assert patch_report.card({"workflow_evidence": held})["repaired"] == record_md.counts(rows)["repaired"] == 1
+
+
+def test_remapped_empty_capture_is_unknown_with_warning_on_every_surface(home, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import lifecycle, record_md
+    from g6.workforce import coding_certificate
+    from tests.harness.test_patch_review import result
+
+    repo = make_repo(tmp_path / "repo")
+    selection, node = "test_case.py", "virtual.py::test_case"
+    (repo / selection).write_text(
+        "pytest_plugins = ['plugin']\nfrom module import VALUE\n"
+        "def test_case(): assert VALUE == 2\n", encoding="utf-8")
+    (repo / "plugin.py").write_text(
+        "def pytest_collection_modifyitems(items):\n"
+        "    for item in items: item._nodeid = 'virtual.py::test_case'\n", encoding="utf-8")
+    sources = evidence.capture_sources(repo, [selection])
+    assert sources == {selection: ""}
+    for number, verdict in enumerate(("failed", "passed")):
+        (repo / "module.py").write_text(f"VALUE = {3 - number}\n", encoding="utf-8")
+        value = assessment()
+        value["scope"]["artifact_digest"] = sha(str(number))
+        value["requirements"] = [{"id": "R1", "checks": [{"id": selection, "verdict": verdict}]}]
+        value["scope"]["checks_run"] = [patch_review._record(
+            1, "checks", [selection], result(**{verdict: [node]}), sources=sources)]
+        data = evidence.review_data(value)
+        # F3': the selection's empty capture is incomplete too, beside the remapped executed node.
+        assert sorted(data["source_incomplete_sha256"]) == sorted([sha(selection), sha(node)])
+        # The selection describes the run; only its executed check is a finding.
+        assert data["failed_sha256"] == ([sha(node)] if verdict == "failed" else [])
+        assert data["passed_sha256"] == ([sha(node)] if verdict == "passed" else [])
+        assert data["reproduced"] == (1 if verdict == "failed" else 0)
+        assert adapters.observe_review(repo, "remapped capture", str(number), {"assessment": value},
+            started_at=at(number * 2), finished_at=at(number * 2 + 1)) == ""
+    held = evidence.read(repo, "remapped capture", origin_kind="review_job", origin_id="1")
+    assert held["selected_run"]
+    card = patch_report.card({"workflow_evidence": held})
+    assert (card["repaired"], card["open"], card["identities_incomplete"]) == (None, None, True)
+    rows = [evidence.Event.from_body(body) for body in held["events"]]
+    counts = record_md.counts(rows)
+    assert (counts["repaired"], counts["open"], counts["identities_incomplete"]) == (0, 1, True)
+    project, _ = adapters.identities(repo, "remapped capture")
+    readable = lifecycle.export(project).with_name("RECORD.md").read_text(encoding="utf-8")
+    assert "0 repaired; 1 open" in readable
+    assert "identities are incomplete" in readable
+    monkeypatch.setattr(coding_certificate.bench, "_repo", lambda *args: repo)
+    missions = SimpleNamespace(get=lambda _: {"venture_id": "fixture", "objective": "remapped capture"})
+    companion = coding_certificate.workflow_justification(missions, "mission", {"repository": "repo"})
+    assert companion["events"] == held["justification"]
+    assert companion["identities_incomplete"] is True
+
+
+def test_collection_references_cover_expression_shapes_and_named_instance_attributes(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "helper.py").write_text(
+        "from oracle import touch\nclass Base:\n    def probe(self): return touch()\n"
+        "class Worker(Base):\n    def __init__(self): pass\n", encoding="utf-8")
+    (repo / "factory.py").write_text(
+        "from oracle import touch\ndef callback(): return touch()\n"
+        "def cases():\n    def nested(): return touch()\n    alias = nested\n    return (alias,)[0]\n",
+        encoding="utf-8")
+    oracle = repo / "oracle.py"
+    for source in (
+        "from factory import callback\nREFERENCES = (callback,)[0]\n",
+        "from factory import callback\nREFERENCES = callback if True else None\n",
+        "from factory import callback\nREFERENCES = lambda: callback()\n",
+        "from functools import partial\nfrom factory import callback\nREFERENCES = partial(callback)\n",
+        "from factory import cases\nREFERENCES = cases()\n",
+        "from helper import Worker\nworker = Worker()\nREFERENCES = worker.probe\n",
+        "from helper import Worker\nREFERENCES = Worker.probe\n",
+    ):
+        (repo / "test_case.py").write_text(source + "def test_case(): pass\n", encoding="utf-8")
+        oracle.write_text("def touch(): return 1\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        oracle.write_text("def touch(): return 2\n", encoding="utf-8")
+        after = evidence.capture_sources(repo, ["test_case.py"])
+        assert before != after or before == after == {"test_case.py": ""}, source
+
+
+def test_constructed_mro_protocols_bind_but_unused_named_methods_stay_test_time(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from helper import Worker\nworker = Worker()\ndef test_case(): worker.run()\n", encoding="utf-8")
+    (repo / "helper.py").write_text(
+        "from oracle import touch\nfrom product import calculate\n"
+        "class Base:\n    def __iter__(self): return touch()\n"
+        "class Worker(Base):\n    def __init__(self): pass\n"
+        "    def run(self): return calculate()\n", encoding="utf-8")
+    oracle, product = repo / "oracle.py", repo / "product.py"
+    oracle.write_text("def touch(): return iter(())\n", encoding="utf-8")
+    product.write_text("def calculate(): return 1\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("def calculate(): return 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+    oracle.write_text("def touch(): return iter((1,))\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_referenced_reexported_fixture_body_stays_test_time_but_headers_bind(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from forwarding import observed\nREGISTERED = (observed,)\n"
+        "def test_case(observed): pass\n", encoding="utf-8")
+    (repo / "forwarding.py").write_text("from fixtures import observed\n", encoding="utf-8")
+    (repo / "fixture_api.py").write_text("from pytest import fixture as register\n", encoding="utf-8")
+    (repo / "fixtures.py").write_text(
+        "from fixture_api import register\nfrom oracle import cases\nfrom product import calculate\n"
+        "@register(params=cases())\ndef observed(request): return calculate()\n", encoding="utf-8")
+    oracle, product = repo / "oracle.py", repo / "product.py"
+    oracle.write_text("def cases(): return [1]\n", encoding="utf-8")
+    product.write_text("def calculate(): return 1\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("def calculate(): return 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+    oracle.write_text("def cases(): return [2]\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_constructor_references_bind_named_receiver_method_and_class_callbacks(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    oracle = repo / "oracle.py"
+    for collector, helper in (
+        ("from helper import Worker\nworker = Worker()\n",
+         "from oracle import touch\nclass Worker:\n"
+         "    def __init__(self): self.probe()\n    def probe(self): return touch()\n"),
+        ("from helper import Worker\nCALLBACK = (Worker,)\n",
+         "from oracle import touch\nclass Worker:\n    def __init__(self): touch()\n"),
+    ):
+        (repo / "test_case.py").write_text(collector + "def test_case(): pass\n", encoding="utf-8")
+        (repo / "helper.py").write_text(helper, encoding="utf-8")
+        oracle.write_text("def touch(): return 1\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        oracle.write_text("def touch(): return 2\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_mixed_file_capture_marks_uncaptured_sibling_incomplete():
+    from g6.harness import patch_review
+    from tests.harness.test_patch_review import result
+
+    node, other = "test_case.py::test_case", "test_case.py::test_other"
+    value = assessment()
+    value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": "passed"}]}]
+    value["scope"]["checks_run"] = [
+        patch_review._record(1, "checks", [node], result(passed=[node])),
+        patch_review._record(2, "checks", ["test_case.py"], result(passed=[other]), sources={other: sha("source")}),
+    ]
+    data = evidence.review_data(value)
+    assert data["source_incomplete_sha256"] == [sha(node)]
+    assert data["identities_incomplete"] is True
+
+
+def test_unresolved_collection_attribute_receivers_withhold_identity(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "helper.py").write_text(
+        "from oracle import touch\nclass Worker:\n    def probe(self): return touch()\n"
+        "def make(): return Worker()\n"
+        "def local():\n    worker = Worker()\n    return worker.probe\n", encoding="utf-8")
+    (repo / "oracle.py").write_text("def touch(): pass\n", encoding="utf-8")
+    for source in (
+        "from helper import make\nCALLBACK = make().probe\n",
+        "from helper import local\nCALLBACK = local()\n",
+        "from helper import Worker\nworker = Worker()\nname = 'probe'\nCALLBACK = getattr(worker, name)\n",
+    ):
+        (repo / "test_case.py").write_text(source + "def test_case(): pass\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) == {"test_case.py": ""}
+
+
+def test_unresolved_callable_references_inside_collection_helpers_withhold_identity(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from helper import cases\nREFERENCES = cases()\ndef test_case(): pass\n", encoding="utf-8")
+    for source in ("def cases(): return (missing_callback,)\n",
+                   "def cases(): return missing_callback()\n"):
+        (repo / "helper.py").write_text(source, encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) == {"test_case.py": ""}
+
+
+def test_collection_lambda_parameters_keep_callback_sources_definite(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from helper import cases\nREFERENCES = cases()\ndef test_case(): pass\n", encoding="utf-8")
+    (repo / "helper.py").write_text(
+        "from callback import rank\ndef cases(): return lambda item: (rank, item)\n", encoding="utf-8")
+    (repo / "callback.py").write_text("from oracle import VALUE\ndef rank(): return VALUE\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    oracle.write_text("VALUE = 1\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    oracle.write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before

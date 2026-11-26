@@ -705,6 +705,10 @@ def card(assessment: dict, loop: dict | None = None) -> dict:
     if known and kind == "review_finished":
         reproduced = evidence.check_counts([Event.from_body(one)])["reproduced"]
         open_count = check_counts["open"]
+    if known and any((e.get("data") or {}).get("source_incomplete_sha256") for e in events):
+        # A captured source gap cannot establish repair totals, even when this
+        # particular job is selected. Retention caps keep their lower bounds.
+        repaired = open_count = None
     labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
         [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")
          and ((e.get("data") or {}).get("reproduced") or (e.get("data") or {}).get("failed_sha256"))])
