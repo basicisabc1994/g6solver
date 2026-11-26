@@ -137,7 +137,9 @@ SOURCE_SITES = {
     # for the original provider/session, and _shared runs the common pre-dialog refusal check. Planted cases:
     # tests/s16r3/test_question_source_store.py (lost identity, other session/provider, legacy and revokes), and
     # tests/s16r3/test_pending_question_sources.py (MCP retries, restart, and no dialog on refusal).
-    'g6.harness.question_store._provenance',
+    # Reply follow-up: the sources an asked entry retains are built by asking_sources, which _provenance records and
+    # g6_confirm_behaviour checks before it spends anything (tests/_review_reply4, tests/s16r3/test_reply_followup.py).
+    'g6.harness.question_store.asking_sources',
     'g6.harness.question_store.pending_sources',
     'g6.mcp.behaviour._shared',
     'g6.mcp.review_reply.finish',

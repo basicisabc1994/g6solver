@@ -15,6 +15,8 @@ builds a policy: the ceiling is trusted configuration and the plan only names ca
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import dataclasses
 import hashlib
 import json
@@ -192,9 +194,9 @@ def load_templates(directory: str | Path | None = None) -> dict[str, Template]:
     out: dict[str, Template] = {}
     for path in sorted(directory.glob("*.json")):
         try:
-            template = _template(json.loads(path.read_text(encoding="utf-8")), path.name)
+            template = _template(_decode_json(path.read_text(encoding="utf-8")), path.name)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if path.name != f"{template.name}.json":
             raise ValueError(f"{path.name}: a template file is named <name>.json, here {template.name}.json")
         out[template.name] = template

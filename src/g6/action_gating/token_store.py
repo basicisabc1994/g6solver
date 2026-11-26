@@ -4,6 +4,8 @@
 """SQLite-backed durable gate-token ledger: policy decisions + audit records, single-use tokens."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from datetime import UTC, datetime
 import json
 import os
@@ -140,14 +142,14 @@ class ActionGatingStore:
                 "decision": row[2],
                 "completion_state": row[3],
                 "authorized": bool(row[4]),
-                "reason_codes": json.loads(row[5] or "[]"),
+                "reason_codes": _decode_json(row[5] or "[]"),
                 "audit_id": row[6],
                 "expires_at": row[7],
                 "consumed_at": row[8],
-                "audit_record": json.loads(row[9]) if row[9] else None,
+                "audit_record": _decode_json(row[9]) if row[9] else None,
             }
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def consume_gate_token(self, gate_token: str) -> bool:
         with self._conn:

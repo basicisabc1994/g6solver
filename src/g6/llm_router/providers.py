@@ -21,6 +21,8 @@ code.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import re
@@ -86,9 +88,9 @@ def _json(raw: bytes, where: str) -> Any:
         return {}
     try:
         try:
-            return json.loads(raw.decode("utf-8"))
+            return _decode_json(raw.decode("utf-8"))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise _Failed(PROVIDER_ERROR, f"the reply from {where} is not JSON") from exc
 

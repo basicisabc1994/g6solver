@@ -12,6 +12,8 @@ the operators declared, not against the world they describe.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -196,7 +198,7 @@ def _load_set(name: str) -> list[OperatorSpec]:
     if not path.is_file():
         raise _Refusal(NO_SET, f"no operator set named {name!r} is kept")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _decode_json(path.read_text(encoding="utf-8"))
         ops = [OperatorSpec.model_validate(o) for o in data["operators"]]
         if _digest(_plain(ops)) != data["sha256"]:
             raise ValueError("its operators no longer match the digest kept with them")
@@ -228,7 +230,7 @@ def keep_operators(d: CogArchGpsInput) -> dict[str, Any]:
     digest, path = _digest(ops), _set_path(d.name)
     if path.is_file():
         try:
-            same = json.loads(path.read_text(encoding="utf-8")).get("sha256") == digest
+            same = _decode_json(path.read_text(encoding="utf-8")).get("sha256") == digest
         except (OSError, ValueError, AttributeError, RecursionError, MemoryError):
             same = False
         if not same:

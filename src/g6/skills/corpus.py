@@ -63,7 +63,7 @@ def _loaded(text: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def load() -> dict[str, Any]:

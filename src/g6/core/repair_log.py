@@ -10,6 +10,8 @@ yet.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import atexit
 import errno
 import json
@@ -41,11 +43,11 @@ def _drop_counts(path: Path) -> dict[str, int]:
     try:
         path.lstat()
         plain_file(path)
-        found = json.loads(path.read_text(encoding="utf-8"))
+        found = _decode_json(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
     except (RecursionError, MemoryError):
-        raise ValueError("invalid repair drop counter") from None
+        raise json.JSONDecodeError("invalid repair drop counter", "", 0) from None
     if not isinstance(found, dict) or any(
         not isinstance(key, str) or len(key) != 32 or any(c not in "0123456789abcdef" for c in key)
         or type(count) is not int or count < 0 for key, count in found.items()
@@ -274,7 +276,7 @@ def repair_stats(path: Path | None = None) -> dict[str, Any]:
         return out
     for line in lines:
         try:
-            row = json.loads(line.decode("utf-8"))
+            row = _decode_json(line.decode("utf-8"))
             if not isinstance(row, dict) or not isinstance(row.get("code"), str):
                 continue
             stats = out.setdefault(row["code"], {"refused": 0, "resolved": 0, "not": 0, "person": 0})

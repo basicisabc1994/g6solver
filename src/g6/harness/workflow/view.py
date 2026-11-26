@@ -57,8 +57,14 @@ def level() -> str:
 
 
 def shared(project: str, provider: str | None) -> bool:
-    """Whether the project's workflow source is shared with ``provider``. No provider known means not shared."""
-    return bool(provider) and provider != "cloud:unknown" and cloud.is_granted(workflow_source(project), provider)
+    """Whether the project's workflow source is shared with ``provider``. No provider known, or a sharing state G6
+    cannot read, means not shared."""
+    if not provider or provider == "cloud:unknown":
+        return False
+    try:
+        return cloud.is_granted(workflow_source(project), provider)
+    except (RecursionError, MemoryError):
+        return False
 
 
 def _value_result(events) -> str:

@@ -24,7 +24,8 @@ of the tree the question is asked about.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 import time
 from typing import Any
@@ -97,6 +98,9 @@ def _shared(read: tuple) -> None:
                               supplied=capture.supplied)
     except LLMError:
         raise bq.CandidateRefused("those question sources are not shared with this client", cloud.REQUIRED) from None
+    except (RecursionError, MemoryError):   # the bound reader turns OSError and ValueError only into LLMError
+        raise bq.CandidateRefused("G6's sharing state could not be read, so nothing is shown or asked",
+                                  cloud.STATE_UNAVAILABLE) from None
 
 
 def _pending(asked: qs.Asked) -> None:
@@ -138,7 +142,7 @@ def _review_candidates(task: str, review_job: str, template_instances: Any, *, i
 
     try:
         saved_bytes = state_path("reviews", f"{review_job}.json").read_bytes()
-        saved = json.loads(saved_bytes)
+        saved = _decode_json(saved_bytes)
         _completion = saved["assessment"]["completion"]
     except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
         raise bq.CandidateRefused(f"G6 holds no finished review with this job id it can read ({type(exc).__name__})",
@@ -315,6 +319,12 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 return _reply(SPENT, state.budget_note or "the task's budget is spent", state=state,
                               candidate=chosen, plan=plan)
             case, rule = chosen.questions(artifact or digest(repo_tests.snapshot(root)))
+            from g6.core import cloud_consent as cloud
+
+            if cloud.current_capture() is not None:
+                # every check that can refuse comes before anything is recorded or spent: the sources this question
+                # will carry, checked as a pending question's are when it is shown (``_pending``)
+                _shared(qs.asking_sources())
             scenario = executable_scenario.Scenario.resolve(root, case)
             scenario.admit(root, case)
             executable_scenario.save(case, scenario)
@@ -325,8 +335,6 @@ async def confirm(ctx: Any, repo: str, task: str, candidates: Any = None, review
                 asked = store.ask(case, rule, chosen)
             except qs.BudgetSpent as exc:
                 return _reply(SPENT, str(exc), state=store.state(), candidate=chosen, plan=plan)
-            from g6.core import cloud_consent as cloud
-
             if cloud.current_capture() is not None:
                 # ask may have returned another call's existing entry under the store lock.
                 _pending(asked)

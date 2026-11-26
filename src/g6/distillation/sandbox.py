@@ -17,6 +17,8 @@ It is a resource bound and a pre-filter, not an operating-system sandbox: the ch
 from __future__ import annotations
 from g6.core.guidance_builders import script_run
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -87,7 +89,7 @@ def run_batch(source: str, values: Sequence[Any], *, timeout_s: float = 10.0, me
     if done.status == "timeout":
         return [Run("timeout", reason=done.stderr[:300]) for _ in values]
     try:
-        outcomes = json.loads(done.outputs["outcomes.json"].decode("utf-8"))
+        outcomes = _decode_json(done.outputs["outcomes.json"].decode("utf-8"))
     except (KeyError, ValueError, RecursionError, MemoryError):
         why = (done.stderr or done.stdout or f"the child ended with {done.status}").strip().splitlines()
         return [Run("error", reason=(why[-1] if why else done.status)[:300]) for _ in values]

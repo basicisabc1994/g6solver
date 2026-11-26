@@ -9,6 +9,9 @@ Every call returns the library envelope (``completion_state``, ``warning_card``,
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
+import json
 import hashlib
 import re
 import time
@@ -166,11 +169,10 @@ def versions_path(workspace: Path) -> Path:
 def recorded_versions(store: ProfileStore, workspace: Path) -> list[dict]:
     """The store's version rows G6 recorded for ``workspace`` as it appended them (``versions_path``), oldest first: the
     last is the head a harness on it runs (``MetaHarness._head``), read here by anything that must name it without one."""
-    import json
 
     try:
         recorded = {(int(number), str(profile)) for number, profile in
-                    json.loads(versions_path(workspace).read_text(encoding="utf-8"))}
+                    _decode_json(versions_path(workspace).read_text(encoding="utf-8"))}
     except (OSError, ValueError, TypeError, RecursionError, MemoryError):
         recorded = set()
     return [row for row in store.versions() if (row["version"], row["profile_digest"]) in recorded]
@@ -248,11 +250,11 @@ class MetaHarness:
                     try:
                         self.store._chain.reload()
                     except (RecursionError, MemoryError):
-                        raise ValueError("a JSON record exceeds decoder limits") from None
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                     try:
                         self.ledger._chain.reload()
                     except (RecursionError, MemoryError):
-                        raise ValueError("a JSON record exceeds decoder limits") from None
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 self._operation_depth += 1
                 try:
                     yield
@@ -300,10 +302,9 @@ class MetaHarness:
 
     def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
         """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
-        import json
 
         try:
-            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+            return _decode_json(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
         except (OSError, ValueError, RecursionError, MemoryError):
             return False
 
@@ -359,7 +360,7 @@ class MetaHarness:
             try:
                 self.ledger.append(kind, ident, body)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def _recorded(self, kind: str, ident: str) -> tuple[Any, str]:
         """The proposal, report or decision with digest ``ident``: one this handle made, or one any process recorded
@@ -418,7 +419,7 @@ class MetaHarness:
             return any((_file_head(self.workspace / name) or "") != head for name, head in (
                 ("store.jsonl", self.store.head_hash()), ("ledger.jsonl", self.ledger.head())))
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     # --- the loop -----------------------------------------------------------------------------------------------
     @_serialized
@@ -595,7 +596,7 @@ class MetaHarness:
                     "strategy": strategy.name, "proposer": proposer, "candidate_digest": proposal.candidate_digest,
                     "diff": dict(proposal.diff), "failures_seen": len(view.failures), "dev_calls_used": meter.used})
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             proposals.append(proposal)
         flagged = sorted({p for f in view.failures for p in f.flags})
         if not proposals:
@@ -637,7 +638,7 @@ class MetaHarness:
         try:
             self.ledger.append("selection", f"{len(self.ledger.rows('selection')) + 1}:{digest(row)}", row)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if winner is None and result.stopped:
             return _blocked(BUDGET_EXCEEDED, result.stopped, "Raise the selection budget, or race fewer candidates.",
                             ranking=result.ranking, winner=None, cases_used=result.cases_used,
@@ -743,7 +744,7 @@ class MetaHarness:
             try:
                 self.ledger.append("decision", decision.digest(), decision.to_dict())
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if decision.verdict != "recommend":
             plan = recovery.for_decision(decision, report, self.workflow)
             return _blocked(decision.code, "; ".join(decision.reasons), f"Nothing changes. {plan.next_action}",
@@ -873,7 +874,7 @@ class MetaHarness:
         try:
             self.ledger.append("run", run_id, row)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         out = {**result, "profile_version": version, "profile_digest": profile.digest()}
         audit = self._audit(task_input, run_id, version, released)
         if audit:
@@ -897,7 +898,7 @@ class MetaHarness:
             try:
                 self.ledger.append("run", f"shadow-{run_id}", row)
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out["shadow"] = {k: row[k] for k in ("profile_digest", "completion_state", "model_calls", "wall_clock_s",
                                                   "output_sha256")} | {
                 "note": "a shadow run's output is recorded by digest only and never returned or used"}
@@ -947,7 +948,7 @@ class MetaHarness:
                 "purpose": "distillate admission", "split": "held_out", "split_digest": digest_, "verdict": report.verdict,
                 "reason": report.reason, "passed": len(report.passed), "failed": len(report.failed)})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if report.verdict != "passed":
             return _blocked(NO_NEW_CANDIDATE, f"the distillate was not admitted: {report.verdict}: {report.reason}",
                             report={"verdict": report.verdict, "failed": list(report.failed)[:10]})
@@ -1001,7 +1002,7 @@ class MetaHarness:
             self.ledger.append("evaluation", f"adapter-{sha}", {"purpose": "adapter training", "examples": len(rows),
                                                                 "base_unchanged": True, "report": result.report})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _envelope("qualified-draft", "G6_E_META_ADAPTER_TRAINED", "an adapter, a candidate only",
                          next_action=f"mh.candidate({{..., 'adapter': '{sha}'}}, proposer=...)", adapter=sha,
                          report=result.report)
@@ -1037,7 +1038,7 @@ class MetaHarness:
                 "current_released": released, "difference": float(prev_released) - float(released),
                 "model_calls": calls, "wall_clock_s": elapsed})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return {"previous_version": previous, "model_calls": calls, "wall_clock_s": elapsed,
                 "note": "the previous approved version also ran on this task; its output is not returned"}
 
@@ -1083,12 +1084,12 @@ class MetaHarness:
                                   reason=f"drift: mean difference {verdict.mean_difference} over "
                                          f"{verdict.pairs} audited runs > {verdict.threshold}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         try:
             self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
                                                              "now_version": number, "audit": summary})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _blocked(DRIFT_DEMOTED, f"version {version} fell behind the previous approved version on its audited "
                         f"runs; the head is now version {number} (= version {previous})",
                         "Re-evaluate the demoted candidate on a fresh held-out split before trying it again.",
@@ -1110,7 +1111,7 @@ class MetaHarness:
             self.ledger.append("setting", f"audit-rate-{len(self.ledger.rows('setting'))}",
                                {"audit_rate": rate, "accepted_by": who, "at": _now()})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"audit rate {rate}", audit_rate=rate)
 
     def _live_since_online(self) -> int:
@@ -1135,7 +1136,7 @@ class MetaHarness:
                 "online_tuning": True, "online_every": every, "online_strategy": strategy.name, "accepted_by": who,
                 "at": _now()})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._online = strategy
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"online tuning on, every {every} live runs",
                          next_action="Proposals it makes are candidates: evaluate, decide and approve each one.")
@@ -1151,7 +1152,7 @@ class MetaHarness:
             self.ledger.append("setting", f"online-{len(self.ledger.rows('setting'))}",
                                {"online_tuning": False, "accepted_by": who, "at": _now()})
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._online = None
         return _envelope("qualified-draft", "G6_E_META_SETTING", "online tuning off")
 
@@ -1273,7 +1274,7 @@ class MetaHarness:
                              decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}
                                         for r in self.ledger.rows("decision")])
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @_serialized
     def report(self) -> dict[str, Any]:
@@ -1294,7 +1295,7 @@ class MetaHarness:
                               if r["purpose"] == "live")},
             ]
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         last = ([r for r in self.ledger.rows("evaluation") if r.get("split") == "held_out"] or [None])[-1]
         measured = [{"claim": "the last held-out evaluation", "value": last}] if last else []
         online = [r for r in self.ledger.rows("setting") if "online_tuning" in r]

@@ -76,12 +76,15 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import asyncio
 import json
 import os
 import uuid
 from typing import Any
 
+from g6.core.decoder_limits import decode, is_undecodable_record
 from g6.mcp._stdio import capture_stdout
 
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
@@ -151,12 +154,14 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
 
     request_id = uuid.uuid4().hex[:12]
     try:
-        params = json.loads(params_json or "{}")
-    except json.JSONDecodeError as exc:
-        return reply_for_agent(blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id))
-    except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
-        return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
-                                             request_id=request_id))
+        params = decode(params_json or "{}")
+    except json.JSONDecodeError as exc:   # guidance_builders.blocked_reply already filters the reply for the agent
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
+    except ValueError as exc:
+        if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+            raise
+        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json: a JSON record exceeds decoder limits",
+                             request_id=request_id)
     if not isinstance(params, dict):
         return reply_for_agent(blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id))
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
@@ -281,10 +286,12 @@ def build_server(surface: Any = None) -> Any:
         from g6.mcp.composition import compose_reply
         from g6.core.guidance_builders import blocked_reply
         try:
-            payload = json.loads(composition_json)
+            payload = decode(composition_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json: a JSON record exceeds decoder limits")
         return compose_reply(payload, allow_sensitive=allowed_sensitive())
 
@@ -451,10 +458,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Does not confirm or execute it. Below 30 held-out cases is exploration only."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            specification = json.loads(specification_json)
+            specification = decode(specification_json)
         except json.JSONDecodeError:
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json: a JSON record exceeds decoder limits")
         return mh.start(specification)
 
@@ -487,7 +496,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         Stores content by digest; does not edit the evaluator or activate the candidate."""
         from g6.core.guidance_builders import blocked_reply
         try:
-            files = json.loads(files_json)
+            files = _decode_json(files_json)
             if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
                 raise ValueError("files must map filenames to source strings")
             return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
@@ -530,12 +539,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """A candidate profile (``profile_json``: acting fields only), or with none, the declared search space's
         candidates. A candidate changes nothing until it is evaluated, decided and approved by a person."""
         try:
-            profile = json.loads(profile_json) if profile_json else None
+            profile = decode(profile_json) if profile_json else None
         except json.JSONDecodeError as exc:
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", f"profile_json is not JSON: {exc}")
-        except (ValueError, RecursionError, MemoryError):   # a decoder limit: too deep, too large, an integer too long
+        except ValueError as exc:
+            if not is_undecodable_record(exc):   # a decoder limit: too deep, too large, an integer too long
+                raise
             from g6.metaharness.api import _blocked
 
             return _blocked("G6_E_META_SCHEMA", "profile_json: a JSON record exceeds decoder limits")

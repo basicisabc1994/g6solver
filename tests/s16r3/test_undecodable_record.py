@@ -1,0 +1,489 @@
+"""Repair 1 of the reply follow-up: a record past the decoder's limits never lets another record decide in its place.
+
+The follow-up turned a decoder resource error (``RecursionError``, ``MemoryError``) into ``json.JSONDecodeError`` so
+each module's own malformed-input refusal handles it. Where that handler passes over the record and goes on (the last
+result printed, the latest audit, the first object in a reply, a stored list a gate reads, a worker's last line), the
+record it could not read may be the one that decides, so passing over it lets an earlier, older or nested one decide.
+Those readers decode through ``g6.core.decoder_limits.decode``: its ``UndecodableRecord`` is a ``ValueError`` the
+passing-over handler does not catch.
+"""
+import ast
+import json
+from pathlib import Path
+
+import pytest
+
+from tests.s16r3.certificate_inputs import certificate_inputs
+
+SOURCE = Path(__file__).resolve().parents[2] / 'src' / 'g6'
+DEEP = '[' * 200000 + '0' + ']' * 200000
+
+
+def test_decode_refuses_past_the_limits_and_is_no_json_decode_error():
+    from g6.core.decoder_limits import UndecodableRecord, decode
+
+    assert decode('{"a": [1]}') == {'a': [1]}
+    with pytest.raises(UndecodableRecord) as raised:
+        decode(DEEP)
+    assert isinstance(raised.value, ValueError) and not isinstance(raised.value, json.JSONDecodeError)
+    with pytest.raises(json.JSONDecodeError):
+        decode('{"a": ')
+
+
+# --- finding 1: the latest audit -----------------------------------------------------------------------------------
+
+def _store_with_unreadable_latest(tmp_path):
+    from g6.self_training.persistence import ScorecardStore
+    from g6.self_training.schema import AuditResult
+
+    store = ScorecardStore(tmp_path)
+    store.append_audit(AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    failing = ('{"component":"example","tier":2,"passed_threshold":false,"rubric_reviewed":true,"detail":'
+               + DEEP + '}')
+    with open(store.store_dir / store.AUDIT_LOG, 'a', encoding='utf-8') as log:
+        log.write(failing + '\n')
+    return store
+
+
+def test_an_unreadable_latest_audit_refuses_a_publication_promotion(tmp_path):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _store_with_unreadable_latest(tmp_path)
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+    assert store.get_score('example').current_tier == 5
+
+
+def test_an_unreadable_audit_is_not_passed_over_by_the_history(tmp_path):
+    from g6.core.decoder_limits import UndecodableRecord
+
+    with pytest.raises(UndecodableRecord):
+        _store_with_unreadable_latest(tmp_path).audit_history('example')
+
+
+def test_a_promotion_that_reads_no_audit_still_stands(tmp_path):
+    assert _store_with_unreadable_latest(tmp_path).promote('example', 3).current_tier == 3
+
+
+def test_a_malformed_audit_line_is_still_passed_over(tmp_path):
+    from g6.self_training.persistence import ScorecardStore
+    from g6.self_training.schema import AuditResult
+
+    store = ScorecardStore(tmp_path)
+    store.append_audit(AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    with open(store.store_dir / store.AUDIT_LOG, 'a', encoding='utf-8') as log:
+        log.write('{"component": \n')
+    assert len(store.audit_history('example')) == 1
+
+
+# --- finding 2: the result Claude Code printed last -------------------------------------------------------------
+
+def test_an_unreadable_final_result_never_resurrects_an_earlier_one():
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    final = '{"type":"result","is_error":true,"result":"failed","details":' + DEEP + '}'
+    assert _result(earlier + '\n' + final) is None
+
+
+def test_an_unreadable_line_before_the_last_result_does_not_hide_it():
+    from g6.agents.agent_claude.adapter import _result
+
+    final = {'type': 'result', 'is_error': False, 'result': 'done'}
+    assert _result('{"type":"assistant","x":' + DEEP + '}\n' + json.dumps(final)) == final
+
+
+# --- finding 3: the first object in a model's reply -------------------------------------------------------------
+
+def test_an_unreadable_outer_object_never_promotes_an_inner_answer():
+    from g6.reasoning.steps import DirectStep, first_json_object
+
+    reply = '{"answer":"outer answer","data":' + '[' * 200000 + '{"answer":"inner"}' + ']' * 200000 + '}'
+    with pytest.raises(ValueError):
+        first_json_object(reply)
+
+    class Model:
+        def complete(self, *args, **kwargs):
+            return reply
+
+    assert DirectStep(Model()).solve('What is the answer?') == ''
+
+
+# --- the audit's other sites ----------------------------------------------------------------------------------------
+
+def test_a_theory_whose_sources_cannot_be_read_is_not_read_as_having_none(tmp_path):
+    from g6.core.decoder_limits import UndecodableRecord
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = Theory.new('G6_E_X', 'do the thing', source_instances=['i1'])
+    store.add_candidates([theory])
+    store._conn.execute('UPDATE theories SET source_instances=? WHERE theory_id=?', (DEEP, theory.theory_id))
+    store._conn.commit()
+    with pytest.raises(UndecodableRecord):
+        store.get(theory.theory_id)
+    store.close()
+
+
+def test_a_stopped_workers_unreadable_last_line_is_refused_not_dropped(monkeypatch):
+    from g6.algebra import runner
+    from g6.algebra.envelope import OUTPUT_UNRECOGNISED, Refusal
+
+    out = json.dumps({'stage': 'answer', 'answer': 'x'}) + '\n{"stage":"error","reason":' + DEEP + '}'
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(None, out, '', 'time'))
+    with pytest.raises(Refusal) as refused:
+        runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})
+    assert refused.value.code == OUTPUT_UNRECOGNISED
+
+
+def test_a_stopped_workers_cut_off_last_line_is_still_dropped(monkeypatch):
+    from g6.algebra import runner
+
+    out = json.dumps({'stage': 'answer', 'answer': 'x'}) + '\n{"stage": "rech'
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(None, out, '', 'time'))
+    lines, stopped = runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})
+    assert [line['stage'] for line in lines] == ['answer'] and stopped == 'time'
+
+
+# --- the malformed variant: a record G6 cannot read for any reason -------------------------------------------------
+
+def _audit_store(tmp_path, *lines):
+    from g6.self_training.persistence import ScorecardStore
+    from g6.self_training.schema import AuditResult
+
+    store = ScorecardStore(tmp_path)
+    store.append_audit(AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    with open(store.store_dir / store.AUDIT_LOG, 'a', encoding='utf-8') as log:
+        for line in lines:
+            log.write((line if isinstance(line, str) else line.model_dump_json()) + '\n')
+    return store
+
+
+@pytest.mark.parametrize('unreadable', ['{"component":"example","tier":2,"passed_threshold":fal', '[1, 2]'])
+def test_a_malformed_latest_audit_refuses_a_publication_promotion(tmp_path, unreadable):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, unreadable)
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+    assert store.promote('example', 3).current_tier == 3
+
+
+def test_a_malformed_line_followed_by_another_components_audit_still_refuses(tmp_path):
+    from g6.self_training.persistence import PromotionRefused
+    from g6.self_training.schema import AuditResult
+
+    store = _audit_store(tmp_path, '{"component":"exam', AuditResult(component='other', tier=1))
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+
+
+def test_a_malformed_line_before_the_latest_readable_audit_decides_nothing(tmp_path):
+    from g6.self_training.schema import AuditResult
+
+    store = _audit_store(tmp_path, '{"component":"exam',
+                         AuditResult(component='example', tier=5, passed_threshold=True, rubric_reviewed=True))
+    assert store.promote('example', 6).current_tier == 6
+
+
+@pytest.mark.parametrize('stored', ['["i1", ', '5', '{"i1": 1}'])
+def test_a_theory_whose_sources_are_malformed_is_not_read_as_having_none(tmp_path, stored):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = Theory.new('G6_E_X', 'do the thing', source_instances=['i1'])
+    store.add_candidates([theory])
+    store._conn.execute('UPDATE theories SET source_instances=? WHERE theory_id=?', (stored, theory.theory_id))
+    store._conn.commit()
+    with pytest.raises(ValueError, match='source instances'):
+        store.get(theory.theory_id)
+    store.close()
+
+
+def test_a_malformed_final_result_never_resurrects_an_earlier_one():
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n{"type":"result","is_error":true,"result":"fai') is None
+    assert _result(earlier + '\n{"type":"system"}\nnot json') == json.loads(earlier)
+
+
+@pytest.mark.parametrize('reply', [
+    '{"answer": "outer", "data": [{"answer": "inner"}] oops}',        # balanced, malformed
+    '{"answer": "outer", "data": {"answer": "inner"}',                 # never closed
+])
+def test_a_malformed_outer_object_never_promotes_an_inner_answer(reply):
+    from g6.reasoning.steps import first_json_object
+
+    with pytest.raises(ValueError):
+        first_json_object(reply)
+
+
+def test_a_malformed_object_beside_the_answer_is_still_passed_over():
+    from g6.reasoning.steps import first_json_object
+
+    assert first_json_object('the set {1, 2}, so {"answer": "3"}') == {'answer': '3'}
+
+
+# --- repair 2: a record that decodes is read only in its expected shape; an integer too long is a decoder limit ------
+
+LONG = '9' * 10000
+
+
+@pytest.mark.parametrize('number', [LONG, '-' + LONG])
+def test_an_integer_too_long_to_convert_is_a_decoder_limit(number):
+    from g6.core.decoder_limits import UndecodableRecord, decode
+
+    with pytest.raises(UndecodableRecord):
+        decode('{"n": ' + number + '}')
+
+
+def test_an_integer_at_the_interpreters_limit_still_decodes():
+    import sys
+
+    from g6.core.decoder_limits import decode
+
+    assert decode('[-' + '9' * sys.get_int_max_str_digits() + ']')[0] < 0
+
+
+def test_the_shape_check_takes_exact_types():
+    from g6.core.decoder_limits import ListOf, shaped
+
+    spec = {'b': bool, 'i': int, 'f': float, 'l': ListOf(str)}
+    assert shaped({'b': False, 'i': 0, 'f': 1, 'l': ['x']}, spec)
+    for wrong in ({'b': 'false'}, {'b': 0}, {'i': True}, {'i': 1.0}, {'f': True}, {'l': ['x', 1]}, {'l': 'x'}):
+        assert not shaped({'b': False, 'i': 0, 'f': 1.0, 'l': [], **wrong}, spec), wrong
+    assert not shaped({'b': False, 'i': 0, 'f': 1.0}, spec)
+    assert shaped({'b': True}, {}, {'b': bool}) and not shaped({'b': None}, {}, {'b': bool})
+    assert not shaped(['b'], {})
+
+
+PASSING = {'component': 'example', 'tier': 5, 'passed_threshold': True, 'rubric_reviewed': True}
+
+
+@pytest.mark.parametrize('latest', [
+    PASSING | {'passed_threshold': 'false', 'rubric_reviewed': 'false'},
+    PASSING | {'passed_threshold': 1, 'rubric_reviewed': 1},
+    {k: v for k, v in PASSING.items() if k != 'rubric_reviewed'},
+    PASSING | {'tier': '5'},
+    PASSING | {'component': None},
+])
+def test_an_audit_line_not_in_its_shape_is_not_known(tmp_path, latest):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, json.dumps(latest))
+    with pytest.raises(PromotionRefused, match='latest audit is not known'):
+        store.promote('example', 6)
+
+
+def test_an_unreadable_record_then_a_misshapen_one_refuses(tmp_path):
+    from g6.self_training.persistence import PromotionRefused
+
+    store = _audit_store(tmp_path, DEEP, json.dumps(
+        {'component': 'example', 'tier': 2, 'passed_threshold': 'false', 'rubric_reviewed': 'false'}))
+    with pytest.raises(PromotionRefused):
+        store.promote('example', 6)
+
+
+@pytest.mark.parametrize('stored', ['', '   ', '["a", 1]', '[null]', LONG])
+def test_a_blank_or_misshapen_source_list_is_not_known(tmp_path, stored):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = Theory.new('G6_E_X', 'do the thing', source_instances=['i1'])
+    store.add_candidates([theory])
+    store._conn.execute('UPDATE theories SET source_instances=? WHERE theory_id=?', (stored, theory.theory_id))
+    store._conn.commit()
+    with pytest.raises(ValueError):
+        store.get(theory.theory_id)
+    store.close()
+
+
+def test_a_known_empty_source_list_still_reads(tmp_path):
+    from g6.learning.schema import Theory
+    from g6.learning.theory_store import TheoryStore
+
+    store = TheoryStore(tmp_path / 'theories.db', scope='s')
+    theory = store.add_candidates([Theory.new('G6_E_X', 'do the thing')])[0]
+    assert store.get(theory.theory_id).source_instances == []
+    store.close()
+
+
+@pytest.mark.parametrize('final', [
+    {'type': 'result', 'is_error': 'false', 'result': 'x'},
+    {'type': 'result', 'is_error': 0, 'result': 'x'},
+    {'type': 'result', 'result': 'x'},
+    {'type': 'result', 'is_error': False, 'result': 5},
+    {'type': 'result', 'is_error': False, 'result': 'x', 'subtype': None},
+])
+def test_a_result_not_in_its_shape_is_not_known(final):
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n' + json.dumps(final)) is None
+
+
+def test_a_result_with_an_integer_too_long_is_not_known():
+    from g6.agents.agent_claude.adapter import _result
+
+    earlier = json.dumps({'type': 'result', 'is_error': False, 'result': 'old success'})
+    assert _result(earlier + '\n{"type":"result","is_error":true,"detail":' + LONG + '}') is None
+
+
+@pytest.mark.parametrize('answer,said', [('"x"', 'x'), ('42', '42'), ('2.5', '2.5'), ('true', ''), ('null', ''),
+                                         ('["x"]', ''), ('{"v": "x"}', '')])
+def test_a_direct_answer_is_read_only_as_text_or_a_number(answer, said):
+    from g6.reasoning.steps import DirectStep
+
+    class Model:
+        def complete(self, *args, **kwargs):
+            return '{"answer": ' + answer + '}'
+
+    assert DirectStep(Model()).solve('q') == said
+
+
+@pytest.mark.parametrize('bad', [
+    {'stage': 'answer', 'latex': 'x'},
+    {'stage': 'answer', 'answer': 5},
+    {'stage': 'answer', 'answer': 'x', 'complete': 'true'},
+    {'stage': 'recheck', 'recheck': 'passed'},
+    {'stage': 'recheck', 'recheck': {'status': 1}},
+    {'stage': 'recheck', 'recheck': {'status': 'passed', 'points': True}},
+    {'stage': 'partial', 'recheck': {'status': 'refuted', 'failures': [1]}},
+    {'stage': 'refusal', 'code': 5},
+])
+def test_a_worker_line_not_in_its_shape_is_refused(monkeypatch, bad):
+    from g6.algebra import runner
+    from g6.algebra.envelope import OUTPUT_UNRECOGNISED, Refusal
+
+    out = '\n'.join(json.dumps(line) for line in (
+        {'stage': 'answer', 'answer': 'x'}, {'stage': 'recheck', 'recheck': {'status': 'passed'}}, bad,
+        {'stage': 'done'}))
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(0, out, '', ''))
+    with pytest.raises(Refusal) as refused:
+        runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})
+    assert refused.value.code == OUTPUT_UNRECOGNISED
+
+
+def test_worker_lines_in_their_shape_are_read(monkeypatch):
+    from g6.algebra import runner
+
+    lines = [{'stage': 'start', 'sympy_version': '1', 'mpmath_version': '1'},
+             {'stage': 'answer', 'answer': 'x', 'latex': 'x', 'answers': [], 'complete': None, 'completeness': '',
+              'details': {}},
+             {'stage': 'recheck', 'recheck': {'status': 'passed', 'methods': ['m'], 'failures': [], 'why': '',
+                                              'points': 3, 'tolerance': 1e-9, 'details': {}}},
+             {'stage': 'done'}]
+    out = '\n'.join(json.dumps(line) for line in lines)
+    monkeypatch.setattr(runner, '_execute', lambda *a, **k: runner.Run(0, out, '', ''))
+    assert runner.call_worker({'op': 'x'}, seconds=1, memory_mb=64, cap=1 << 20, record={})[0] == lines
+
+
+def _tool(name):
+    import asyncio
+
+    from g6.mcp import build_server
+
+    fn = asyncio.run(build_server().get_tools())[name].fn
+
+    def call(*args, **kwargs):
+        got = fn(*args, **kwargs)
+        return asyncio.run(got) if asyncio.iscoroutine(got) else got
+    return call
+
+
+def test_an_integer_too_long_is_each_json_tools_input_refusal(tmp_path, monkeypatch):
+    from g6.mcp import invoke_reply
+
+    monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
+    big = '{"n": ' + LONG + '}'
+    replies = [invoke_reply('unused', 'unused', big), _tool('g6_compose')(big), _tool('metaharness_start')(big),
+               _tool('metaharness_propose')('w', None, profile_json=big)]
+    for reply, code in zip(replies, ['G6_E_INPUT_VALIDATION'] * 3 + ['G6_E_META_SCHEMA'], strict=True):
+        assert reply['completion_state'] == 'blocked-escalated', reply
+        assert code in json.dumps(reply), reply
+
+
+# --- the class: a translation inside a handler of the module's own ----------------------------------------------------
+
+LIMITS = {'RecursionError', 'MemoryError'}
+OWN = {'JSONDecodeError', 'ValueError', 'Exception', 'BaseException'}
+#: Each function where a decoder-limit translation to ``json.JSONDecodeError`` sits inside a handler of the module's own
+#: in the same function, with what that handler does: each refuses or reads the record as missing, never passes over
+#: it for another. A new one is reviewed here before it is listed.
+REVIEWED = {
+    ('algebra/worker.py', 'main'): 'emits an error stage and ends the worker',
+    ('cegis/runner.py', '_call'): 'RunnerError',
+    ('code/adapt_healing/cases.py', '_run'): 'no report: the run reported nothing, loaded False',
+    ('code/meta_programming/runner.py', 'run_tests'): 'no report: no results, collected unknown',
+    ('core/skills.py', 'skill_examples'): 'ValueError naming the example',
+    ('integrations/database/config.py', 'parse'): 'ConfigError',
+    ('learning/dataset_builder.py', 'from_jsonl'): 'G6_E_LEARNING_DATASET_INVALID',
+    ('llm_router/providers.py', '_json'): 'PROVIDER_ERROR',
+    ('mcp/cloud_consent.py', 'protect_reply'): 'the withheld reply',
+    ('skills/routing.py', 'loads'): 'ManifestError',
+}
+
+
+def _names(handler):
+    if handler.type is None:
+        return {'BaseException'}
+    nodes = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return {n.id if isinstance(n, ast.Name) else getattr(n, 'attr', '') for n in nodes}
+
+
+def _translates(handler):
+    return _names(handler) <= LIMITS and any(
+        isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call) and isinstance(n.exc.func, ast.Attribute)
+        and n.exc.func.attr == 'JSONDecodeError' for n in ast.walk(handler))
+
+
+def held_translations(tree):
+    """(function, own handler) for each decoder-limit translation whose nearest enclosing handler in its own function
+    catches what it raises."""
+    found = []
+
+    def visit(node, func, held):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func, held = node.name, None
+        if isinstance(node, ast.ExceptHandler) and _translates(node) and held is not None:
+            found.append((func, held))
+        if isinstance(node, ast.Try):
+            own = next((h for h in node.handlers if _names(h) & OWN), None)
+            for child in node.body:
+                visit(child, func, own or held)
+            for child in [*node.handlers, *node.orelse, *node.finalbody]:
+                visit(child, func, held)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, func, held)
+
+    visit(tree, None, None)
+    return found
+
+
+def test_every_held_translation_is_reviewed_and_passes_nothing_over():
+    bound = certificate_inputs()
+    seen = {}
+    for path in sorted(SOURCE.rglob('*.py')):
+        rel = path.relative_to(SOURCE).as_posix()
+        if rel not in bound:
+            for func, handler in held_translations(ast.parse(path.read_text(encoding='utf-8'))):
+                seen[(rel, func)] = handler
+    assert set(seen) == set(REVIEWED), sorted(set(seen) ^ set(REVIEWED))
+    passing_over = [key for key, handler in seen.items()
+                    if any(isinstance(n, (ast.Continue, ast.Break, ast.Pass)) for n in ast.walk(handler))]
+    assert not passing_over, passing_over
+
+
+def test_the_held_translation_check_sees_the_pattern():
+    source = ('def f(rows):\n for r in rows:\n  try:\n   try:\n    x = json.loads(r)\n'
+              '   except (RecursionError, MemoryError):\n    raise json.JSONDecodeError("l", "", 0) from None\n'
+              '  except json.JSONDecodeError:\n   continue\n')
+    assert [func for func, _ in held_translations(ast.parse(source))] == ['f']
+    assert not held_translations(ast.parse('def f(r):\n try:\n  x = json.loads(r)\n'
+                                           ' except (RecursionError, MemoryError):\n'
+                                           '  raise json.JSONDecodeError("l", "", 0) from None\n'))

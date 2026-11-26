@@ -10,6 +10,8 @@ abstraction state. Nothing in this package may write to `objective` values.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import csv
 import json
 import math
@@ -152,9 +154,9 @@ class ConcreteDomain:
     def from_json(cls, path: str, objective: str, **kw: Any) -> "ConcreteDomain":
         with open(path) as fh:
             try:
-                data = json.load(fh)
+                data = _decode_json(fh.read())
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         rows = data["rows"] if isinstance(data, dict) and "rows" in data else data
         return cls.from_rows(rows, objective, **kw)
 

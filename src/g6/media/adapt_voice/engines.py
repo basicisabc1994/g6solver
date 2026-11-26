@@ -15,6 +15,8 @@ joins with :func:`register`.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 import secrets
@@ -140,7 +142,7 @@ class OpenAIVoice(_Paid):
             headers={"Authorization": f"Bearer {keys.require(self.key)}",
                      "Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
-            found = json.loads(reply.body)
+            found = _decode_json(reply.body)
         except (ValueError, RecursionError, MemoryError):
             raise MediaError(BACKEND_FAILED, "OpenAI's transcription is not JSON") from None
         if not isinstance(found, dict) or not isinstance(found.get("text"), str):

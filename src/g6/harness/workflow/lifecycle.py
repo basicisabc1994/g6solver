@@ -12,6 +12,8 @@ repeated in a message, a result or an exception.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -63,7 +65,7 @@ def receipts(project: str) -> tuple[dict, ...]:
     if not plain(path):
         return ()
     try:
-        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows = [_decode_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     except (OSError, ValueError, RecursionError, MemoryError):
         raise RecordUnreadable("its receipts cannot be read") from None
     if not all(isinstance(row, dict) and tuple(row) == policy.RECEIPT_FIELDS for row in rows):
@@ -120,7 +122,7 @@ def _drop_export(record: ProjectRecord, now: datetime | None = None) -> int:
         return 0
     if now is not None:
         try:
-            written = json.loads(path.read_text(encoding="utf-8"))["written_at"]
+            written = _decode_json(path.read_text(encoding="utf-8"))["written_at"]
             if _age_days(written, now) <= policy.RETENTION_DAYS["exports"]:
                 return 0
         except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError):
@@ -451,7 +453,7 @@ def _read_corrections(path: Path) -> tuple[list, list[str]]:
     except OSError:
         return [], ["corrections.json could not be read; nothing was applied"]
     try:
-        body = json.loads(text)
+        body = _decode_json(text)
     except json.JSONDecodeError as bad:
         return [], [f"corrections.json is not valid JSON at line {bad.lineno}; nothing was applied"]
     except (ValueError, RecursionError, MemoryError):

@@ -77,6 +77,8 @@ context escaped that tick's gate and is refused (``_note_launch``).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextvars
 import hashlib
 import json
@@ -223,7 +225,7 @@ def read_limits(argv: Sequence[str], *, timeout: float = ASK_TIMEOUT) -> dict[st
                     asking.flush()
                     for line in told:
                         try:
-                            found = json.loads(line)
+                            found = _decode_json(line)
                         except (ValueError, RecursionError, MemoryError):
                             continue
                         if isinstance(found, dict) and found.get("id") == _ASKED[-1]["id"]:
@@ -331,7 +333,7 @@ def _reply_events(printed: str) -> tuple[list[dict[str, Any]], bool]:
         if not text:
             return [], True
         try:
-            whole = json.loads(text)
+            whole = _decode_json(text)
         except json.JSONDecodeError as exc:
             # Only multiple JSONL values explain this expected whole-value parse failure.
             if exc.msg != "Extra data" or "\n" not in text:
@@ -344,7 +346,7 @@ def _reply_events(printed: str) -> tuple[list[dict[str, Any]], bool]:
             if not line.strip():
                 continue
             try:
-                event = json.loads(line)
+                event = _decode_json(line)
             except BaseException:
                 readable = False
                 continue

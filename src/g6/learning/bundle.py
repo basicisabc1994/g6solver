@@ -17,6 +17,8 @@ Hardened from the archive's ``harness_bundle.py`` and the import op of ``learnin
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -231,9 +233,9 @@ def _content_digest(theories_doc: list[Any], artifacts_doc: list[Any], review_do
 
 def _load(path: Path, kind: type) -> Any:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = _decode_json(path.read_text(encoding="utf-8"))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(value, kind):
         raise ValueError(f"G6_E_LEARNING_BUNDLE_INVALID: {path.name} is not a JSON {kind.__name__}")
     return value

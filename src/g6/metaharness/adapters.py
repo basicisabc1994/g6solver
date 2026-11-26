@@ -10,6 +10,8 @@ was applied.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -21,9 +23,9 @@ from g6.metaharness.schema import Model, Suite, Workflow
 
 def _released(out: str) -> bool:
     try:
-        return json.loads(out).get("state") != "blocked-escalated"
+        return _decode_json(out).get("state") != "blocked-escalated"
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 RELEASED = Check("the bundle released a result", _released, check_id="bundle-released",

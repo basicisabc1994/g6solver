@@ -21,6 +21,8 @@ its memory.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import sys
 from collections.abc import Callable
@@ -48,9 +50,9 @@ def _limit(memory_mb: Any, cpu_s: Any, file_bytes: Any) -> None:
 
 def _safe(value: Any) -> Any:
     try:
-        return json.loads(json.dumps(value, default=str))
+        return _decode_json(json.dumps(value, default=str))
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def handle(request: dict[str, Any], emit: Emit) -> None:
@@ -104,9 +106,9 @@ def _emit(line: dict[str, Any]) -> None:
 def main() -> None:
     try:
         try:
-            request = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+            request = _decode_json(sys.stdin.buffer.read().decode("utf-8") or "{}")
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         _emit({"stage": "error", "reason": f"the request is not JSON: {exc}"})
         return

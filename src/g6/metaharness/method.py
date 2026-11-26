@@ -14,6 +14,7 @@ the ledger as one ``tuning_run`` row.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -180,5 +181,5 @@ def _finish(mh: Any, run: TuningRun, outcome: str) -> TuningRun:
         try:
             mh.ledger.append("tuning_run", f"{len(mh.ledger.rows('tuning_run')) + 1}:{digest(body)}", body)
         except (RecursionError, MemoryError):
-            raise ValueError("a JSON record exceeds decoder limits") from None
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return run

@@ -13,6 +13,8 @@ import json
 import sys
 from typing import get_args, get_type_hints
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from g6.core.agent_guidance import (
     _ExternalText, _GuidanceText, _MixedText, _MAX_GUIDANCE_DEPTH, _structured, guidance_role, is_external,
     reply_for_agent, child_guidance_positions, guidance_positions, ENVELOPE_CONTRACT,
@@ -342,9 +344,9 @@ def freeze_output(value, *, snapshot=...):
     saved = receipts(value if snapshot is ... else snapshot)
     body, sources, metadata = cloud.freeze_output(value, snapshot=snapshot)
     try:
-        decoded = json.loads(body)
+        decoded = _decode_json(body)   # a decoder limit is a json.JSONDecodeError
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     shown = reply_for_agent(restore(decoded, saved))
     return json.dumps(shown, separators=(',', ':'), allow_nan=False), sources, metadata
 
@@ -352,9 +354,9 @@ def freeze_output(value, *, snapshot=...):
 def detached(value):
     body, sources, metadata = freeze_output(value)
     try:
-        decoded = json.loads(body)
+        decoded = _decode_json(body)   # a decoder limit is a json.JSONDecodeError
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return restore(decoded, receipts(value)), sources, metadata
 
 

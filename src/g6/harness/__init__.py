@@ -290,7 +290,7 @@ def _run(standard: Standard, executor: Callable[[Any], str] | None, decisions: s
     try:
         observed = ChainLedger()
     except (RecursionError, MemoryError):
-        raise ValueError("a JSON record exceeds decoder limits") from None
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     record(observed, *(c for made in controls.values() for c in made), *receipts)
     try:
         cert = issue(facts, artifact, checks, receipts, decisions=decisions & set(standard.gates), ledger=observed)

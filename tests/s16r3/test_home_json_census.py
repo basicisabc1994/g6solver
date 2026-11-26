@@ -4,13 +4,11 @@ from pathlib import Path
 from tests.s16r3.json_read_census import census
 
 
-# Certificate-bound source files with relevant calls. These require an issuance-window repair.
+# Certificate-bound source files with relevant calls. These require an issuance-window repair. Every entry is a file a
+# component certificate binds (test_every_bound_entry_is_a_certificate_input): a name is never enough.
 BOUND = {
-    # Protected certificate/manifest source, excluded under the task's broader artifact rule too.
     'evidence/certificate.py',
     'ml/adapt_bayesian/certificate/second_route.py',
-    'knowledge/knowledge_manifest/manifest.py',
-    'workforce/coding_certificate.py',
     '__init__.py',
     'action_gating/__init__.py',
     'action_gating/action_gating_block.py',
@@ -116,10 +114,19 @@ BOUND = {
     'jobs/_care/instruments.py',
     'ml/_fit.py',
     'ml/adapt_automl/flaml_child.py',
-    # its helpers are compiled into confined example children whose bytes are pinned (repair_question4); a decoder
-    # failure there ends the child, which the parent reads as a failed check
-    'harness/behaviour_runner.py',
 }
+# Not bound by a certificate: its helpers are compiled into confined example children whose bytes are pinned
+# (repair_question4); a decoder failure there ends the child, which the parent reads as a failed check.
+PINNED_CHILD = {'harness/behaviour_runner.py'}
+
+
+def test_every_bound_entry_is_a_certificate_input():
+    """An exemption names only a file a certificate binds (review 4 of the reply change, finding 3: the knowledge
+    manifest's store reader was exempted by its name)."""
+    from tests.s16r3.certificate_inputs import certificate_inputs
+
+    assert not BOUND - certificate_inputs(), sorted(BOUND - certificate_inputs())
+    assert not PINNED_CHILD & certificate_inputs()
 
 
 def test_all_file_json_and_ledger_helpers_hold_decoder_limits():
@@ -127,7 +134,7 @@ def test_all_file_json_and_ledger_helpers_hold_decoder_limits():
     missing = []
     for path in sorted(root.rglob('*.py')):
         rel = path.relative_to(root).as_posix()
-        if rel in BOUND:
+        if rel in BOUND | PINNED_CHILD:
             continue
         for function, line, call, protected in census(path.read_text(encoding='utf-8')):
             if not protected:

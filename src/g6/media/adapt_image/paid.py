@@ -22,6 +22,8 @@ other: the service's "success" is not a check.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import base64
 import binascii
 import hashlib
@@ -93,7 +95,7 @@ def _decode(text: Any, said: str) -> bytes:
 
 def _json(reply: http.Response, said: str) -> Any:
     try:
-        return json.loads(reply.body)
+        return _decode_json(reply.body)
     except (ValueError, RecursionError, MemoryError):
         raise MediaError(BACKEND_FAILED, f"{said} answered with something that is not JSON") from None
 

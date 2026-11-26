@@ -14,6 +14,8 @@ one document back, bounded.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextlib
 import hashlib
 import json
@@ -82,7 +84,7 @@ def check_file(path: Path, pin: Pin) -> bool:
 def read_manifest(folder: Path) -> dict[str, Any] | None:
     """The manifest, or ``None`` when there is none or it cannot be read (a damaged one counts as none)."""
     try:
-        data = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+        data = _decode_json((folder / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError, MemoryError):
         return None
     need = {"dataset": str, "revision": str, "filename": str, "path": str, "size": int, "sha256": str,
@@ -162,7 +164,7 @@ def match_expression(words: list[str], jurisdictions: tuple[str, ...], types: tu
 def _record(line: bytes) -> tuple[str, dict[str, Any] | None]:
     """The record a line holds, or why it is skipped."""
     try:
-        record = json.loads(line)
+        record = _decode_json(line)
     except (ValueError, RecursionError, MemoryError):
         return "not_json", None
     if not isinstance(record, dict) or not isinstance(record.get("text"), str):
@@ -243,7 +245,7 @@ class Index:
         try:
             with contextlib.closing(_read_only(self.path)) as conn:
                 rows = conn.execute("SELECT key, value FROM meta").fetchall()
-            return {row["key"]: json.loads(row["value"]) for row in rows}
+            return {row["key"]: _decode_json(row["value"]) for row in rows}
         except (sqlite3.Error, ValueError, RecursionError, MemoryError) as exc:
             if isinstance(exc, (RecursionError, MemoryError)):
                 exc = ValueError("a JSON record exceeds decoder limits")
@@ -257,9 +259,9 @@ class Index:
         conn = self._open()
         try:
             try:
-                meta = {row["key"]: json.loads(row["value"]) for row in conn.execute("SELECT key, value FROM meta")}
+                meta = {row["key"]: _decode_json(row["value"]) for row in conn.execute("SELECT key, value FROM meta")}
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             if not meta:
                 meta = {"revision": manifest["revision"], "sha256": manifest["sha256"], "types": list(types),
                         "jurisdictions": list(jurisdictions), "offset": 0, "lines": 0, "indexed": 0, "passages": 0,

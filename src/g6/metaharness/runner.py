@@ -46,6 +46,8 @@ established.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import argparse
 import contextlib
 import ctypes
@@ -859,7 +861,7 @@ def act_main() -> int:
     is not known (``recorded`` is ``None``)."""
     unsafe = _launch_risk()
     try:
-        request = json.loads(sys.stdin.read())
+        request = _decode_json(sys.stdin.read())
         reply = as_recorded(request, _blocked(CACHED_BYTECODE, unsafe[:500])) if unsafe else act(request)
     except (ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
         if isinstance(exc, (RecursionError, MemoryError)):

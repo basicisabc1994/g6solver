@@ -14,6 +14,8 @@ backend can give is refused before anything starts (:class:`RunnerRefused`).
 from __future__ import annotations
 from g6.core.guidance_builders import confine_refused
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import os
@@ -125,9 +127,9 @@ class SubprocessRunner:
             raise RunnerError(f"the candidate run exited with {done.returncode}: {tail}")
         try:
             try:
-                reply = json.loads(done.stdout.decode("utf-8"))
+                reply = _decode_json(done.stdout.decode("utf-8"))
             except (RecursionError, MemoryError):
-                raise ValueError("a JSON record exceeds decoder limits") from None
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RunnerError(f"the candidate run's reply is not JSON: {exc}") from exc
         if not isinstance(reply, dict) or "refused" in reply:

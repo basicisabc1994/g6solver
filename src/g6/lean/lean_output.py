@@ -22,7 +22,8 @@ expected answer is ``G6_E_LEAN_OUTPUT_UNRECOGNISED`` or ``G6_E_LEAN_RUN_FAILED``
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -123,7 +124,7 @@ def parse_messages(output: str) -> tuple[list[dict[str, Any]], list[str]]:
         if not raw.strip():
             continue
         try:
-            obj = json.loads(raw)
+            obj = _decode_json(raw)
         except (ValueError, RecursionError, MemoryError):
             obj = None
         line, column = _position(obj.get("pos")) if isinstance(obj, dict) else (None, None)

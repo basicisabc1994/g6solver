@@ -9,6 +9,8 @@ any output that does not hold one complete, well-formed run: a version first, ``
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from typing import Any
 
@@ -53,7 +55,7 @@ def records(text: str, nonce: str) -> list[dict[str, Any]]:
         if not line.startswith(mark):
             continue
         try:
-            record = json.loads(line[len(mark):])
+            record = _decode_json(line[len(mark):])
         except (ValueError, RecursionError, MemoryError):
             raise _unrecognised("a marked line is not JSON") from None
         if not isinstance(record, dict) or record.get("kind") not in _KINDS:

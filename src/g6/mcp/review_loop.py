@@ -15,6 +15,8 @@ wait, for the person's answer.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import uuid
 from pathlib import Path
@@ -45,7 +47,7 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     if known.is_file():
         try:
             expected = (session / 'task.sha256').read_text(encoding='ascii')
-            asked = json.loads(cloud.read_retained(known, expected))
+            asked = _decode_json(cloud.read_retained(known, expected))
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
         except (OSError, TypeError, ValueError, RecursionError, MemoryError):
