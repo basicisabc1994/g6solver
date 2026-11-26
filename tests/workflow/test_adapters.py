@@ -44,7 +44,8 @@ def test_loop_run_writes_start_rounds_end_and_report_returned_once(repo, tmp_pat
     assert events[1].data["open_sha256"] == [sha("g6_review_1/test_a.py")] and events[1].data["verdict"] == "defect"
     assert events[1].data["failing_sha256"] == [sha("tests/test_a.py::test_one")]
     assert "test_a" not in json.dumps([e.to_body() for e in events])        # names are kept as digests only
-    assert events[-2].data == {"ending": "fixed", "reviews": 3}
+    # The loop's end also carries the end-of-task card's observed counts (rc030-card); these two stay as they were.
+    assert {key: events[-2].data[key] for key in ("ending", "reviews")} == {"ending": "fixed", "reviews": 3}
     assert isinstance(events[-1].data["run_seconds"], float) and {e.provenance for e in events} == {"host_observed"}
 
 
@@ -84,8 +85,10 @@ def test_review_whose_save_failed_is_recorded_with_missing_review_ref(repo, home
                                    seconds=13.2) == ""
     finished = next(e for e in _events(repo) if e.kind == "review_finished")
     assert finished.refs == () and "review_ref" in finished.missing
-    assert finished.data == {"outcome": "defect_detected", "state": "qualified-draft", "review_seconds": 12.5,
-                             "model_calls": 2, "integrity_reasons": 1, "requirements_failed": 1}
+    # A finished review also carries the end-of-task card's observed counts (rc030-card); these stay as they were.
+    expected = {"outcome": "defect_detected", "state": "qualified-draft", "review_seconds": 12.5,
+                "model_calls": 2, "integrity_reasons": 1, "requirements_failed": 1}
+    assert {key: finished.data[key] for key in expected} == expected
     saved = home / "reviews" / "job-saved.json"
     saved.parent.mkdir(parents=True, exist_ok=True)
     saved.write_text("{}", encoding="utf-8")

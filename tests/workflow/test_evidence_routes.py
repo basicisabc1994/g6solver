@@ -85,10 +85,13 @@ def test_refresh_preserves_a_producers_report_and_custody(home, tmp_path):
     repo = make_repo(tmp_path / "repo")
     value = assessment()
     value["report"] = "# Custom report\n\nEvery original finding remains here."
+    # rc030-card: only a producer reply that carries a card is refreshed; one without stays exactly as it was made.
+    value["card"] = produced = patch_report.card(value, None)
     with cloud.collect_sources():
         reply = cloud.bind_output({"assessment": value}, (cloud.Source.text("fixture:review", "review", "data"),))
         shown = workflow.finishing(lambda result, job: result, str(repo), "fixture task")(reply, "job")
         assert shown["assessment"]["report"].startswith("# Custom report\n- **Checked:**")
         assert "Every original finding remains here." in shown["assessment"]["report"]
-        assert "card" not in value
+        assert value["card"] is produced and value["report"].startswith("# Custom report\n\n")   # the producer's own
+        assert "workflow_evidence" not in value
         assert any(s.source_id == "fixture:review" for s in cloud.output_sources(shown))

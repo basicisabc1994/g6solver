@@ -217,6 +217,16 @@ SOURCE_SITES = {
     # closed in that session; it builds no source and sends nothing. Planted cases: tests/core/test_mcp_repair.py (a
     # withheld reply carries the person's dialog) and tests/core/test_repair_boundaries_review1.py.
     'g6.mcp.repair.consent_block',
+    # rc030-card (end-of-task card, from wire-evidence-fu2): each cited task event set is bound to the project's
+    # workflow source ("card-events", "certificate-task-events"), and evidence.read cites nothing when the asking
+    # client lacks that grant. Planted cases: tests/_review_evid_1/test_evidence_boundaries.py (unshared is withheld),
+    # tests/_review_evid_3/test_review3_boundaries.py (withheld cites nothing), tests/workflow/test_evidence_routes.py
+    # (refresh keeps the producer's own sources). evidence.outcome_sources builds no source: it is listed only because
+    # it takes a parameter named sources (check-file digests) in a module that imports cloud_consent's sha256.
+    'g6.mcp.workflow.finishing.refresh',
+    'g6.harness.completion_loop._record_report',
+    'g6.workforce.coding_certificate.workflow_justification',
+    'g6.harness.workflow.evidence.outcome_sources',
 }
 
 

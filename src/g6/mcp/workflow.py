@@ -122,9 +122,9 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
         note = notes.get(job_id, "")
         if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
             shape = shapes.get(job_id)
-            if detail == "full" and shape and shape["legacy"]:
-                # A rendered reply without a card predates this evidence surface.
-                # Its full form is the producer's reply, including its report bytes.
+            if shape and shape["legacy"]:
+                # A rendered reply without a card predates this evidence surface (or is
+                # not G6's patch review): both its forms stay exactly as its producer made them.
                 return reply
             keep_evidence = "workflow_evidence" in reply["assessment"]
             from g6.harness import patch_report
@@ -210,10 +210,6 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
     def done(reply: Any, job_id: str) -> Any:
         reply = prepare(reply, job_id)
         shown = finish(reply, job_id)
-        if shapes.get(job_id, {}).get("legacy"):
-            # Save the producer's full legacy reply before enriching its compact
-            # presentation; full polls must return those same original bytes.
-            shown = refresh(shown, job_id, include_view=False)
         if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict) and policy.enabled()[0]:
             shown = _viewed(shown, repo, task, ("assessment", "report"), assessment=reply["assessment"], intent=intent,
                             job_id=job_id)
