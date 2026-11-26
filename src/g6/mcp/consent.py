@@ -81,4 +81,4 @@ def refusal(consent: Consent, *, nothing: str = "No change was made.") -> dict:
              "unavailable": schema.CONSENT_NO_DIALOG, "invalid": schema.CONSENT_NO_NAME}
     message, can = CAN[consent.status]
     return _blocked(codes[consent.status], message, f"{nothing} {can}",
-                    consent_status=consent.status, consent_error_type=consent.error_type, public=True)
+                    consent_status=consent.status, consent_error_type=consent.error_type, ok=False, public=True)
