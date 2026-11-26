@@ -115,6 +115,8 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
+    if code and state.get("requests_sent"):     # a review refused after a request went out: never "not sent"
+        result["requests_sent"] = state["requests_sent"]
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))
 
@@ -122,7 +124,11 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
     from g6.core.cloud_consent import Source, bind_output, repository_source
+    from g6.core.storage import _elsewhere
     from g6.harness import completion_loop
+    if why := _elsewhere(str(repo)):     # refused on its words, as ``repo_tests.checked_repo``: nothing asks about it
+        from g6.core.guidance_builders import blocked_reply
+        return bind_output(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}"), ())
     result = _step(repo, task, session, base, reason)
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
@@ -132,8 +138,8 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     from g6.core.cloud_consent import REQUIRED, current_capture, input_source
     capture = current_capture()
     if capture is not None:
-        capture.review_unsent = (result.get('ending') == 'untested' and
-            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
+        capture.review_unsent = (result.get('ending') == 'untested' and not result.get('requests_sent') and
+            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))     # "not sent" only with nothing sent (efa43a2a)
     from g6.core.external_data import detached
     result, refs, _ = detached(result)
     body = json.dumps(result, separators=(',', ':'), allow_nan=False)

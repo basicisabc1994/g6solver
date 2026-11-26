@@ -165,6 +165,16 @@ def refused() -> dict | None:
         "The person must allow it themselves. Tell the person and stop."))
 
 
+def _elsewhere_folder(folder: Any) -> dict | None:
+    """A network or device folder, refused on its words before anything asks the file system about it
+    (``storage._elsewhere``, as ``repo_tests.checked_repo``): asking Windows about a share opens it over the network.
+    A stop asks it too (the owner's ruling, 2026-11-26): no runner can start on a share, so none is there to stop."""
+    from g6.core.storage import _elsewhere
+
+    why = _elsewhere(folder) if isinstance(folder, str) else None
+    return _blocked(NOT_A_FOLDER, f"{why}; nothing was done", "Name a local folder.") if why else None
+
+
 def _root(folder: str, *, stop_request: bool = False) -> Path:
     """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
     test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
@@ -376,6 +386,8 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
     gives the same binding: a change while it was made makes it again, and settings or a reading that cannot be used then
     refuse as they would before it. Every statement that touches a file runs inside its one handler, and every refusal is
     ``_refusal``'s."""
+    if (away := _elsewhere_folder(folder)) is not None:
+        return away
     root = Path(folder)                     # the folder as given, for a refusal before it is found
     try:
         root = _root(folder)
@@ -777,6 +789,8 @@ def asked_act(act_name: str, folder: str, generation: int | None = None) -> tupl
     folder is read again before the dialog is shown, and a binding that moved meanwhile asks nothing."""
     from g6.metaharness.runner import moved, person_terms
 
+    if (away := _elsewhere_folder(folder)) is not None:
+        return away
     root = _root(folder)
     cannot = _cannot_act(act_name, root, generation)
     if cannot is not None:
@@ -1117,7 +1131,12 @@ def stop(folder: str, reason: str = "") -> dict:
     stop's canonical record stands. Every statement runs inside its one handler, as in the dialog and the start, and a
     check that cannot be made never keeps the stop from being written: a folder whose check fails is taken for a loop's
     (``_looped``). A folder that cannot be found, or anything else that escapes the stop's own receipt, says so
-    (``STOP_FAILED``), with the denial still in force."""
+    (``STOP_FAILED``), with the denial still in force. A network or device folder is refused on its words first
+    (``_elsewhere_folder``): no runner can start on one (the start refuses it), so there is nothing there to stop, and
+    stopping would open the share and write there. A runner an earlier version enrolled on a share is stopped by
+    writing its STOP file locally (a stated limit)."""
+    if (away := _elsewhere_folder(folder)) is not None:
+        return away
     root, running = folder, None            # the folder as given, for a reply before it is found
     try:
         denial = _begin_stop(folder)
@@ -1190,6 +1209,8 @@ def status(folder: str) -> dict:
     else cannot be read or used, however it fails, a field of the records among them, is said beside the stop
     (``_unread_status``), never raised. A pause is what holds the ticks until a person lifts it (``runner.held``): the
     pause on record, or the cycles that hold them when their pause could not be written."""
+    if (away := _elsewhere_folder(folder)) is not None:
+        return away
     root, halted = Path(folder), None      # the folder as given, for a reply before it is found
     try:
         from g6.metaharness.loop import STATUS_LINE

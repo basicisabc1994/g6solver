@@ -19,6 +19,9 @@ def _backend(monkeypatch: pytest.MonkeyPatch, platform: str, answer: tuple[str |
     monkeypatch.setattr(confine, "backend", lambda python=None, probe=True: (probes.append(probe), answer)[1])
     monkeypatch.setattr(confine, "started", lambda python: started)
     monkeypatch.delenv("G6_PYTHON", raising=False)
+    # These are the interpreter's checks: the repository the tests run in, which the doctor now also checks on Windows
+    # (tests/core/test_isolation_refusal_for_agent.py), is not theirs.
+    monkeypatch.setattr(doctor, "_repository_here", lambda: None)
     return probes
 
 

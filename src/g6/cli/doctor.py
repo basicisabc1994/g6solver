@@ -159,6 +159,17 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
                  "Use none, claude_code, codex, ollama, anthropic, openai or openrouter.")
 
 
+def _repository_here() -> str | None:
+    """The top folder of the git repository the current folder is in, found by its ``.git`` entry alone (no git runs),
+    or None; never a network or device folder (``storage._elsewhere``)."""
+    from g6.core.storage import _elsewhere
+
+    here = Path.cwd()
+    if _elsewhere(str(here)):
+        return None
+    return next((str(folder) for folder in (here, *here.parents) if (folder / ".git").exists()), None)
+
+
 def _isolation() -> Check:
     """Whether untrusted code (patches, generated scripts, a repository's tests) runs confined by the operating system
     (``g6.core.confine``). On Windows it is read from the access lists alone: nothing is started or created. On Linux
@@ -183,6 +194,12 @@ def _isolation() -> Check:
                          confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
                                                  "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
+    repo, (chosen, _) = _repository_here(), confine._select()
+    if repo and callable(getattr(chosen, "readable", None)) and not confine.owned(repo) and not chosen.readable(repo):
+        # the repository the person runs this in is the folder a review's tests run from: its grant, whole
+        return Check("isolation", "warn", f"{said} for {', '.join(pythons)}, but the Windows AppContainer cannot read the "
+                     f"repository here, {repo}, so G6 refuses to run its tests confined",
+                     chosen.cannot_read([repo]).removeprefix("unavailable: "))
     where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
              "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else
              f"in a Windows {name} (no network, only its run folder writable; G6 test-starts each interpreter there "

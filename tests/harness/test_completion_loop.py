@@ -82,7 +82,10 @@ class Runs:
 
     def __call__(self, change, placed, source, node, *, at_base, timeout_s, roots=()):
         self.calls.append(("base" if at_base else "patch", placed, source, timeout_s))
-        got = self.base if at_base else self.now
+        # The parent rule (owner's ruling R4): a reviewer's test now also runs at the parent. With no parent stated for it,
+        # it gives there what it gives on the patch, so a failing reviewer's test stays a finding, as these tests mean it.
+        critic = Path(placed).name.startswith("test_critic") and self.base is CASES
+        got = self.now if critic or not at_base else self.base
         return got(placed) if callable(got) else ran(placed, got)
 
     def on_patch(self) -> int:
@@ -323,7 +326,7 @@ def test_the_scouts_are_not_started_without_the_persons_approval(world, monkeypa
     world.edit()
     step = loop.advance(world.repo, TASK, world.base, world.session)
     assert step.action == loop.STOP
-    assert "G6_LLM_PROVIDER=claude_code" in step.text
+    assert "G6_LLM_PROVIDER=claude_code" in step.note       # after the model-free review (owner's ruling R1)
     assert not runs.calls
 
 
@@ -775,13 +778,15 @@ class Reviewed:
     """Stands for the runs of the reviewers' tests: the files named in ``failing`` fail, and the others pass."""
 
     def __init__(self, monkeypatch, *failing):
-        self.failing, self.runs = set(failing), Runs(monkeypatch, now=self)
+        # The parent rule (owner's ruling R4): a reviewer's case is a finding only when it also fails at the parent, so a
+        # file named in ``failing`` fails at the base commit as on the patch.
+        self.failing, self.runs = set(failing), Runs(monkeypatch, base=self, now=self)
 
     def __call__(self, placed: str) -> dict:
         return ran(placed, {"test_critic": "failed" if Path(placed).name in self.failing else "passed"})
 
     def ran_in_turn(self) -> list[str]:
-        return [Path(call[1]).name for call in self.runs.calls]
+        return [Path(call[1]).name for call in self.runs.calls if call[0] == "patch"]
 
 
 def rows(world) -> list[dict]:
@@ -863,8 +868,10 @@ def test_with_nothing_approved_the_report_says_plainly_how_to_turn_the_loop_on(w
     runs = Runs(monkeypatch)
     world.edit()
     step = loop.advance(world.repo, TASK, world.base, world.session)
-    assert step.action == loop.STOP and "did not run" in step.text and "Nothing was tested" in step.text
-    assert f"{loop.CRITIC_LINE}=codex" in step.text and step.code == keys.KEY_MISSING
+    # The owner's ruling R1 (2026-11-23; stop-exact-review 38628f4c): the model-free review runs, and its report ends
+    # with what did not run and how to turn the loop on.
+    assert step.action == loop.STOP and "THE REVIEW" in step.note and "did not run" in step.note
+    assert f"{loop.CRITIC_LINE}=codex" in step.note and step.ending == "untested" and not step.code
     assert not runs.calls
 
 
@@ -873,7 +880,7 @@ def test_the_scouts_line_with_no_scouts_approved_says_what_it_needs(world, monke
     runs = Runs(monkeypatch)
     world.edit()
     step = loop.advance(world.repo, TASK, world.base, world.session)
-    assert step.action == loop.STOP and "G6_LLM_PROVIDER=claude_code" in step.text
+    assert step.action == loop.STOP and "G6_LLM_PROVIDER=claude_code" in step.note    # after the model-free review (R1)
     assert not runs.calls
 
 
@@ -899,9 +906,12 @@ def test_a_finding_goes_back_in_the_reviewers_words_and_a_fresh_review_reads_eac
     world.edit()
     first = world.advance(scouts, critic)
     assert first.action == loop.CONTINUE
-    assert first.text == loop.review_note({"rule": "rule one", "why": "why one", "test": "def test_critic():\n    assert 'one' == ''"},
-                                          shipped)
-    assert first.text.endswith(shipped.review_ask)
+    # The parent rule (owner's ruling R4; 38628f4c): the reviewer's words, then the cases that are defects
+    note = loop.review_note({"rule": "rule one", "why": "why one", "test": "def test_critic():\n    assert 'one' == ''"},
+                            shipped)
+    assert first.text == note + ("\n\nOnly these cases are defects (each fails at parent and patch):\n"
+                                 "critic:test_critic.py::test_critic")
+    assert note.endswith(shipped.review_ask)
     world.edit(FIXED + "# after one\n")
     tests.failing = {"test_critic_2.py"}
     second = world.advance(scouts, critic)
@@ -2461,6 +2471,10 @@ def test_a_refused_run_is_armed_again_by_the_next_prompt(world, monkeypatch):
     critic = reviewer("none")
     approved(monkeypatch, critic)      # the person added the line the report named
     prompted(world, "I added the line")
+    # The owner's ruling R1 (38628f4c): the default stop ran the model-free review of this patch, so the same patch is
+    # not read again; the next change is the reviewer loop's.
+    assert stopped(world)["systemMessage"] == loop.ALREADY_READ and not critic.calls
+    world.edit(FIXED + "# changed\n")
     stopped(world)
     assert len(critic.calls) == 1
 
@@ -2872,6 +2886,11 @@ def test_a_refused_run_names_its_cause_and_only_a_person_can_change_it(world, mo
     world.edit()
     loop.advance(world.repo, "" if cause == "no_task" else TASK, world.base, world.session,
                  critic=None if cause == "no_reviewer_approved" else reviewer("never"))
+    if cause == "no_reviewer_approved":
+        # The owner's ruling R1 (2026-11-23; stop-exact-review 38628f4c): with no reviewer approved the model-free review
+        # runs, nothing failed, and no row is owed.
+        assert rows(world) == []
+        return
     row = the_row(world)
     assert row["cause"] == cause and row["changeable"] is False and row["independently_observed"] is False
 

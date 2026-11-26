@@ -199,6 +199,22 @@ WITHHELD_STEP = "G6 left out a setting or command here that only the person may 
 _FACT_WORDS = 6
 #: A command's arguments: the rest of its clause.
 _ARGUMENTS = re.compile(r".*?(?=[,;:()\n]|[.!?](?:\s|$)|$)", re.S)
+#: The person's one-time access grant (``confine._grant_command``): its arguments hold a drive's colon and access rights in
+#: brackets, which ``_ARGUMENTS`` stops at, so a clause that holds one is never cut down to fragments. Each such clause goes
+#: whole, the clauses before it (which name the folders) stay, and the agent reads ``ISOLATION_STEP`` after them;
+#: ``g6 doctor`` prints the commands to the person.
+_GRANT = re.compile(r"\bicacls\b|/grant\b", re.I)
+ISOLATION_STEP = ("The person must give G6's sandbox read access to the folders named here before G6 can run this code "
+                  "confined: ask them to run `g6 doctor`, which prints the one-time access commands.")
+
+
+def _without_grants(sentence: str) -> str:
+    """``sentence`` with each clause that holds the person's access grant left out, its codes kept, and
+    ``ISOLATION_STEP`` after the rest."""
+    kept = [clause for clause in sentence.split(";") if not _GRANT.search(clause) and not _instruction(clause)]
+    head = ";".join(kept).strip().rstrip(".,:;")
+    codes = [code for code in _CODE.findall(sentence) if code not in head]
+    return " ".join([*codes, *([head + "."] if head else []), ISOLATION_STEP])
 
 
 def _named(regex, words, text: str, *, command: bool = False) -> str:
@@ -254,6 +270,9 @@ def text_for_agent(text: str) -> str:
     for sentence in re.split(r"(?<=[.!?])\s+", text):
         if not _instruction(sentence):
             kept.append(sentence)
+            continue
+        if _GRANT.search(sentence):
+            kept.append(_without_grants(sentence))
             continue
         named = _phrases_named(sentence)
         kept.extend([named] if named is not None else _CODE.findall(sentence))

@@ -19,13 +19,18 @@ REASON = ("the record-on-by-default fold (claude/record-on-default) rewrites the
           "using-g6 skill and references/workflow.md; no session has run; re-frozen before any arm")
 #: The amendment before it: the list this one retired is the one that amendment froze.
 EARLIER = HERE / "amendments" / "2026-11-26" / "routing_question_rebind.json"
+#: The amendment that followed it (the 2026-11-27 review rebind): it retired what this one froze, so this one's
+#: pins and task list are read from there.
+#: The 2026-11-27 review rebind (tests/validation/test_routing_review_rebind_2026_11_27_amendment.py): it moves
+#: the review route's digest again, so what stood before it is read from its record.
+REVIEW27 = HERE / "amendments" / "2026-11-27" / "routing_review_rebind.json"
 
 
 def test_the_rebind_is_recorded_before_any_arm_with_its_reason():
     record = freeze.read(RECORD)
     assert record["date"] == "2026-11-26" and record["before_any_arm"] is True and record["reason"] == REASON
     assert "lead ruling" in record["ruling"]
-    assert record["pins"] == freeze.read(run.PINS)
+    assert record["pins"] == freeze.read(REVIEW27)["previous_pins"]
     assert record["previous_pins"] == freeze.read(EARLIER)["pins"]
     assert record["pins"]["bars_digest"] == record["previous_pins"]["bars_digest"]       # no bar changes
 
@@ -41,10 +46,10 @@ def test_what_it_replaced_is_kept_beside_it_with_the_reason():
 
 def test_only_the_workflow_route_is_rebound_as_it_stands_and_no_task_changed():
     record = freeze.read(RECORD)
-    now = run.load_tasks()
+    now = freeze.read(HERE / freeze.read(REVIEW27)["retired"]["tasks.json"])["retired"]     # the list as it froze it
     before = freeze.read(HERE / record["retired"]["tasks.json"])["retired"]
     assert freeze.digest(now) == record["pins"]["tasks_digest"]
-    assert now["routes"] == run.route_digests()
+    assert now["routes"] == {**run.route_digests(), "review": freeze.read(REVIEW27)["routes"]["review"]["before"]}
     assert set(record["routes"]) == {"workflow"}
     assert record["routes"]["workflow"] == {"before": before["routes"]["workflow"], "after": now["routes"]["workflow"]}
     assert record["routes"]["workflow"]["before"] != record["routes"]["workflow"]["after"]

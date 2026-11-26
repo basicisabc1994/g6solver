@@ -132,8 +132,8 @@ TOOL_DATA: dict[str, dict[str, Any]] = {
         ("verify", "diagnose"), "medium", hypotheses=_REVIEW, sensitive="patch_review.review", model="optional",
         confined=True, outside=("git",)),
     "g6_review_until_clean": _tool(
-        "before I say done, have another model family review my patch and send back failing tests until clean",
-        "findings another model family reproduced with a failing test, run confined",
+        "before I say done, have Codex review my patch and send back failing tests until clean, or a model-free review",
+        "findings a reviewer's test reproduced at the parent and on the patch, run confined; the rest as notes",
         "a review that reproduces nothing is not evidence the work is right",
         ("verify", "stuck"), "high", hypotheses=_REVIEW[:3], sensitive="patch_review.review",
         model="required", confined=True, outside=("git",)),

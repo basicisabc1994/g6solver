@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "eaa089c3c392f599c07bbf0ebefeeced1d52364e030f0c4baae9de236a0a1d75"
+  },
+  "reason": "the must-close fold (claude/rc030-mustclose) rewrites the review route's detail (references/lifecycle.md); no session has run; re-frozen before any arm",
+  "digest": "0c80a0da0e8084735d2e49675d048c44bf3fc48900e8b152a03dbe3112d87117"
+}

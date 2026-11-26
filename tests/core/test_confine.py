@@ -195,10 +195,12 @@ def test_g6_never_suggests_a_grant_on_a_guarded_folder(tmp_path, monkeypatch) ->
 
 
 def test_doctor_says_when_only_the_access_lists_were_read_and_checks_g6_python(monkeypatch, tmp_path) -> None:
+    from g6.cli import doctor
     from g6.cli.doctor import _isolation
 
     asked = []
     monkeypatch.setattr(confine, "backend", lambda python=None, probe=True: (asked.append(python), ("appcontainer", ""))[1])
+    monkeypatch.setattr(doctor, "_repository_here", lambda: None)   # the interpreters' check, not this repository's
     other = str(tmp_path / "other-python.exe")
     monkeypatch.setenv("G6_PYTHON", other)
     check = _isolation()

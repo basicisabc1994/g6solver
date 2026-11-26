@@ -98,17 +98,17 @@ NOT_PASSED = "ran, but a case that failed has not passed"
 #: A file of a reviewer's test with a case the operating system refused: unknown, so the file neither passes nor fails.
 NOT_JUDGED = "ran, but a case could not be judged"
 #: How a run of the review-until-clean loop ended, in the reply and at the head of the report, and what each label says.
-ENDINGS = {"clean": "a review of this patch reproduced nothing, and no reviewer's test failed on it",
-           "fixed": "each reviewer's test that failed now passes, and a fresh review of this patch reproduced nothing",
-           "contested": "a reviewer's test fails, and the agent left the code as it was",
-           "open": "a reviewer's test that failed has not been shown to pass",
-           "untested": "nothing here tested this patch to a result"}
+ENDINGS = {"clean": "a review of this patch found no case that fails at the parent and still fails on the patch",
+           "fixed": "each case that failed at the parent and on the patch now passes, and a fresh review found no such case",
+           "contested": "a reviewer's case fails at the parent and on the patch, and the agent left the code as it was",
+           "open": "a reviewer's case that failed at the parent and on the patch has not been shown to pass",
+           "untested": "no reviewer loop came to a result on this patch; a model-free review is reported on its own"}
 #: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
 LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
                "it could show.",
-               "- An open finding is a reviewer's test that still fails; on the training bugs that did not always mean a wrong "
-               "patch.",
+               "- An open finding is a reviewer's case that failed at the parent and on the patch. On the training bugs, "
+               "under the earlier rule (a failure on the patch alone), an open finding did not always mean a wrong patch.",
                "- It differs from what was measured: the reviewer here reads a text pack and has no tools, and each step "
                "replays the rounds before it.",
                "- A model wrote these tests, so none of them passes a requirement.")
@@ -510,6 +510,9 @@ def _loop_lines(loop: dict) -> list[str]:
                  f"- The reviewer from another model family did not finish: {code(critic['error'], 200)}"
                  if critic.get("error") else
                  f"- A reviewer from another model family read the patch once: {code(critic.get('verdict'))}.")
+    if critic is not None:
+        lines.append(f"- {PARENT_RULE}")
+    lines += _note_lines(loop.get("reviewer_notes") or {})
     if failing:
         lines += ["", "## Probes that still fail"]
         lines += _cut([[f"- {code(case, 200)}"] for case in failing], BUDGET["findings"], "report.md's folder, state.json")
@@ -520,12 +523,47 @@ def _times(count: int) -> str:
     return {1: "once", 2: "twice"}.get(count, f"{count} times")
 
 
+#: The owner's ruling R4 (2026-11-23), as the report states it (``completion_loop.reviewer_cases``).
+PARENT_RULE = ("Parent rule: a reviewer's case is a finding only when it fails at the parent and still fails on the "
+               "patch. A case that fails only on the patch, or whose parent run gave no usable result, is a note, never "
+               "sent back as a defect.")
+
+
+def legacy_review_notes(reviews: list[dict]) -> dict:
+    """A failure a session saved before the parent rule, with no parent observation beside it: a note, never a finding."""
+    notes = {}
+    for run in reviews:
+        for file, result in (run.get("results") or {}).items():
+            if result == "failed" and not run.get("observations", {}).get(file):
+                cases = run.get("failed", {}).get(file) or [file]
+                notes.setdefault(file, {}).update({case: {"case": case, "reason": "saved failure lacks parent observations"}
+                                                   for case in cases})
+    return {file: list(cases.values()) for file, cases in notes.items()}
+
+
+def _note_lines(notes: dict) -> list[str]:
+    """Each reviewer case the parent rule keeps as a note: the case, its reviewer's test file, and why."""
+    return [f"- **Note:** {code(note.get('case') or file, 200)} ({code(file)}): {code(note.get('reason', ''), 300)}."
+            for file, cases in notes.items() for note in cases]
+
+
+def admitted_cases(run: dict, file: str) -> set[str]:
+    """The parent rule (``completion_loop.reviewer_cases``) read again on a run's saved observations of ``file``: a run
+    saved with no parent observation admits nothing."""
+    from g6.harness.completion_loop import ProbeRun, reviewer_cases
+
+    observed = run.get("observations", {}).get(file) or {}
+    if not observed.get("patch") or not observed.get("parent"):
+        return set()
+    return reviewer_cases(ProbeRun(**observed["patch"]), ProbeRun(**observed["parent"]))[0]
+
+
 def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The reviews whose test failed on the patch in any run, as a repair can break a test that passed when it was written:
-    fixed (it passed on the last run) and open (anything else: a test that did not run again says nothing, so it fixes
-    nothing)."""
+    """The reviews with a case the parent rule admits (``admitted_cases``) in any run, as a repair can break a test that
+    passed when it was written: fixed (it passed on the last run) and open (anything else: a test that did not run again
+    says nothing, so it fixes nothing)."""
     last = reviews[-1]["results"] if reviews else {}
-    found = [one for one in reviews if any(run["results"].get(one["file"]) == "failed" for run in reviews)]
+    found = [one for one in reviews if any(admitted_cases(run, one["file"]) for run in reviews)]
     return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
 
 
@@ -537,16 +575,19 @@ def _latest(reviews: list[dict], file: str) -> str | None:
 
 def _review_lines(loop: dict) -> list[str]:
     """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
-    A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
-    open finding is no ruling on the patch: nothing here says it is right or wrong."""
+    A finding is a reviewer's case that failed at the parent and on the patch (``PARENT_RULE``); any other failing case is
+    a note. A finding stays open at the cap, or when the agent rejects it, and an open finding is no ruling on the patch:
+    nothing here says it is right or wrong."""
     reviews = loop.get("reviews") or []
     fixed, still = findings(reviews)
     last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
+    notes = {**legacy_review_notes(reviews), **(reviews[-1].get("notes") or {} if reviews else {})}
     lines = ["## What the reviews found"]
     if loop.get("ending"):
         lines.append(f"- **Ending:** {code(loop['ending'])}: {ENDINGS[loop['ending']]}.")
-    lines.append(f"- **Found:** {count} reproduced, each a reviewer's test that failed on the patch." if count else
-                 "- **Found:** no reviewer's test failed on the patch.")
+    lines.append(f"- **Found:** {count} reproduced, each a reviewer's case that failed at the parent and on the patch."
+                 if count else "- **Found:** no reviewer's case failed at the parent and on the patch."
+                 if any(cases for cases in notes.values()) else "- **Found:** no reviewer's test failed on the patch.")
     lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
                   BUDGET["findings"], "report.md's folder, state.json")
     lines += _cut([[f"- **Open:** review {one['n']}: {code(one['rule'], 200)}; its test {code(one['file'])} "
@@ -556,12 +597,13 @@ def _review_lines(loop: dict) -> list[str]:
                            last.get(one["file"]), "did not run again, so nothing shows it is fixed."),
                     f"  - The reviewer's reasons: {code(one['why'], 300)}"] for one in still],
                   BUDGET["findings"], "report.md's folder, state.json")
+    lines += _note_lines(notes)
     if loop.get("left"):
         lines.append(f"- **The agent left the code as it was.** Its reason: {code(loop['left'], 300)}.")
     if loop.get("no_clean"):
         error = reviews[-1].get("error") if reviews else ""
         lines.append(f"- **No clean review:** {loop.get('reason')}" + (f": {code(error, 200)}." if error else "."))
-    lines += ["", "## How the loop ran",
+    lines += ["", "## How the loop ran", f"- {PARENT_RULE}",
               f"- **Stopped:** {loop.get('reason')}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
               f"{loop.get('repairs')} of at most {loop.get('max_repairs')} repairs."]
     if reviews:
@@ -575,9 +617,11 @@ def _review_lines(loop: dict) -> list[str]:
             said = _latest(reviews, one["file"])
             why = (f"a case of its test could not be judged: {code(one.get('unrun', ''), 200)}" if said == NOT_JUDGED else
                    f"its test would not run: {code(one['unrun'], 200)}" if said == "did not run" and one.get("unrun") else
+                   "its failing cases are notes under the parent rule" if said == "notes only" else
                    "its test passes on the patch" if said == "passed" else
                    "it wrote no test" if said is None else "its test showed nothing")
-            lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
+            shown = "established no finding" if said == "notes only" else "showed no failure"
+            lines.append(f"- Review {one['n']} named a defect but {shown}: {code(one['rule'], 200)}; {why}.")
     masked = sum(one.get("masked", 0) for one in reviews)
     if masked:
         lines.append(f"- **Masked:** G6 put {code('[REDACTED]')} in place of {masked} value{'s' if masked != 1 else ''} that "

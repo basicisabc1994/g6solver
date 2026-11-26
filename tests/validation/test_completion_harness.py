@@ -212,8 +212,17 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
         return (f"READ: {proof}\nRULE: {found['rule']}\nVERDICT: {found['verdict']}\nWHY: {found['why']}\n"
                 + (f"```python\n{found['test']}\n```\n" if found["test"] else ""))
 
+    last = [PASSES]
+
     def run_check(change, placed, source, node, *, at_base, timeout_s, roots=()):
-        got = left.pop(0) if Path(placed).name == loop.critic_file(max(len(seen) - again, 1)) else PASSES
+        # The parent rule (owner's ruling R4; 38628f4c): a reviewer's test now also runs at the parent, after its run on
+        # the patch, and gives there what it gave on the patch, as K counts a test that fails as a finding.
+        if Path(placed).name != loop.critic_file(max(len(seen) - again, 1)):
+            got = PASSES
+        elif at_base:
+            got = last[0]
+        else:
+            got = last[0] = left.pop(0)
         if got.exit not in (0, 1):
             return {"verdict": "collection_error", "said": "will not run"}
         observed = f"{placed}::t"
@@ -235,7 +244,8 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
         step = loop.advance(root, "the task", "HEAD", session, critic=critic)
         if step.action == loop.STOP:
             break
-        sent.append(step.text)
+        # what K sends; the product adds the cases the parent rule admits after it (38628f4c), which K has no part for
+        sent.append(step.text.split("\n\nOnly these cases are defects")[0])
         if moves:
             (root / "mod.py").write_text(f"x = {repair + 3}\n", encoding="utf-8")
     state = json.loads((session / "state.json").read_text(encoding="utf-8"))

@@ -415,8 +415,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     @server.tool()
     def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
         """One step of G6's completion loop, for an agent the plugin's Stop hook cannot reach: call it when you finish a
-        Python task, in repo, the repository's folder. Another model family reads your patch without your reasoning, and
-        must state a rule, reasons and a test. G6 runs that test, confined, with no network. Returns a job: poll
+        Python task, in repo, the repository's folder. With G6_LOOP_CRITIC=codex in the person's key file, Codex reads
+        your patch without your reasoning (another model family only when you are not Codex), and must state a rule,
+        reasons and a test. G6 runs that test, confined, with no network, at the parent and on the patch: only a case that
+        fails at both is a finding; one that fails only on the patch is a note. With no loop approved, the step runs G6's
+        model-free patch review and stops with its report, ending untested, and no model is asked. Returns a job: poll
         metaharness_job. Its result has action "continue" and text, the reviewer's words: a finding you may reject. Check
         it against the task, then repair the cause and call again, or leave the code as it was and call again with reason,
         one line saying why. Only a reason rejects a finding: a call with the code unchanged and no reason gets the same
@@ -436,7 +439,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
         Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
-        read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
+        read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs); the
+        reviewer loop also needs that key-file line, which approves the person's Codex sign-in. The line
         G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. This is sensitive; the person must allow it themselves. Tell the person."""
         from g6.core.guidance_builders import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):

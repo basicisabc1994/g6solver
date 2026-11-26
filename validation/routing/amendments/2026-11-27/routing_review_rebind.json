@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-27",
+  "before_any_arm": true,
+  "reason": "the must-close fold (claude/rc030-mustclose) rewrites the review route's detail (references/lifecycle.md); no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "eaa089c3c392f599c07bbf0ebefeeced1d52364e030f0c4baae9de236a0a1d75"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2f2a93b80275212d0824539160be44155376f34b2d04e652bf7d0de40e6e694f"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-eaa089c3c392.json",
+    "frozen.json": "frozen.retired-0c80a0da0e80.json"
+  },
+  "routes": {
+    "review": {
+      "before": "976542ae3e11b6f0e2f42195218cc538acf4e43aaadb159e45e8f93d4e839048",
+      "after": "d767a2c3a3ba7f54e7da27faeb17379b78065c983e897ae797a1b33a7347cd20"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "lead ruling, 2026-11-26 (standing rule): a fold that moves only a route's reference text is rebound by a dated amendment before any session runs, as the 2026-11-26 review, question and workflow rebinds were; the routing trials have run no session and this changes no result",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

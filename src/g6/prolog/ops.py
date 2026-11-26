@@ -46,6 +46,7 @@ from g6.prolog.envelope import (
     OUTPUT_UNRECOGNISED,
     RECHECK_UNFINISHED,
     SWIPL,
+    SWIPL_ENV,
     SWIPL_MISSING,
     SYNTAX_ERROR,
     TIME_LIMIT,
@@ -304,7 +305,10 @@ def swipl_version(*, time_limit: float = VERSION_TIME_LIMIT_S, request_id: str =
         if record.get("argv"):
             state |= {"executable": record["argv"][0], "swipl_ran": True}
         if not found.is_ok():
-            raise Refusal(SWIPL_MISSING, found.error)
+            # the agent's words name no setting (05718f35): a missing program is refused as ``runner.find_swipl`` words
+            # it; a program found that would not run keeps the outside check's words, the setting's name replaced
+            runner.find_swipl()
+            raise Refusal(SWIPL_MISSING, found.error.replace(SWIPL_ENV, "a setting named in G6's documentation"))
         read = _VERSION.search(found.value.version)
         if not read:
             raise Refusal(OUTPUT_UNRECOGNISED, f"swipl --version printed {found.value.version[:200]!r}, which is not a "
