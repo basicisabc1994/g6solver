@@ -202,9 +202,9 @@ def _project(repo: str) -> str | None:
     """The project for a full folder path, admitted before any filesystem probe."""
     from pathlib import Path
 
-    from g6.workforce.repo_tests import RepoRefused, admit_folder
+    from g6.workforce.repo_tests import RepoRefused, admit_folder, elsewhere
 
-    if not isinstance(repo, str) or not Path(repo).is_absolute():
+    if not isinstance(repo, str) or elsewhere(repo.replace('\\', '/')) or not Path(repo).is_absolute():
         return None
     try:
         root = admit_folder(repo)

@@ -55,7 +55,7 @@ def test_the_self_improvement_tools_refuse_a_network_or_device_folder_before_fil
     r"\\.\pipe\repo",
 ], ids=["unc", "slash-unc", "extended", "device"])
 def test_workflow_export_refuses_before_filesystem(monkeypatch, repo):
-    assert _elsewhere(repo)
+    assert _elsewhere(repo.replace("\\", "/"))
     touched = []
     original = type(Path()).is_dir
     def is_dir(path):
