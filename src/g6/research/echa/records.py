@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any
@@ -24,10 +25,20 @@ UNSEALED = "unsealed"
 ORACLE_CATEGORIES = ("FORMAL_CHECK", "INDEPENDENT_EXECUTABLE", "PARTIAL_FALSIFIER", "HEURISTIC_REVIEW",
                      "NO_DISCRIMINATING_EVIDENCE")
 RESULTS = ("pass", "fail", "unknown", "not_applicable")
-PURPOSES = ("check", "negative_control", "positive_control")
+PURPOSES = ("check", "negative_control", "positive_control", "calibration", "scope_mapping")
 BREADTHS = ("covered_cases", "general")
 ESTIMANDS = ("oracle_scoped", "true_correctness")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+# Unicode 15.1 DerivedCoreProperties.txt: Default_Ignorable_Code_Point,
+# including its reserved ranges. Keep this explicit: unicodedata has no such
+# property, and a format-category filter misses marks and Hangul filler letters.
+# Braille blank and ideographic space are additional non-rendering bases.
+_NON_RENDERING = re.compile(
+    r"[\u00ad\u034f\u061c\u115f-\u1160\u17b4-\u17b5\u180b-\u180f"
+    r"\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3000\u3164"
+    r"\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3"
+    r"\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
+)
 
 
 def canonical(obj: Any) -> str:
@@ -38,7 +49,34 @@ def digest(obj: Any) -> str:
     return hashlib.sha256(canonical(obj).encode("utf-8")).hexdigest()
 
 
+def premise_text(value: str) -> str:
+    """One comparison form for text premises; an empty result supplies no statement.
+
+    Normalize at decision time so stored record bytes and their content hashes stay intact.
+    """
+    comparison = []
+    for character in unicodedata.normalize("NFC", value):
+        category = unicodedata.category(character)
+        if character.isspace() or category in ("Zs", "Zl", "Zp"):
+            comparison.append(" ")
+        elif category not in ("Cf", "Cc"):
+            comparison.append(character)
+    # Removing a format character can bring a base and combining mark together.
+    normalized = " ".join(unicodedata.normalize("NFC", "".join(comparison)).split())
+    # A cluster supplies visible text only through an L/N/S/P base. For this
+    # existence check, marks and joiners need no segmentation: they cannot supply
+    # that base. Preserve their spelling when a visible base is present.
+    return normalized if any(
+        unicodedata.category(character)[0] in "LNSP" and not _NON_RENDERING.fullmatch(character)
+        for character in normalized
+    ) else ""
+
+
 def text_of(name: str, value: Any, *, required: bool = True) -> str:
+    """Validate stored text shape; semantic premise admission uses ``premise_text``.
+
+    Retain invisible input as recorded data so a refused receipt remains traceable.
+    """
     if not isinstance(value, str):
         raise ValueError(f"{name} must be text")  # noqa: TRY004 - every refusal is one ValueError to a caller
     if required and not value.strip():
@@ -59,6 +97,11 @@ def hex64_of(name: str, value: Any) -> str:
     if not isinstance(value, str) or not _HEX64.match(value):
         raise ValueError(f"{name} must be a sha256 hex digest")
     return value
+
+
+def probability_of(name: str, value: Any) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1):
+        raise ValueError(f"{name} must be a number from 0 to 1, or None when unknown")
 
 
 def _set(obj: Any, **values: Any) -> None:
@@ -131,6 +174,15 @@ class EvidenceRecord:
     purpose: str = "check"
     oracle_error_bound: float | None = None
     schema_version: str = SCHEMA
+    # Premise receipts live in the same evidence ledger, with a distinct purpose. A reference alone admits nothing.
+    calibration_ref: str = ""
+    scope_mapping_ref: str = ""
+    applies_to_sha256: str = ""
+    population: str = ""
+    sample_unit: str = ""
+    checked_statement: str = ""
+    # On a calibration receipt: evaluator-outcome lower bound including sampling uncertainty, for its population.
+    evaluator_lower_bound: float | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA:
@@ -164,9 +216,13 @@ class EvidenceRecord:
             text_of("independence_group", self.independence_group)
         if self.oracle_category == "INDEPENDENT_EXECUTABLE" and not self.independent:
             raise ValueError("INDEPENDENT_EXECUTABLE must be independent (an author-controlled check is a PARTIAL_FALSIFIER)")
-        bound = self.oracle_error_bound
-        if bound is not None and (isinstance(bound, bool) or not isinstance(bound, (int, float)) or not 0 <= bound <= 1):
-            raise ValueError("oracle_error_bound must be a number from 0 to 1, or None when it is not bounded")
+        probability_of("oracle_error_bound", self.oracle_error_bound)
+        probability_of("evaluator_lower_bound", self.evaluator_lower_bound)
+        for name in ("calibration_ref", "scope_mapping_ref", "population", "sample_unit", "checked_statement"):
+            text_of(name, getattr(self, name), required=False)
+        text_of("applies_to_sha256", self.applies_to_sha256, required=False)
+        if self.applies_to_sha256:
+            hex64_of("applies_to_sha256", self.applies_to_sha256)
 
     def to_dict(self) -> dict:
         return {f.name: _plain(getattr(self, f.name)) for f in fields(self)}
@@ -200,6 +256,7 @@ class ClaimRecord:
     standard_sha256: str
     requires_independent_groups: int = 1
     schema_version: str = SCHEMA
+    target: float | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA:
@@ -208,8 +265,9 @@ class ClaimRecord:
             text_of(name, getattr(self, name))
         if self.breadth not in BREADTHS:
             raise ValueError(f"breadth must be one of {BREADTHS}")
-        if self.estimand not in ESTIMANDS:
+        if premise_text(text_of("estimand", self.estimand)) not in ESTIMANDS:
             raise ValueError(f"estimand must be one of {ESTIMANDS}")
+        probability_of("target", self.target)
         hex64_of("standard_sha256", self.standard_sha256)
         _set(self, assumptions=texts_of("assumptions", self.assumptions, required=True),
              known_limitations=texts_of("known_limitations", self.known_limitations, required=True),

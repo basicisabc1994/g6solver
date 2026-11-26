@@ -7,11 +7,13 @@ used the evidence, the computed verdict, and whether the ledger's chain and refe
 from __future__ import annotations
 
 from g6.core.ledger import LedgerError
+from g6.evidence.mapping import read_about, read_binding
 
 import hashlib
 from typing import Any
 
 from .claims import evaluate_claim
+from .custody import fixture_contaminated
 from .records import digest
 
 
@@ -68,12 +70,15 @@ def trace_claim(ledger: Any, claim_id: str) -> dict:
                            "scope": cbody["scope"], "hash_ok": _body_ok(ledger, "evidence", body["negative_control_ref"])}
             except KeyError:
                 problems.append(f"negative control {body['negative_control_ref']!r} is not in the ledger")
+        parts, _ = read_about(read_binding(body["source_ref"]))
         evidence.append({"evidence_id": eid, "purpose": body["purpose"], "role": roles.get(eid, "ignored"),
                          "oracle_category": body["oracle_category"],
                          "result": body["result"], "scope": body["scope"], "source_ref": body["source_ref"],
                          "fixture_version": body["fixture_version"], "known_limitations": body["known_limitations"],
                          "hash_ok": _body_ok(ledger, "evidence", eid), "negative_control": control,
-                         "contaminated": body["fixture_version"] in contaminated})
+                         # Trace metadata retains incidents against either name, even when custody refuses the record.
+                         "contaminated": (fixture_contaminated(parts.fixture, contaminated)
+                                          or fixture_contaminated(body["fixture_version"], contaminated))})
     cited = set(claim["evidence_ids"])
     try:
         episodes = [{"episode_id": e["id"], "outcome_state": e["body"]["outcome_state"], "head": e["body"]["head"],

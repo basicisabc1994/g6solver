@@ -259,21 +259,47 @@ def protected(adaptation: dict) -> dict[str, Any]:
 
 def oracle_check(adaptation: dict, rows: dict) -> dict[str, Any]:
     per = {}
-    for wf, rec in adaptation.items():
-        st = rec.get("oracle_selftest")
-        if not st:
-            continue
-        ev = st["eval"]
-        per[wf] = {"n": ev["n"], "reference_failed": len(ev["reference_failed"]), "empty_passed": len(ev["empty_passed"]),
-                   "reference_failure_share": round(len(ev["reference_failed"]) / ev["n"], 4) if ev["n"] else None,
-                   "gate_reference_failed": len(st["gate"]["reference_failed"]),
-                   "published_answer_error": PUBLISHED_ANSWER_ERROR.get(wf)}
-    n_total = sum(p["n"] for p in per.values())
-    bound = sum(p["n"] / n_total * ((p["reference_failure_share"] or 0) + (p["published_answer_error"] or 0))
-                for p in per.values()) if n_total else math.nan
-    inadequate = any((p["reference_failure_share"] or 0) > MAX_SELFTEST_FAILURE or p["empty_passed"]
-                     for p in per.values())
-    return {"per_workflow": per, "pooled_known_error_bound": round(bound, 4), "inadequate": inadequate}
+    missing = []
+    for wf in sorted(set(rows) | set(adaptation)):
+        st = adaptation.get(wf, {}).get("oracle_selftest")
+        if not isinstance(st, dict):
+            missing.append(wf)
+            st = {}
+        ev = _selftest_measurement(st.get("eval"))
+        gate = _selftest_measurement(st.get("gate"))
+        published = PUBLISHED_ANSWER_ERROR.get(wf)
+        if isinstance(published, bool) or not isinstance(published, (int, float)) or not 0 <= published <= 1:
+            published = None
+        per[wf] = {**ev, "gate_reference_failed": gate["reference_failed"],
+                   "published_answer_error": published,
+                   "selftest_complete": ev["complete"] and gate["complete"]}
+    n_total = sum(p["n"] or 0 for p in per.values())
+    coverage = bool(per) and all(p["selftest_complete"] for p in per.values())
+    known = coverage and all(p["reference_failure_share"] is not None and p["published_answer_error"] is not None
+                             for p in per.values())
+    # Do not round individual error terms down before comparing an interval with their sum.
+    bound = (sum(p["n"] / n_total * (p["reference_failure_share"] + p["published_answer_error"])
+                 for p in per.values()) if known and n_total else None)
+    inadequate = any((p["reference_failure_share"] is not None
+                      and p["reference_failure_share"] > MAX_SELFTEST_FAILURE)
+                     or (p["empty_passed"] is not None and p["empty_passed"] > 0) for p in per.values())
+    return {"per_workflow": per, "pooled_known_error_bound": bound, "inadequate": inadequate,
+            "coverage_complete": coverage, "missing_selftests": missing,
+            "identification": "identified" if known else "not_identified",
+            # Reference-answer tests do not measure errors on outputs from B and D.
+            "harness_error_bounds": {"B": None, "D": None}, "true_success_identification": "not_identified"}
+
+
+def _selftest_measurement(body: Any) -> dict[str, Any]:
+    body = body if isinstance(body, dict) else {}
+    n = body.get("n")
+    n = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else None
+    failures, empty = body.get("reference_failed"), body.get("empty_passed")
+    failures = len(failures) if isinstance(failures, list) and n is not None and len(failures) <= n else None
+    empty = len(empty) if isinstance(empty, list) and n is not None and len(empty) <= n else None
+    return {"n": n, "reference_failed": failures, "empty_passed": empty,
+            "reference_failure_share": failures / n if failures is not None else None,
+            "complete": failures is not None and empty is not None}
 
 
 def verdict(ctx: dict[str, Any]) -> tuple[str, list[str]]:
@@ -289,7 +315,8 @@ def verdict(ctx: dict[str, Any]) -> tuple[str, list[str]]:
     trail.append(f"rule 2: false accepts did not rise (D {e2.get('d')} <= B {e2.get('b')}); nothing protected breached")
     if ctx["oracle"]["inadequate"]:
         return "oracle_inadequate", trail + ["rule 3: the oracle failed its self-test"]
-    trail.append(f"rule 3: oracle self-test passed; pooled known error bound {ctx['oracle']['pooled_known_error_bound']}")
+    trail.append(f"rule 3: oracle self-test coverage complete: {ctx['oracle']['coverage_complete']}; "
+                 f"pooled known error bound {ctx['oracle']['pooled_known_error_bound']}")
     b = ctx["b_failures"]
     if b["share"] < MIN_FAILURE_SHARE:
         return "insufficient_failure_opportunities", trail + [f"rule 4: B failed {b['failures']}/{b['n']}"]
@@ -301,9 +328,14 @@ def verdict(ctx: dict[str, Any]) -> tuple[str, list[str]]:
              for k, name in (("D>B", "E1_success_D_vs_B"), ("D>E", "D_vs_E"), ("D>F", "D_vs_F")) if name in e}
     lower = (e1.get("ci95_cluster_bootstrap") or (math.nan, math.nan))[0]
     bound = ctx["oracle"]["pooled_known_error_bound"]
-    if len(beats) == 3 and all(beats.values()) and lower > bound:
-        return "mechanism_demonstrated", trail + [f"rule 5: {beats}; lower bound {lower} > {bound}"]
-    trail.append(f"rule 5 not met: {beats}; gain lower bound {lower} vs oracle bound {bound}")
+    trail.append(f"rule 5: observed evaluator-outcome comparisons {beats}; gain lower bound {lower}; "
+                 f"reference-error summary {bound}")
+    # The historical self-test format contains no independent population-specific B/D calibration receipts.
+    # A reference summary, even an explicit measured zero, cannot identify a corrected true-success difference.
+    trail.append("rule 5 true-success interpretation unknown: independent errors for both harness populations "
+                 "are not established")
+    if bound is None or not ctx["oracle"]["coverage_complete"]:
+        return "inconclusive", trail + ["required oracle error terms or self-test coverage unknown"]
     held_out_gain = beats.get("D>B", False)
     if ctx["dev_gain"] and not held_out_gain:
         return "component_validated_no_transfer", trail + ["rule 6: the gate recommended and the script activated at "
@@ -371,6 +403,10 @@ def analyze(out: Path) -> dict[str, Any]:
         "dev_gain": any(funnel(rec["D"]).get("activated_ok") for rec in adaptation.values()),
     }
     ctx["verdict"], ctx["verdict_trail"] = verdict(ctx)
+    ctx["observed_evaluator_outcomes"] = {
+        "estimand": "paired evaluator-outcome difference",
+        "comparisons": {name: endpoints[name] for name in ("E1_success_D_vs_B", "D_vs_E", "D_vs_F")},
+        "true_success_identification": "not_identified", "corrected_gain_lower_bound": None}
     return ctx
 
 
