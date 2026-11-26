@@ -75,6 +75,8 @@ def score(batch, capsys, source=True, module=rc):
 def test_current_bad_origin_recovers_from_unchanged_source(
         batch, capsys, monkeypatch, revision, name):
     module = parent_module() if revision == "parent-control" else rc
+    # The parent control scores the honest batch as its current-rule batch, as it did at rule 1.
+    monkeypatch.setattr(module, "EVIDENCE_RULE_VERSION", rc.EVIDENCE_RULE_VERSION)
     monkeypatch.setattr(module, "load_registration", rc.load_registration)
     status, original = score(batch, capsys, module=module)
     assert (status, original["evidence_source"]) == (0, "batch")
@@ -294,7 +296,7 @@ def test_unsafe_origin_names_reach_no_open(tmp_path, monkeypatch, name):
 
 
 @pytest.mark.parametrize("batch", [["hook"]], indirect=True)
-@pytest.mark.parametrize("version,changed", [(1, False), (0, False), (0, True)],
+@pytest.mark.parametrize("version,changed", [(rc.EVIDENCE_RULE_VERSION, False), (0, False), (0, True)],
                          ids=["current-in-use", "older-in-use", "older-changed-source"])
 def test_delete_handle_reason_and_changed_manifest_precedence(batch, capsys, version, changed):
     name = batch.saved["plan"]["cases"][0]["origins"][0]["run"]
@@ -321,8 +323,9 @@ class IntVersion(int):
 
 
 @pytest.mark.parametrize("batch", [["hook"]], indirect=True)
-@pytest.mark.parametrize("version", [None, False, True, IntVersion(1), 10**1000,
-                                     -(10**1000), -1, 0, 1, 1.0, "1", [], {}],
+@pytest.mark.parametrize("version", [None, False, True, IntVersion(rc.EVIDENCE_RULE_VERSION), 10**1000,
+                                     -(10**1000), -1, 0, rc.EVIDENCE_RULE_VERSION, float(rc.EVIDENCE_RULE_VERSION),
+                                     str(rc.EVIDENCE_RULE_VERSION), [], {}],
                          ids=["null", "false", "true", "int-subclass", "huge-newer",
                               "huge-negative", "negative", "zero", "current", "float", "string", "list", "object"])
 @pytest.mark.parametrize("source", [False, True])
@@ -335,16 +338,16 @@ def test_rule_spelling_keeps_reason_and_cause_distinct(batch, monkeypatch, versi
     monkeypatch.setattr(rc._WindowsAPI, "file_identity", denied)
     result, status = rc.score_saved(
         batch.saved, source=batch.source if source else None, start=batch.path)
-    if type(version) is int and version == 1 and not source:
+    if type(version) is int and version == rc.EVIDENCE_RULE_VERSION and not source:
         assert (status, result["evidence_source"]) == (0, "batch")
         return
     assert (status, result["evidence_source"]) == (2, "unavailable")
     gap, = result["index_excluded"]
-    newer = type(version) is int and version > 1
+    newer = type(version) is int and version > rc.EVIDENCE_RULE_VERSION
     cause = ("newer evidence rules cannot be reviewed by this code" if newer else
              "source folders could not be held: access denied" if source else
              "--source is required to re-derive saved evidence")
     reason = ("saved under a newer evidence rule than this code" if newer else
-              cause if type(version) is int and version == 1 else
+              cause if type(version) is int and version == rc.EVIDENCE_RULE_VERSION else
               "saved under an older evidence rule")
     assert gap["reason"] == reason and gap["source_unavailable"] == cause

@@ -153,7 +153,7 @@ def test_older_rule_refusal_prints_standard_json(world, version):
     small_source(source)
     _, batch, _ = world.live(source, world.tmp / "out")
     text = batch.read_text(encoding="utf-8")
-    needle = '"evidence_rule_version": 1,'
+    needle = f'"evidence_rule_version": {rc.EVIDENCE_RULE_VERSION},'
     assert text.count(needle) == 1
     batch.write_text(text.replace(needle, f'"evidence_rule_version": {version},'), encoding="utf-8")
     source.rename(source.with_name("moved"))
