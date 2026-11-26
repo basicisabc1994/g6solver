@@ -260,13 +260,17 @@ def _refusal(root: Path, reading: Stop, code: str = STOP_UNREADABLE, why: str = 
     return reply if read_back is None else read_back(reply)
 
 
-def _failed(root: Path, exc: Exception, read_back: Callable[[dict], dict] | None = None) -> dict:
+def _failed(root: Path, exc: Exception, read_back: Callable[[dict], dict] | None = None, *, admitted: bool = True) -> dict:
     """The refusal of a dialog or a start that failed, however it failed, from a reading taken now (``_refusal``): settings
     that cannot be read or used are settings to fix, and anything else is a start that failed. ``read_back``: what a start
     hands in, so the reply says what the folder holds of the row it had tried to write (``_start_as_recorded``)."""
-    reading = stop_in_force(root)
-    if isinstance(exc, _BadSettings):
-        return _refusal(root, reading, BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.",
+    # Admission refused this spelling before any filesystem access; it has no readable stop context.
+    refused_folder = not admitted and isinstance(exc, RepoRefused)
+    reading = Stop() if refused_folder else stop_in_force(root)
+    if isinstance(exc, _BadSettings) or refused_folder:
+        code = NOT_A_FOLDER if refused_folder else BAD_SETTINGS
+        then = "Name a local folder." if refused_folder else f"Fix {SETTINGS_FILE} in {root}; nothing was started."
+        return _refusal(root, reading, code, f"{exc}"[:400], then,
                         read_back=read_back)
     return _refusal(root, reading, START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500],
                     read_back=read_back, running=False, folder=str(root))
@@ -372,13 +376,10 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
     refuse as they would before it. Every statement that touches a file runs inside its one handler, and every refusal is
     ``_refusal``'s."""
     root = Path(folder)                     # the folder as given, for a refusal before it is found
+    admitted = False
     try:
         root = _root(folder)
-    except RepoRefused as exc:
-        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
-    except (RuntimeError, KeyError, OSError) as exc:
-        return _failed(root, exc)
-    try:
+        admitted = True
         for _ in range(DIALOG_TRIES):
             reading = admission(root, stop_in_force(root))
             cannot, _ = _cannot_start(root, reading)
@@ -394,7 +395,7 @@ def asked(folder: str) -> tuple[Path, str, dict[str, Any]] | dict:
         return _refusal(root, again, TERMS_CHANGED, "what the dialog stands on kept changing while it was made, so nothing "
                         "was asked", ASK_AGAIN, running=False, folder=str(root))
     except Exception as exc:  # noqa: BLE001 - a dialog that fails, however, asks nothing and says why
-        return _failed(root, exc)
+        return _failed(root, exc, admitted=admitted)
 
 
 def _dialog(root: Path, reading: Stop) -> tuple[Path, str, dict[str, Any]]:
@@ -1198,13 +1199,10 @@ def status(folder: str) -> dict:
     (``_unread_status``), never raised. A pause is what holds the ticks until a person lifts it (``runner.held``): the
     pause on record, or the cycles that hold them when their pause could not be written."""
     root, halted = Path(folder), None      # the folder as given, for a reply before it is found
+    admitted = False
     try:
         root = _root(folder)
-    except RepoRefused as exc:
-        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
-    except (RuntimeError, KeyError, OSError) as exc:
-        return _unread_status(root, halted, exc)
-    try:
+        admitted = True
         from g6.metaharness.loop import STATUS_LINE
         from g6.metaharness.runner import held as held_by
         from g6.metaharness.shadow import lineage
@@ -1245,13 +1243,15 @@ def status(folder: str) -> dict:
                          digest={"path": str(page), "text": text} if page else None,
                          g6_status=STATUS_LINE)
     except Exception as exc:  # noqa: BLE001 - whatever status cannot read or use past the stop is said, never raised
-        return _unread_status(root, halted, exc)
+        return _unread_status(root, halted, exc, admitted=admitted)
 
 
-def _unread_status(root: Path, halted: Stop | None, exc: Exception) -> dict:
+def _unread_status(root: Path, halted: Stop | None, exc: Exception, *, admitted: bool = True) -> dict:
     """Status when something it reads past the stop cannot be read or used, however that failed: the stop, from the one
     reading (taken now when none was yet), and what could not be read, said as records that cannot be trusted
     (``RECORDS_UNREADABLE``); nothing else is guessed, whether a runner is alive among it (``None``)."""
+    if not admitted and isinstance(exc, RepoRefused):
+        return _blocked(NOT_A_FOLDER, f"{exc}; nothing was done", "Name a local folder.")
     halted = stop_in_force(root) if halted is None else halted
     why = f"status could not read all it reports past the stop: {type(exc).__name__}: {exc}"[:400]
     try:
