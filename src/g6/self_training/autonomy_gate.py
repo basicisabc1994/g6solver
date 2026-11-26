@@ -2,8 +2,9 @@
 """Owner authority and durable, single-writer merge pacing. Never changes grants."""
 from __future__ import annotations
 
+from g6.self_training._decoder_limits import json_value as _decode_json
+
 from contextlib import contextmanager
-import json
 import math
 from pathlib import Path
 import threading
@@ -45,7 +46,7 @@ def authority(config: Path | Autonomy) -> Autonomy:
     if isinstance(config, Autonomy):
         return Autonomy.model_validate_json(config.model_dump_json())
     try:
-        raw = json.loads(Path(config).read_text(encoding='utf-8'), object_pairs_hook=_pairs)
+        raw = _decode_json(Path(config).read_text(encoding='utf-8'), object_pairs_hook=_pairs)
         return Autonomy.model_validate(raw)
     except FileNotFoundError:
         return Autonomy()

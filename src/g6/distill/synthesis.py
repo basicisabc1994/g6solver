@@ -7,8 +7,9 @@ inner retries included. No provider/configuration is discovered implicitly.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
-import json
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -315,12 +316,12 @@ class Synthesizer:
                         raise ExecutionRefused("G6_E_SYNTH_PACING", "weekly reservation is unbound or expired")
                     noted += 1
             try:
-                user = (canonical({"view": json.loads(prompt), "repair": _scrub(feedback, unique)})
+                user = (canonical({"view": _decode_json(prompt), "repair": _scrub(feedback, unique)})
                         if feedback is not None else prompt)
                 with counting(before_call=before_send):
                     reply = meter.complete(system, user, max_tokens=2048)
                 exchange = digest({"system": system, "user": user, "reply": reply})
-                data = json.loads(reply)
+                data = _decode_json(reply)
                 if not isinstance(data, dict):
                     raise ValueError("proposal must be a JSON object")
                 return data, exchange
@@ -429,7 +430,7 @@ def propose_concept(cases: Sequence[SynthesisCase], *, synthesizer: Synthesizer)
                       '({prediction_id, measure, before, expected}, with a direction), worth (0..1).')
             with counting(before_call=before_send):
                 reply = caller.complete(system, user, max_tokens=2048)
-            data = json.loads(reply)
+            data = _decode_json(reply)
             fields = {'statement', 'observable_features', 'falsifier', 'prediction', 'worth'}
             if not isinstance(data, dict) or set(data) != fields:
                 raise ValueError('concept must contain exactly the requested data fields')

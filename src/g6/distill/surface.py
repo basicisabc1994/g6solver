@@ -2,6 +2,8 @@
 """Local distillation record and library views; host execution lives in MCP's backend."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from datetime import datetime, timezone
 
@@ -42,7 +44,7 @@ def unclassified(kind: str, family: str) -> str:
 def failure_record(kind: str, family: str, case_json: str, note: str) -> dict:
     if not family.strip() or len(family) > 200 or len(note) > 8000 or len(case_json) > 100_000:
         raise ValueError("failure requires a family and bounded case and note")
-    case = json.loads(case_json)
+    case = _decode_json(case_json)
     if not isinstance(case, dict):
         raise ValueError("case_json must be an object")
     # Client assertions cannot establish independent observation or held-out custody.

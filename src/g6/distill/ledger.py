@@ -7,6 +7,8 @@ authenticate an actor who can replace an entire history and its external anchors
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from contextlib import contextmanager
 import base64
 import json
@@ -90,7 +92,7 @@ def durable_state(paths):
             if not path.exists():
                 state = 'absent'
             elif path.parent.name == 'acceptance_gate_reports':
-                state = 'report/' + json.loads(path.read_text(encoding='utf-8')).get('authority', 'no authority')
+                state = 'report/' + _decode_json(path.read_text(encoding='utf-8')).get('authority', 'no authority')
             elif path.suffix == '.jsonl':
                 state = f'{len(ChainLedger(path).entries())} durable rows'
             else:
@@ -177,7 +179,7 @@ def _replace_intent(content):
 def _read_intent():
     path = _intent_path()
     try:
-        data = json.loads(path.read_text(encoding='utf-8'))
+        data = _decode_json(path.read_text(encoding='utf-8'))
         body = data['body']
         if (data['sha256'] != digest(body) or body['version'] != 1
                 or type(body['committed']) is not bool or not isinstance(body['writes'], list)):
@@ -256,7 +258,7 @@ def _plan_undo_staging(target):
     if intent is None or target not in intent[1] or intent[1][target] is None:
         raise ValueError('undo target missing from intent')
     pending = _intent_path().read_bytes()
-    body = json.loads(pending)['body']
+    body = _decode_json(pending)['body']
     while True:
         staging = target.parent / ('.authority-undo-' + secrets.token_hex(16))
         try:
@@ -375,7 +377,7 @@ def _recover_reservation_closes():
     journal = ChainLedger(state_path('distill', 'acceptance_gate.jsonl'))
     for name in sorted(path.name for path in folder.iterdir() if path.suffix == '.json'):
         path = state_path('distill', 'reservation_closures', name)
-        data = json.loads(path.read_text(encoding='utf-8'))
+        data = _decode_json(path.read_text(encoding='utf-8'))
         body = data['body']
         reservation = name.removesuffix('.json')
         rows = journal.entries()

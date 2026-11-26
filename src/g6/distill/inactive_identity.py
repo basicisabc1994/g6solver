@@ -6,8 +6,9 @@ supplies its ordinary executor for comparisons; this module grants no exemption.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
-import json
 import re
 
 from g6.core.ledger import digest
@@ -92,7 +93,7 @@ def _recorded_case(ident):
     def constant(value):
         raise ValueError('non-finite JSON constant')
 
-    raw = json.loads(path.read_bytes().decode('utf-8'), object_pairs_hook=pairs, parse_constant=constant)
+    raw = _decode_json(path.read_bytes().decode('utf-8'), object_pairs_hook=pairs, parse_constant=constant)
     return _case(raw, ident)
 
 

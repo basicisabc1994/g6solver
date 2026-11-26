@@ -3332,7 +3332,7 @@ def _compile_collection_sources(repo, sources, runtime, python=None):
             input_bytes=json.dumps(request).encode("utf-8"))
     if completed.returncode != 0:
         raise ValueError(f"repository compiler exited {completed.returncode}")
-    response = json.loads(completed.stdout)
+    response = _decode_json(completed.stdout)
     if response.get("error"):
         raise ValueError(response["error"])
     if type(response.get("compiled")) is not dict or set(response["compiled"]) != set(sources):
@@ -3348,7 +3348,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
     try:
         if counted.stat().st_size > 2_000_000:
             raise ValueError("collection report size limit")
-        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+        raw = _decode_json(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
         nodes, rootdir = raw["nodes"], raw["root"]
         if (type(raw.get("exit")) is not int or raw["exit"] != code or
                 type(nodes) is not list or len(nodes) > 10_000 or not isinstance(rootdir, str) or

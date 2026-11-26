@@ -117,7 +117,10 @@ BOUND = {
 }
 # Not bound by a certificate: its helpers are compiled into confined example children whose bytes are pinned
 # (repair_question4); a decoder failure there ends the child, which the parent reads as a failed check.
-PINNED_CHILD = {'harness/behaviour_runner.py'}
+# workforce/_collection_compile.py (lead ruling, rc-int): parent-written JSON in a confined child. It reads only the
+# request repo_tests._compile_collection_sources writes with json.dumps (base64 sources and file names); it runs under the
+# repository's interpreter with -I, where G6 need not import, and the parent reads its reply through the guarded decoder.
+PINNED_CHILD = {'harness/behaviour_runner.py', 'workforce/_collection_compile.py'}
 
 
 def test_every_bound_entry_is_a_certificate_input():

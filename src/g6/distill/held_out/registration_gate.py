@@ -2,8 +2,9 @@
 """Exclusive, digest-pinned registrations. No proposals or corpus loaders here."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ def strict_json(data: bytes) -> Any:
     def constant(value):
         raise ValueError("non-finite JSON constant")
 
-    return json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+    return _decode_json(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
 
 
 def oracle_digest() -> str:

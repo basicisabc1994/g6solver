@@ -10,8 +10,9 @@ No approval, activation, evaluator change or model discovery happens here.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from dataclasses import asdict, dataclass
-import json
 from types import MappingProxyType
 from typing import Mapping
 
@@ -48,7 +49,7 @@ def _meta_case_ids(workflow):
             ids.update(row['case_ids'])
     # Refused replay rows may have been omitted from the execution suite. Their
     # original identities still belong to this frozen registration.
-    ids.update(json.loads(workflow.suite.provenance.get('meta_case_ids', '[]')))
+    ids.update(_decode_json(workflow.suite.provenance.get('meta_case_ids', '[]')))
     return ids
 
 
@@ -181,7 +182,7 @@ class SynthesisReplay:
 
     def factory(self, context):
         def execute(contract):
-            request = json.loads(contract.task)
+            request = _decode_json(contract.task)
             current = digest({'replay_code': _source_sha(self._replay), 'failures': dict(self._failures)})
             if set(request) != {'failure_ids', 'replay_sha256'} or request['replay_sha256'] != current:
                 raise ValueError('frozen replay code or failure snapshot changed')

@@ -2,6 +2,8 @@
 """Distillation routes; consent declarations are issued separately in H1."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from contextlib import nullcontext
 from dataclasses import asdict
 from functools import wraps
@@ -156,10 +158,9 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
     def g6_simulate(action_json: str) -> dict:
         """Simulate with host-measured context; predictions never become acceptance evidence.
         Components are G6 package names such as g6.distill; G6 reads its own import graph and protected set."""
-        import json
         from g6.core.door import blocked_reply
         try:
-            action = json.loads(action_json)
+            action = _decode_json(action_json)
         except (ValueError, RecursionError):
             action = None
         if isinstance(action, dict) and (action.get("gate") is not None or action.get("plan") is not None):
