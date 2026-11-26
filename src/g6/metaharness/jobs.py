@@ -111,6 +111,11 @@ class Jobs:
             except Exception as exc:
                 # Exception objects can mutate too. Polling never formats them.
                 refs = shown_refs = cloud.boundary_sources(carried=(cloud.UNKNOWN, *capture.sources))
+                from g6.distill.ledger import CommittedStepsRefusal, PartialAuthorityWrite
+                from g6.distill.refusal import refusal
+                if isinstance(exc, (PartialAuthorityWrite, CommittedStepsRefusal)):
+                    metadata = shown_metadata = _FrozenResult.of({'error_code': exc.code})
+                    return _FrozenResult.of({**refusal(exc), 'job_id': ident, 'status': 'failed'})
                 metadata = shown_metadata = _FrozenResult.of({'error_code': 'G6_E_JOB_FAILED'})
                 try:
                     message = f"[G6_E_JOB_FAILED] {type(exc).__name__}: {exc}"
@@ -161,7 +166,7 @@ class Jobs:
         if result['status'] == 'failed':
             # This code describes the host's failed future, not its opaque
             # exception text. Withholding that text must retain the stable code.
-            metadata['error_code'] = 'G6_E_JOB_FAILED'
+            metadata.setdefault('error_code', 'G6_E_JOB_FAILED')
         capture.job = {"job_id": ident, "status": result["status"], "digest": digest(result),
                        "review_unsent": stored.get("review_unsent", False),
                        "metadata": metadata}
