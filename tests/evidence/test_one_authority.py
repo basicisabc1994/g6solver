@@ -63,6 +63,8 @@ PLACES: dict[str, tuple[str, str]] = {
     "harness/verification_search.py": ("reader", "reads the review's run reading (passed_on_stated_checks) to list "
                                                  "what was demonstrated; it decides no status of its own"),
     "harness/patch_report.py": ("reader", "renders the issuer's statement from assessment.requirement_evidence"),
+    "harness/report_input.py": ("other meaning", "presentation-input TypedDict annotations for issuer statements; "
+                                                "they assign no evidence values and decide no requirement status"),
     "action_gating/scope.py": ("through the issuer", "a review record read from the issuer"),
     "workforce/coding_certificate.py": ("through the issuer", "the coding certificate, issued by the issuer"),
     "research/mission_bridge/csir/certificate.py": ("through the issuer", "CSIR's adapter, which delegates"),

@@ -258,13 +258,15 @@ def test_combined_check_validation_returns_keep_historical_text(monkeypatch, bra
 
 
 def attributed(reply):
-    """The reply without the leaves the review adds to attribute its own runs (80e25df4), which the frozen 68ca0eb
+    """The reply without attribution leaves added by 80e25df4 and 3dee4a8b, which the frozen 68ca0eb
     reply never had. Each is removed only where the review writes it and must say G6 ran that check; every other
     leaf, report text included, is still compared."""
     reply = copy.deepcopy(reply)
     assessment = reply['assessment']
     completion = assessment.get('completion') or {}
-    required = [assessment, *reply['evidence'], *assessment['scope']['checks_run']]
+    required = [assessment, *reply['evidence'], *assessment['scope']['checks_run'],
+                *(completion.get('demonstrated') or []),
+                *((completion.get('defects_reproduced') or {}).get('stated_and_repository_checks') or [])]
     optional = [*(completion.get('activities') or []),
                 *((completion.get('defects_reproduced') or {}).get('proposed_checks') or []),
                 *(one['check'] for one in (assessment.get('confirmed_expectations') or {}).get('expectations') or [])]

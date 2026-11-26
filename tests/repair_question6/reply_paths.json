@@ -526,10 +526,9 @@
       "if 'evidence' in stages",
       "if first_action and outcome == INSUFFICIENT",
       "if unknowns",
-      "if runs and all((run['evidence_status'] == 'observed_by_g6' for run in runs))",
-      "if activity.get('activity') in ('proposed check', 'template instance')",
       "if issuer_inputs is not None",
-      "if confirmed is not None"
+      "if confirmed is not None",
+      "if observations"
     ],
     "_reply": [
       "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
@@ -583,9 +582,9 @@
       "if isinstance(given, list)"
     ],
     "_issuer": [
-      "form.format(f\"the evidence issuer refused the review's inputs, so it counts nothing ({code('assessment.requirement_evidence')})\")",
-      "''",
-      "form.format(f'evidence {shown}, and the evidence issuer: {said}')"
+      "form.format(_text(\"the evidence issuer refused the review's inputs, so it counts nothing ({})\", code('assessment.requirement_evidence')))",
+      "G6Text('')",
+      "form.format(_text('evidence {}, and the evidence issuer: {}', shown, said))"
     ],
     "_plain": [
       "code(f'python -m pytest {shlex.quote(str(node))}', 200)"
@@ -604,13 +603,15 @@
     ],
     "_observed": [
       "item.get('evidence_status', inherited) == 'observed_by_g6'",
-      "inherited == 'observed_by_g6' and all((one.get('evidence_status', inherited) == 'observed_by_g6' for one in leaves))"
+      "inherited == 'observed_by_g6' and all((one.get('evidence_status', inherited) == 'observed_by_g6' for one in observation_records(assessment)))"
     ],
     "_inert/branches": [
+      "if isinstance(value, InertCode)",
       "if type(value) is int",
       "if isinstance(value, str) and value == value.strip() and _INERT.match(value)"
     ],
     "_inert": [
+      "str(value)",
       "str(value)",
       "value",
       "code(value)"
@@ -621,9 +622,9 @@
       "if type(passed) is int"
     ],
     "_assertion": [
-      "f'the agent reports {code(verdict)}; G6 did not run it'",
-      "f'the agent reports {count} passed; G6 did not run it'",
-      "f\"the agent reports {code(item.get('verdict', item.get('result', 'a result')))}; G6 did not run it\""
+      "_text('the agent reports {}; G6 did not run it', code(verdict))",
+      "_text('the agent reports {} passed; G6 did not run it', count)",
+      "_text('the agent reports {}; G6 did not run it', code(item.get('verdict', item.get('result', 'a result'))))"
     ],
     "code/branches": [
       "if literal or confirmed",
@@ -633,7 +634,7 @@
       "if text[0] == '`' or text[-1] == '`'"
     ],
     "code": [
-      "f'{fence}{pad}{text}{pad}{fence}'"
+      "InertCode(f'{fence}{pad}{text}{pad}{fence}')"
     ],
     "_cut/branches": [
       "if len(lines) + len(item) > room - (1 if left > 1 else 0)",
@@ -648,11 +649,11 @@
       "if outcome == 'supported_within_scope' and (not _observed(assessment))"
     ],
     "_headline": [
-      "f'**{plain}** ({outcome}). Qualified draft: merging needs your separate approval.'"
+      "_text('**{}** ({}). Qualified draft: merging needs your separate approval.', plain, outcome)"
     ],
     "_findings/branches": [
       "if r['code'] in TO_DO",
-      "if reproduction.get('kind') != 'static' and (not _observed(assessment, found))",
+      "if not _observed(assessment, found)",
       "if reproduction.get('kind') == 'static'",
       "if reproduction.get('command')",
       "if found.get('code') == 'confirmed_expectation_failed'",
@@ -665,7 +666,7 @@
       "items"
     ],
     "_missing": [
-      "[[f\"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: {code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}\" + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
+      "[[_text('- {} {}: {}; to settle it: {}', code(item.get('requirement', ''), 40), code(item.get('text', ''), 80), code(_words(str(item.get('reason', ''))), 120), code(item.get('settle_by', ''), 140)) + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
     ],
     "_shown/branches": [
       "if not _observed(assessment, item)",
@@ -676,7 +677,7 @@
     ],
     "_decide/branches": [
       "if unknowns and room >= 2",
-      "if line.startswith('- and ')",
+      "if line.startswith(G6Text('- and '))",
       "if unknowns"
     ],
     "_decide": [
@@ -701,7 +702,7 @@
       "'the stated checks fail at the base commit, so they exercise the change'",
       "'the stated checks pass at the base commit too, so they may not exercise the change'",
       "'the stated checks could not run at the base commit, so G6 cannot say whether they exercise the change'",
-      "', '.join(parts)"
+      "G6Text(', ').join(parts)"
     ],
     "_proposed/branches": [
       "if not own",
@@ -710,8 +711,8 @@
       "if len(own) > 3"
     ],
     "_proposed": [
-      "''",
-      "'the proposed checks and template instances, which never pass a requirement: ' + ', '.join(shown) + more"
+      "G6Text('')",
+      "G6Text('the proposed checks and template instances, which never pass a requirement: ') + G6Text(', ').join(shown) + more"
     ],
     "_steps/branches": [
       "if search.get('template_instances') or search.get('proposed_checks')",
@@ -729,10 +730,10 @@
       "if len(skipped) > 2"
     ],
     "_steps": [
-      "[f\"- **Proposed:** the patch {code(str(scope.get('artifact_digest', ''))[:12])} on base {code(str(scope.get('base_commit', ''))[:12])}, {len(requirements)} requirement(s); checks from {', '.join(who)}.\", f\"- **Tested:** {ran}; isolation {code(backend or 'none')}; {float(scope.get('seconds') or 0):.1f} seconds\" + (f'; {passed_over}' + (f' and {len(skipped) - 2} more not run' if len(skipped) > 2 else '') if skipped else '') + '.', f\"- **Gate:** {OUTCOMES.get(outcome, outcome.replace('_', ' '))} ({outcome}): {rule}{_gate_note(assessment)}.\", '- **Approve:** waiting for you: merging needs your separate approval.']"
+      "[_text('- **Proposed:** the patch {} on base {}, {} requirement(s); checks from {}.', code(str(scope.get('artifact_digest', ''))[:12]), code(str(scope.get('base_commit', ''))[:12]), len(requirements), ', '.join(who)), _text('- **Tested:** {}; isolation {}; {} seconds', ran, code(backend or 'none'), _seconds(scope.get('seconds', 0))) + (_text('; {}', passed_over) + (_text(' and {} more not run', len(skipped) - 2) if len(skipped) > 2 else G6Text('')) if skipped else G6Text('')) + G6Text('.'), _text('- **Gate:** {} ({}): {}{}.', OUTCOMES.get(outcome, outcome.replace('_', ' ')), outcome, rule, _gate_note(assessment)), G6Text('- **Approve:** waiting for you: merging needs your separate approval.')]"
     ],
     "_gate_note": [
-      "f\"; {count} proposed check{('s' if count != 1 else '')} could not be judged\" if count else ''"
+      "_text('; {} proposed check{} could not be judged', count, G6Text('s') if count != 1 else G6Text('')) if count else G6Text('')"
     ],
     "_gate_note/branches": [
       "if count",
@@ -755,17 +756,17 @@
       "items"
     ],
     "_execution_limit": [
-      "LIMIT"
+      "G6Text(LIMIT)"
     ],
     "render/branches": [
       "if assessment.get('confirmed_expectations')",
       "if assessment.get('not_checked')"
     ],
     "render": [
-      "'\\n'.join(lines)"
+      "_RenderedReport(_join_report([part for line in lines for part in (line, G6Text('\\n'))][:-1]))"
     ],
     "_loop_lines/branches": [
-      "if not _observed(loop)",
+      "if not _observed(loop) or any((type(one.get('ran')) is not int for one in sets))",
       "if failing",
       "if ran",
       "if ran and loop.get('boundary')",
@@ -777,11 +778,11 @@
       "if failing"
     ],
     "_loop_lines": [
-      "['## What the completion loop reported', '- The agent reports probe results; G6 did not run it.', f\"- Reported reason: {code(loop.get('reason'))}.\", *_cut([[f\"- Reported set {code(one.get('label'))}: {code(one.get('ran', 0))} probes; left out: {code(one.get('left_out', ''))}.\"] for one in sets], BUDGET['findings'], 'loop.sets'), *[f'- Reported failing probe: {code(case, 200)}.' for case in failing[:BUDGET['findings']]]]",
-      "[*lines, '', 'A model wrote these probes, so none of them passes a requirement.']"
+      "[G6Text('## What the completion loop reported'), G6Text('- The agent reports probe results; G6 did not run it.'), _text('- Reported reason: {}.', code(loop.get('reason'))), *_cut([[_text('- Reported set {}: {} probes; left out: {}.', code(one.get('label')), code(one.get('ran', 0)), code(one.get('left_out', '')))] for one in sets], BUDGET['findings'], 'loop.sets'), *[_text('- Reported failing probe: {}.', code(case, 200)) for case in failing[:BUDGET['findings']]]]",
+      "[*lines, G6Text(''), 'A model wrote these probes, so none of them passes a requirement.']"
     ],
     "_times": [
-      "{1: 'once', 2: 'twice'}.get(count, f'{count} times')"
+      "{1: 'once', 2: 'twice'}.get(count, _text('{} times', count))"
     ],
     "findings/branches": [
       "if reviews"
@@ -793,7 +794,7 @@
       "next((run['results'][file] for run in reversed(reviews) if file in run['results']), None)"
     ],
     "_review_lines/branches": [
-      "if not _observed(loop)",
+      "if not _observed(loop) or any((type(one.get('masked', 0)) is not int for one in reviews))",
       "if reviews",
       "if loop.get('ending')",
       "if count",
@@ -814,21 +815,28 @@
       "if loop.get('boundary')"
     ],
     "_review_lines": [
-      "['## What the reviews reported', '- The agent reports review results; G6 did not run it.', f\"- Reported reason: {code(loop.get('reason'))}.\", *_cut([[f\"- Reported review {code(one.get('n'))}: {code(one.get('rule'))}; {code(one.get('file'))}; result {code(one.get('verdict'))}.\", *[f\"  - {code(test)}: {_assertion({'result': result})}.\" for test, result in (one.get('results') or {}).items()]] for one in reviews], BUDGET['findings'], 'loop.reviews')]",
-      "[*lines, '', '## What this loop does not show', *LOOP_LIMITS]"
+      "[G6Text('## What the reviews reported'), G6Text('- The agent reports review results; G6 did not run it.'), _text('- Reported reason: {}.', code(loop.get('reason'))), *_cut([[_text('- Reported review {}: {}; {}; result {}.', code(one.get('n')), code(one.get('rule')), code(one.get('file')), code(one.get('verdict'))), *[_text('  - {}: {}.', code(test), _assertion({'result': result})) for test, result in (one.get('results') or {}).items()]] for one in reviews], BUDGET['findings'], 'loop.reviews')]",
+      "[*lines, G6Text(''), G6Text('## What this loop does not show'), *LOOP_LIMITS]"
     ],
     "completion_report": [
-      "'\\n'.join([*(_loop_lines(loop) if loop.get('reviews') is None else _review_lines(loop)), '', review])"
+      "_RenderedReport(G6Text('\\n').join([*(_loop_lines(loop) if loop.get('reviews') is None else _review_lines(loop)), G6Text(''), review]))"
     ],
     "completion_report/branches": [
+      "if isinstance(review, _RenderedReport)",
       "if loop.get('reviews') is None"
     ],
     "safe_render": [
       "render(assessment)",
-      "f\"G6 could not render this review's report ({type(exc).__name__}); every finding is in the assessment's fields. Qualified draft: merging needs your separate approval.\""
+      "_RenderedReport(_text(\"G6 could not render this review's report ({}); every finding is in the assessment's fields. Qualified draft: merging needs your separate approval.\", type(exc).__name__))"
     ],
     "safe_render/branches": [
       "except Exception"
+    ],
+    "_seconds": [
+      "format(value, '.1f') if type(value) in (int, float) else code(value)"
+    ],
+    "_seconds/branches": [
+      "if type(value) in (int, float)"
     ]
   },
   "src/g6/mcp/review_reply.py": {
