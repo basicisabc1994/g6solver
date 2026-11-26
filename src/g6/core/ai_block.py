@@ -61,13 +61,14 @@ class AIBlock(Generic[Input, Output, State]):
                 verifier = verification.get(active_contract.verification_method)
                 return verifier(output=output, contract=active_contract, block=self)
         except Exception as exc:  # noqa: BLE001
+            from g6.core.external_data import exception_text
             return EvidenceBundle(
                 claims=(Claim(text="verification dispatch failed", checked=True),),
                 tests_run=(
                     TestResult(
                         name=active_contract.verification_method,
                         passed=False,
-                        output_ref=str(exc),
+                        output_ref=exception_text(exc),
                     ),
                 ),
                 confidence=0.0,

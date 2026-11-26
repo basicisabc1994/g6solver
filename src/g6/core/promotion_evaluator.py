@@ -442,7 +442,8 @@ def replay_reproduces(witness: Any, *, replay: _OracleReplay | None = None) -> R
     except Exception as exc:  # noqa: BLE001 - fail closed: a replay is untrusted
         # harness code; ANY exception (toolchain, IO, bug) means it did not
         # reproduce and must never leak out as a promotion.
-        return ReplayOutcome(False, detail=f"replay raised: {exc!r}")
+        from g6.core.external_data import exception_text
+        return ReplayOutcome(False, detail=f"replay raised: {type(exc).__name__}: {exception_text(exc)}")
     if not isinstance(outcome, ReplayOutcome):
         return ReplayOutcome(False, detail="replay did not return a ReplayOutcome")
     if outcome.reproduced is not True:
