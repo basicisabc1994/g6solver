@@ -591,7 +591,13 @@ def _review_lines(loop: dict) -> list[str]:
 def completion_report(loop: dict, review: str) -> str:
     """The completion loop's report: what it tested and what still fails, above the ``review`` of the patch it stopped
     on, which says what is not established."""
-    return "\n".join([*(_loop_lines(loop) if loop.get("reviews") is None else _review_lines(loop)), "", review])
+    lines = _loop_lines(loop) if loop.get("reviews") is None else _review_lines(loop)
+    if any(one.get('send_error') for one in [*(loop.get('sets') or []), *(loop.get('reviews') or []),
+                                           loop.get('critic') or {}]):
+        total = loop.get('requests_sent')
+        lines.insert(1, (f'- Up to {total} request(s) of this run may have gone out.'
+                         if type(total) is int and total >= 0 else '- The send count of this run is unknown.'))
+    return "\n".join([*lines, "", review])
 
 
 def safe_render(assessment: dict) -> str:

@@ -555,6 +555,7 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
     store.mkdir(where / "probes", parents=True, exist_ok=True)
     asked = located(text.format(number=1, title=task.splitlines()[0][:200], text=task), where)
     failed, again = "", ""
+    send_error = False
     got, origins = None, ()
     for _ in range(2):
         left = min(SCOUT_SECONDS, deadline - _clock() - RUN_S)      # its run at the base commit still has to fit
@@ -571,7 +572,11 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             if isinstance(exc, OSError):
                 run = _RUN_COUNT.get()
                 exc = _call_read_error(exc, run.pending if run is not None else None)
-            failed = f"{type(exc).__name__}: {_storage_error_text(exc)}"[:400]
+            try:
+                send_error = bool(exc.state)
+            except AttributeError:
+                pass
+            failed = f"{type(exc).__name__}: {exc}"[:400]
         got, origins = _snapshot_probe(run_set(change, where / "probes", at_base=True, deadline=deadline))
         cloud.record_sources(origins)
         wrong = _gate(where / "tree.json", got)
@@ -583,7 +588,8 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
                                if did else "")
     usable = got is not None and got.usable
     return {"where": str(where), "at_base": asdict(got) if got else None, "refused": _checks(where / "probes", change.repo)[2],
-            "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
+            "left_out": "" if usable else failed or "it exercised nothing on the base commit",
+            **({"send_error": True} if send_error else {})}
 
 
 def _issue(task: str, proof: str) -> str:
@@ -923,7 +929,12 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         if isinstance(exc, OSError):
             run = _RUN_COUNT.get()
             exc = _call_read_error(exc, run.pending if run is not None else None)
-        found["error"] = f"{type(exc).__name__}: {_storage_error_text(exc)}"[:400]
+        try:
+            if exc.state:
+                found["send_error"] = True
+        except AttributeError:
+            pass
+        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
         found = {**found, "verdict": "failed", "error": HIDDEN}
     if found["test"]:
@@ -1260,12 +1271,14 @@ def _call_read_error(error: OSError, state: dict | None) -> OSError:
     return error
 
 
-def _storage_error_text(error: Exception) -> str:
+def _storage_error_text(error: Exception, state: dict | None = None) -> str:
     """Keep call accounting ahead of storage paths, including truncated diagnostics."""
     try:
         total = attempted(error.state)
     except AttributeError:
         return str(error)
+    if state is not None:
+        total = attempted(state)
     count = (f'Up to {total} request(s) of this run may have gone out.' if total is not None else
              'The send count of this run is unknown.')
     return f'{count} {error}'
@@ -1686,9 +1699,10 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
-        "boundary": state.get("boundary"),
+        "boundary": state.get("boundary"), "requests_sent": attempted(state),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
-                  "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
+                  "refused": one["refused"], "late": one.get("when") != BEFORE,
+                  "send_error": one.get("send_error", False)} for label, one in state["sets"].items()]},
         review)
 
 
@@ -1892,6 +1906,7 @@ def _reviews_report(state: dict, reason: str, code: str, ending: str, review: st
     return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
+        "requests_sent": attempted(state),
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
 
 
@@ -2095,7 +2110,7 @@ def _advance_counted(repo, task, base, session, scout, critic, said, answered, a
             raise exc from None
         if (not ended_before and retained.get('done')
                 and not (isinstance(retained, _RetainedState) and not retained.readable)):
-            return Step(STOP, _storage_error_text(exc), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
+            return Step(STOP, _storage_error_text(exc, retained), PUBLICATION_UNSAVED, ending=retained.get('ending', 'untested'),
                         call_ran=True, settled_here=True, refusal=True)
         if accounting['call_requests']:
             exc.state = {ATTEMPTED: run.total()}
