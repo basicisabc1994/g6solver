@@ -44,11 +44,23 @@ def test_bold_prose_outside_the_caption_form_is_visible(text, want, verbatim):
                                    "Acceptance first, then test first."])
 @pytest.mark.parametrize("loose", [False, True])
 def test_caption_structure_is_independent_of_its_words(label, loose):
+    # Lead ruling (2026-11-21): the caption form stays, but its words are part
+    # of the rule. The census keeps the caption and binds it to every sentence
+    # it captions, whatever the words.
     text = f"1. **{label}** Never invent its observations."
     if loose:
         text += "\n\n2. Next step."
-    want = ["Never invent its observations."] + (["Next step."] if loose else [])
+    want = [label, f"Never invent its observations. {label}"] + (["Next step."] if loose else [])
     assert _gate()._sentences(text) == want
+
+
+@pytest.mark.parametrize("prose", ["Never invent its observations.",
+                                   "Read the task. Never invent its observations."])
+def test_a_caption_binds_every_sentence_it_captions(prose):
+    sentences = _gate()._sentences(f"1. **Except for examples.** {prose}")
+    assert "Except for examples." in sentences
+    assert "Never invent its observations." not in sentences
+    assert "Never invent its observations. Except for examples." in sentences
 
 
 def test_census_has_no_word_collection_for_sentence_admission():
@@ -87,6 +99,25 @@ def test_route_gate_rejects_a_visible_bold_qualification(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", changed)
     with pytest.raises(AssertionError, match="qualifies original authority rules"):
+        gate.test_each_route_reaches_its_original_safety_and_authority_sentences("fit")
+
+
+@pytest.mark.parametrize("prose", ["Never invent its observations.",
+                                   "Read the task. Never invent its observations."])
+def test_route_gate_rejects_a_caption_form_qualification(monkeypatch, prose):
+    gate = _gate()
+    target = (gate.GUIDE / "references/fit.md").resolve()
+    read = Path.read_text
+
+    def changed(path, *args, **kwargs):
+        text = read(path, *args, **kwargs)
+        if path.resolve() == target:
+            return text.replace("Never invent its observations.",
+                                f"\n\n1. **Except for examples.** {prose}\n\n")
+        return text
+
+    monkeypatch.setattr(Path, "read_text", changed)
+    with pytest.raises(AssertionError, match="cannot reach original sentences"):
         gate.test_each_route_reaches_its_original_safety_and_authority_sentences("fit")
 
 
