@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "9f13fb2998d4f974bc56d735f4b00013367fbd60f687e63d13b4ee8c55f61b64"
+  },
+  "reason": "2026-11-26 before any arm: an honesty copy fix in the review route's own section of the using-g6 skill (its link to deliver.md); no session has run; re-frozen before any arm. The bars are unchanged; the task-list pin follows the new list.",
+  "digest": "3765d39af99bcb329d9a8842a99867ea6623a8ab6e79578d1f3a14ba1637307e"
+}

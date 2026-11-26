@@ -17,12 +17,20 @@ freeze = run.freeze
 RECORD = HERE / "amendments" / "2026-11-21" / "select_development_tasks.json"
 REBIND = HERE / "amendments" / "2026-11-21" / "routing_rebind.json"
 ADDED = ["dev.select.missing_tool.1", "dev.select.negative.1", "dev.select.positive.1"]
+#: The amendment that followed it (the 2026-11-26 rebind of the review route alone): it retired what this one froze,
+#: so this one's pins and task list are read from there (tests/validation/test_routing_review_rebind_amendment.py).
+LATER = HERE / "amendments" / "2026-11-26" / "routing_review_rebind.json"
+
+
+def _as_they_stood() -> dict:
+    """Every route's digest as it stands, the review route's as it stood before its 2026-11-26 rebind."""
+    return {**run.route_digests(), "review": freeze.read(LATER)["routes"]["review"]["before"]}
 
 
 def test_it_is_recorded_before_any_arm_and_follows_the_rebind():
     record = freeze.read(RECORD)
     assert record["date"] == "2026-11-21" and record["before_any_arm"] is True
-    assert record["pins"] == freeze.read(run.PINS)
+    assert record["pins"] == freeze.read(LATER)["previous_pins"]
     assert record["previous_pins"] == freeze.read(REBIND)["pins"]
     assert record["pins"]["bars_digest"] == record["previous_pins"]["bars_digest"]        # no bar changes
 
@@ -38,9 +46,10 @@ def test_what_it_replaced_is_kept_beside_it_with_the_reason():
 
 def test_it_adds_select_tasks_on_development_fixtures_and_changes_nothing_else():
     record = freeze.read(RECORD)
-    now = run.load_tasks()
+    now = freeze.read(HERE / freeze.read(LATER)["retired"]["tasks.json"])["retired"]     # the list as it froze it
+    assert freeze.digest(now) == record["pins"]["tasks_digest"]
     before = freeze.read(HERE / record["retired"]["tasks.json"])["retired"]
-    assert now["routes"] == before["routes"] == run.route_digests()
+    assert now["routes"] == before["routes"] == _as_they_stood()
     added = [t for t in now["tasks"] if t["id"] not in {b["id"] for b in before["tasks"]}]
     assert [t["id"] for t in added] == record["added"] == ADDED
     assert [t for t in now["tasks"] if t["id"] not in ADDED] == before["tasks"]
