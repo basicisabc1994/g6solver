@@ -22,6 +22,7 @@ DECISIONS = "decisions.jsonl"               # tasks/<task>/decisions.jsonl and t
 FEEDBACK = "feedback.jsonl"
 RECEIPTS = "receipts.jsonl"
 INSPECTION = "inspection.json"              # written on request, for the person to open
+RECORD_MD = "RECORD.md"                     # readable export, with inspection's lifetime
 CORRECTIONS = "corrections.json"            # written by the person; G6 reads it on request and never writes it
 HEAD, LOCK, PART = ".head", ".lock", ".part"
 SIDECARS = (HEAD, LOCK, PART)               # kept beside a file and removed with it
@@ -29,17 +30,18 @@ PERSON_FILES = (CORRECTIONS,)
 #: Each file name and the period it falls under: a RETENTION_DAYS key, "sidecar", or "person".
 FILES = {RUN_SUFFIX: "events", ANNOTATIONS: "annotations", DECISIONS: "decisions", FEEDBACK: "feedback",
          RECEIPTS: "receipts", INSPECTION: "exports", CORRECTIONS: "person", HEAD: "sidecar", LOCK: "sidecar",
-         PART: "sidecar"}
+         PART: "sidecar", RECORD_MD: "exports"}
 #: How deleting a run or a task reaches each file. "file": the file is one run's, removed whole (and with its task's
 #: folder). "entries": each entry names the run or task it is about, and those entries are removed wherever the file
 #: is kept. "rebuilt": made from the others on request, removed with any deletion. "kept": kept by design (a receipt
 #: holds a digest, never an entry), and named in the reply. "person": the person's own file, never changed by G6,
 #: removed only with the whole project record, and named in the reply. "sidecar": removed with the file it serves.
 DELETION = {RUN_SUFFIX: "file", ANNOTATIONS: "entries", DECISIONS: "entries", FEEDBACK: "entries", RECEIPTS: "kept",
-            INSPECTION: "rebuilt", CORRECTIONS: "person", HEAD: "sidecar", LOCK: "sidecar", PART: "sidecar"}
+            INSPECTION: "rebuilt", CORRECTIONS: "person", HEAD: "sidecar", LOCK: "sidecar", PART: "sidecar",
+            RECORD_MD: "rebuilt"}
 #: Files written whether or not the record is on: each is written at the person's own request (to look at the
 #: record, or to show that something was removed) and holds nothing a tool call carried.
-WRITTEN_WHEN_OFF = (INSPECTION, RECEIPTS)
+WRITTEN_WHEN_OFF = (INSPECTION, RECORD_MD, RECEIPTS)
 
 RECORD_ENV = "G6_WORKFLOW_RECORD"
 #: Ruling (for the owner): the record is kept only after the person turns it on. On from first use is this one line.
@@ -62,4 +64,4 @@ def enabled() -> tuple[bool, str]:
 
 __all__ = ["ANNOTATIONS", "CORRECTIONS", "DECISIONS", "DELETION", "FEEDBACK", "FILES", "HEAD", "INSPECTION", "LOCK",
            "ON_BY_DEFAULT", "PART", "PERSON_FILES", "POLICY_VERSION", "RECEIPTS", "RECEIPT_FIELDS", "RECORD_ENV",
-           "RETENTION_DAYS", "RUN_SUFFIX", "SIDECARS", "WRITTEN_WHEN_OFF", "enabled"]
+           "RETENTION_DAYS", "RECORD_MD", "RUN_SUFFIX", "SIDECARS", "WRITTEN_WHEN_OFF", "enabled"]

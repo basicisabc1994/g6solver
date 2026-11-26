@@ -116,8 +116,9 @@ def _drop_export(record: ProjectRecord, now: datetime | None = None) -> int:
     """Remove ``inspection.json``: always when ``now`` is None (what it showed has changed), else only when it is
     past its period or G6 cannot tell when it was written."""
     path = record.root / policy.INSPECTION
+    readable = record.root / policy.RECORD_MD
     if not os.path.lexists(path):
-        return 0
+        return _remove([readable])
     if now is not None:
         try:
             written = json.loads(path.read_text(encoding="utf-8"))["written_at"]
@@ -125,7 +126,7 @@ def _drop_export(record: ProjectRecord, now: datetime | None = None) -> int:
                 return 0
         except (OSError, ValueError, KeyError, TypeError, RecursionError, MemoryError):
             pass
-    return _remove([path])
+    return _remove([path, readable])
 
 
 def _run_files(record: ProjectRecord, task: str, run: str) -> tuple[Path, ...]:
@@ -306,16 +307,18 @@ def _expire_chain_files(record: ProjectRecord, name: str, kind: str, moment: dat
 
 # -- inspection -------------------------------------------------------------------------------------------------
 def _shown(event: Event) -> dict:
+    from g6.core.ledger import digest
+
     body = event.to_body()
-    return {key: body[key] for key in ("event_id", "kind", "at", "provenance", "data", "refs", "observed", "missing")}
+    return {**body, "sha256": digest(body)}
 
 
-def export(project: str, *, now: datetime | None = None) -> Path:
+def export(project: str, *, now: datetime | None = None, self_lines: list[str] | None = None) -> Path:
     """Write ``inspection.json`` in the project's folder (readable by its owner only, written whole and moved into
     place) and return where it is. It lists each task's runs in order, each run's recorded entries with their
     provenance (host observations apart from corrections and derived entries), and repeated rounds as rework."""
     record, moment = ProjectRecord(project), _now(now)
-    _drop_export(record, moment)
+    _drop_export(record)  # a failed rewrite must not leave an older readable summary beside a new inspection
     tasks = []
     for task in record.tasks():
         notes = record.annotations(task)
@@ -343,6 +346,12 @@ def export(project: str, *, now: datetime | None = None) -> Path:
             "how_to_correct": HOW_TO_CORRECT, "tasks": tasks, "receipts": len(receipts(project))}
     path = record.root / policy.INSPECTION
     write_whole(path, json.dumps(body, indent=1) + "\n")
+    from g6.harness.workflow import record_md
+
+    retained = record.events()
+    labels = [label for task in {e.task for e in retained} for label in record.annotations(task)]
+    write_whole(record.root / policy.RECORD_MD, record_md.render([*retained, *labels], recording=policy.enabled()[0],
+                                                               self_lines=self_lines))
     return path
 
 

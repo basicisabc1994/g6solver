@@ -777,12 +777,26 @@ _SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodu
               "generated_left_out")
 
 
-def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
+def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED,
+            *, sources: dict[str, str] | None = None) -> dict:
     found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(shown(one) for one in ids),
              "tests": list(ids),
              "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
              "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
              "receipt": ran.get("receipt", ""), "provenance": provenance}
+    report = repo_tests.read_report(ran)
+    if sources is not None:
+        by_file = {n.partition("::")[0]: sha for n, sha in sources.items()}
+        # A capture belongs to this run even when a collector rewrites its ids.
+        # An outcome outside its coverage is explicitly incomplete, never legacy.
+        found["check_sources"] = {n: by_file.get(n.partition("::")[0], "")
+                                  for n in [*ids, *report.phases]}
+    # Executed identities do not depend on whether source bytes were captured.
+    # Keep aggregate-only legacy fixtures when no phase report was supplied.
+    if sources is not None or report.phases:
+        found["executed_outcomes"] = {node: report.body_result(node) for node in report.phases
+                                      if report.body_result(node) in ("passed", "failed")}
+        found["executed_tests"] = len(found["executed_outcomes"])
     found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
     if ran.get("loaded_complete") is False:
         found["loaded_complete"] = False
@@ -1318,8 +1332,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 if i not in present}
     first: dict = {}
     if present:
+        from g6.harness.workflow.evidence import capture_sources
+
+        check_sources = capture_sources(root, present)
         first = _confined(_execute(root, present, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
-        runs.append(_record(1, "stated checks and extra tests", present, first))
+        runs.append(_record(1, "stated checks and extra tests", present, first, sources=check_sources))
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
@@ -1406,8 +1423,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
                             "reason": "no other test file names a changed module"})
         else:
+            from g6.harness.workflow.evidence import capture_sources
+
+            check_sources = capture_sources(root, derived)
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
-            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
+            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED,
+                                sources=check_sources))
             seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
             observed.append(seen)
             if second["verdict"] in UNTRUSTED:
@@ -1734,10 +1755,13 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
                         "time budget was spent")
         return []
+    from g6.harness.workflow.evidence import capture_sources
+
+    sources = capture_sources(change.repo, passing) if getattr(change, "repo", None) is not None else None
     ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
     if "isolation" in ran:   # it ran, in a copy
         runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
-                                                              "commit's code, in a copy"))
+                                                              "commit's code, in a copy", sources=sources))
     elsewhere = _loaded_elsewhere(change, ran)
     if elsewhere:   # review C1: it ran code other than the base commit's, so it says nothing of it
         unknowns.append(f"the run against the base commit's code is not read: {elsewhere}")
@@ -1791,12 +1815,15 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         for rel in failing:
             uncompared(f"{shown(rel)} fails on the patch; the time budget was spent before it ran at the base commit")
         return
+    from g6.harness.workflow.evidence import capture_sources
+
+    sources = capture_sources(root, failing)
     replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
         runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {shown(rel)} at the base commit "
                                                                               "and on the patch, in a copy",
-                            provenance=DERIVED))
+                            provenance=DERIVED, sources=sources))
         elsewhere = _loaded_elsewhere(change, out)
         mine = [check for check in stated if _names(check, {rel})]
         unkept = out.get("baseline") == "passed" and out.get("patched", "not_run") != "not_run"   # ran, results not kept
@@ -2006,6 +2033,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
+    assessment["card"] = patch_report.card(assessment, None)
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
