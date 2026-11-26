@@ -176,7 +176,7 @@ def test_offline_reader_checks_artifact_bytes_and_overrides_self_reported_outcom
     spec.loader.exec_module(audit)
     # An ordinary folder, not pytest's owner-only basetemp; all files remain in the worktree.
     folder = HERE.parents[1] / ".build" / ("audit-evidence-" + uuid.uuid4().hex)
-    folder.mkdir()
+    folder.mkdir(parents=True)
 
     def artifact(value):
         data = value if isinstance(value, bytes) else json.dumps(value).encode()
@@ -231,7 +231,7 @@ def test_offline_command_reports_all_scheduled_tasks_without_running_any_arm(mon
     spec.loader.exec_module(audit)
     registration = audit.load_registration()
     folder = HERE.parents[1] / ".build" / ("audit-cli-" + uuid.uuid4().hex)
-    folder.mkdir()
+    folder.mkdir(parents=True)
     records = folder / "records.json"
     records.write_text(json.dumps({"format": "g6.routing_audit_records/1", "pins": registration["pins"],
                                    "records": []}), encoding="utf-8")
