@@ -3174,9 +3174,22 @@ def _collection_config_passive(path):
             values = dict(parser[section]) if parser.has_section(section) else {}
         if not isinstance(values, dict):
             return False
-        allowed = {"minversion", "markers", "filterwarnings", "xfail_strict", "console_output_style", "required_plugins"}
+        allowed = {"minversion", "markers", "filterwarnings", "xfail_strict", "console_output_style", "required_plugins",
+                   "python_functions"}
         for key, value in values.items():
             component_process.checkpoint()
+            if key == "addopts":
+                # Only function-name overrides: they select existing bodies,
+                # without changing class holders, imports or plugin loading.
+                if not isinstance(value, str):
+                    return False
+                options = value.split()
+                if len(options) != 2 or options[0] not in ("-o", "--override-ini"):
+                    return False
+                name, separator, pattern = options[1].partition("=")
+                if name != "python_functions" or not separator or not pattern:
+                    return False
+                continue
             if key not in allowed and not key.startswith(("log_", "junit_")):
                 return False
             if not (isinstance(value, (str, bool, int, float)) or
@@ -3325,7 +3338,10 @@ def _compile_collection_sources(repo, sources, runtime, python=None):
             input_bytes=json.dumps(request).encode("utf-8"))
     if completed.returncode != 0:
         raise ValueError(f"repository compiler exited {completed.returncode}")
-    response = json.loads(completed.stdout)
+    try:
+        response = json.loads(completed.stdout)
+    except (RecursionError, MemoryError):
+        raise ValueError("repository compiler response exceeds decoder limits") from None
     if response.get("error"):
         raise ValueError(response["error"])
     if type(response.get("compiled")) is not dict or set(response["compiled"]) != set(sources):
@@ -3430,7 +3446,7 @@ def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=No
             if not authoritative:
                 return {"status": "uncertain", "reason": "pytest collection producer authority unavailable"}
         return answer
-    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, MemoryError):
         return {"status": "uncertain", "reason": "pytest collection report unavailable or incomplete"}
 
 

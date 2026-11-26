@@ -1934,8 +1934,11 @@ PATH_PLACES = {
     ("workforce/truth.py", "run_isolated"): (WORDS, 1, "says the test's child runs -I"),
     # 4 since the 0.3 merges: the three in the child's script, and a report field's check that a copy's Python names are
     # relative (``python_sources``), which is no import path
-    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 4, "a repository's tests (-I) put the resolved repository's "
-                                                             "folders first, after dropping '' and their own folder"),
+    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the resolved repository's "
+                                                             "folders first, after dropping '' and their own folder; "
+                                                             "the collect-only bootstrap text records the runtime's "
+                                                             "sys.path before any repository path and refuses absolute "
+                                                             "or parent-relative collected definition paths"),
     # since the certificate issuance window before 0.3.0 (review-cfu3, finding 1): no longer BOUND. The three are in
     # the bootstrap, the loop children's own text; its environment names no import path
     ("core/promotion_custody.py", "<module>"): (MADE_WHOLE, 3, "the evaluator child (-I) inserts the roots of its list "
@@ -2010,6 +2013,11 @@ PATH_PLACES = {
     ("_context_engine/_scope.py", "inside"): (NOT_IMPORT, 1, "a path a caller asks to index, held inside a listed root"),
     ("mcp/workflow.py", "_project"): (NOT_IMPORT, 1, "the repository a workflow's project is named by: a full path to a "
                                                      "folder, or there is no project"),
+    ('workforce/_collection_compile.py', 'compile_sources'): (RUN_FOLDER, 4, 'isolated compiler removes repository import paths, then adds only installed pytest runtime paths'),
+    ('workforce/repo_tests.py', '_compile_collection_sources'): (NOT_IMPORT, 2, 'collection compiler requires an absolute interpreter and bounds installed runtime paths outside repository source'),
+    ('workforce/repo_tests.py', '_read_collection'): (NOT_IMPORT, 1, 'normalize an absolute collected definition path within the reviewed repository'),
+    ('workforce/_collection_effects.py', '<module>'): (WORDS, 7, 'installed collection lookup table and source-policy comments name import paths; no child path is built'),
+    ('workforce/_collection_effects.py', '__init__'): (NOT_IMPORT, 1, 'reject an absolute declared repository import root in the static source reader'),
 }
 #: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
 RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"),

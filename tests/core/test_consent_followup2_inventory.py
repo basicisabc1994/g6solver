@@ -78,7 +78,9 @@ PLACES = {
     "workforce/_certificate_formal.py": ("check", "certificate scripts under core sandbox"),
     "workforce/_certificate_runner.py": ("observe", "certificate scripts under core sandbox"),
     "workforce/api.py": ("bind", "HTTP service configuration, no child"),
-    "workforce/repo_tests.py": ("_bounded _git _linked_to_g6 _run child_env _repo_env _environment_of", "repository test Python, deliberately imports repository code; Git"),
+    "workforce/_collection_effects.py": ("_scan _environment", "AST binding environment and a static reading of "
+                                                               "os.environ writes in repository source, no child"),
+    "workforce/repo_tests.py": ("_bounded _git _linked_to_g6 _run child_env _repo_env _environment_of _compile_collection_sources", "repository test Python, deliberately imports repository code; Git"),
     "workforce/service.py": ("bind certificates_enabled readiness_enabled", "HTTP service configuration, no child"),
     "workforce/truth.py": ("_run_owned run_isolated run_suite", "repository test Python, deliberately imports repository code"),
     "workforce/trace.py": ("_environment", "trace environment description, no child"),
