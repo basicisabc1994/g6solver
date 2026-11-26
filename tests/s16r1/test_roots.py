@@ -638,10 +638,12 @@ def test_local_sdk_can_use_new_unknown_sources():
 def test_operational_declarations_match_package_only_producers():
     operational = {name for name, contract in declarations.TOOLS.items() if contract.classes == ('g6_operational',)}
     # g6_components: G6's built-in catalogue is public (owner, 2026-11-16); an extension stays behind its grant.
-    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke', 'g6_components'}
+    # g6_self_model: G6's stop switch, its autonomy authority level and fixed 'unknown' readings, with their
+    # field provenance and a digest; nothing from the person (distill_backend.Service._local_snapshot).
+    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke', 'g6_components', 'g6_self_model'}
     # Read the actual producer bodies: fixed HELP, dialog adapter, ledger revocation, gated listing.
     bodies = {}
-    for rel in ('src/g6/mcp/__init__.py', 'src/g6/mcp/cloud_consent.py'):
+    for rel in ('src/g6/mcp/__init__.py', 'src/g6/mcp/cloud_consent.py', 'src/g6/mcp/distill.py'):
         for node in ast.walk(ast.parse((ROOT / rel).read_text(encoding='utf-8'))):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in operational:
                 bodies[node.name] = ast.unparse(node)
@@ -650,6 +652,7 @@ def test_operational_declarations_match_package_only_producers():
     assert 'request_grant' in bodies['g6_cloud_grant']
     assert 'revoke' in bodies['g6_cloud_revoke']
     assert 'shown_components()' in bodies['g6_components']
+    assert 'backend.self_model' in bodies['g6_self_model']
 
 
 def operational_factories():
