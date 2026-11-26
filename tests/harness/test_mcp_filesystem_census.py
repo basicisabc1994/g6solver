@@ -19,7 +19,7 @@ FILESYSTEM_OWNERS = {
     "catalogue.py": {"<module>", "main", "shipped"},
     "cloud_consent.py": {"_source_function"},  # inspect.Signature.replace, no filesystem access
     "improve.py": {"_log", "_environment_path", "_cannot_act", "_stop_entry_on_record", "_stop_before",
-                   "_is_a_loop", "_pinned_python", "_settings", "_import_path", "status"},
+                   "_is_a_loop", "_pinned_python", "_settings", "_import_path", "status", "_spawn"},
     "mission.py": {"register", "_here", "work"},  # _here: str.replace
     "registrations.py": {"guidance", "package_root", "inputs", "server_sources", "identifiers"},
     "review_binding.py": {"write", "matches"},
