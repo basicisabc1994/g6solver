@@ -792,7 +792,7 @@
   },
   "src/g6/mcp/review_reply.py": {
     "review": [
-      "review_patch(repo, **kwargs)",
+      "producer_reply(review_patch(repo, **kwargs))",
       "refused_send(blocked_reply(f'[{STOPPED}] the patch review was stopped before it finished: {exc}'), code=STOPPED)",
       "refused_send(blocked_reply(f\"[{INTERRUPTED}] the patch review's time allowance ended before it finished, so it has no outcome: {exc}\"), code=INTERRUPTED)",
       "refused_send(blocked_reply(f\"[{INTERRUPTED}] G6 could not confirm that the review's test processes ended, so nothing from it is used: {exc}\"), code=INTERRUPTED)"
@@ -863,16 +863,17 @@
     ],
     "finish": [
       "reply",
-      "cloud.bind_output(compact(reply, job_id, saved), refs)"
+      "cloud.bind_output(compact(reply, job_id, saved), refs, metadata=metadata)"
     ]
   },
   "src/g6/mcp/behaviour.py": {
     "bound/branches": [
-      "if identity is None or not isinstance(reply, dict) or (not isinstance(reply.get('assessment'), dict))"
+      "if identity is None or not isinstance(reply, dict) or (not isinstance(reply.get('assessment'), dict))",
+      "if refs is not None"
     ],
     "bound": [
       "reply",
-      "BoundReply(reply, identity)"
+      "cloud.bind_output(BoundReply(reply, identity), refs if refs is not None else cloud.current_sources() or (cloud.UNKNOWN,), metadata=metadata)"
     ],
     "reviewed/branches": [
       "if identity is not None",
@@ -894,9 +895,9 @@
       "except StoreUnreadable"
     ],
     "_metaharness_tools.g6_review_patch": [
-      "public_instructions(blocked_reply(f'{_DENIED} patch_review.review runs repository code; the host must allow it'))",
+      "public_instructions(blocked_reply(f'{_DENIED} patch_review.review runs repository code; the host must allow it', public=True))",
       "blocked_reply(str(exc))",
-      "jobs.start(lambda: behaviour.reviewed(review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources, base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks, template_instances=template_instances, search=search, import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent))"
+      "producer_reply(jobs.start(lambda: behaviour.reviewed(review, repo, task, requirements=requirements or [], tests=tests or [], claim=claim, sources=sources, base=base, expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks, template_instances=template_instances, search=search, import_roots=import_roots or []), compact=workflow.finishing(finish, repo, task, intent)))"
     ]
   }
 }

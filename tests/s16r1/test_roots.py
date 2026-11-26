@@ -84,6 +84,13 @@ def source_sites(extra=()):
 
 # A new source builder must get a planted case and an explicit review here.
 SOURCE_SITES = {
+    # 0604dc79: bound refusal/mission egress; 813740b1: receipt-backed reproduction;
+    # 3d45b793: consent repair accepts source handles, creates no source or grant.
+    'g6.harness.completion_loop.record_reproductions',
+    'g6.mcp.behaviour.bound',
+    'g6.mcp.consent_controls.producer_reply',
+    'g6.mcp.mission.finish',
+    'g6.mcp.repair.consent_block',
     'g6.harness.completion_hook._again',
     'g6.harness.completion_hook._record',
     'g6.harness.completion_hook._task',
@@ -187,7 +194,6 @@ SOURCE_SITES = {
     'g6._context_engine._support.support_for',
     'g6.mcp.knowledge._declined',
     'g6.mcp.knowledge._ok',
-    'g6.mcp.knowledge._refused',
     'g6.mcp.knowledge._summary_source',
     'g6.mcp.knowledge.register.g6_knowledge_context',
     'g6.mcp.knowledge.register.g6_knowledge_count',
@@ -668,6 +674,9 @@ def operational_factories():
 
 
 OPERATIONAL_FACTORIES = {
+    # 0604dc79: fresh fixed door/meta-harness refusals; public only at explicit callsites.
+    'g6.mcp.cloud_consent.input_refusal',
+    'g6.mcp.cloud_consent.withheld_reply',
     'g6.mcp.__init__.invoke_reply',
     'g6.mcp.__init__._metaharness_tools.g6_review_patch',
     'g6.mcp.__init__._metaharness_tools.g6_review_until_clean',
@@ -682,7 +691,6 @@ OPERATIONAL_FACTORIES = {
     # The Context Engine's two replies that carry no source content: a refusal with a fixed reason, and a dialog the
     # person did not accept.
     'g6.mcp.knowledge._declined',
-    'g6.mcp.knowledge._refused',
     # design section 17: a bad argument's fixed refusal, and the fixed refusal while suggestions are not admitted
     'g6.mcp.workflow._refused',
     'g6.mcp.workflow.decide',
