@@ -49,17 +49,19 @@ _TAIL = 8000
 
 
 def find_lean() -> str:
-    """The ``lean`` executable: ``G6_LEAN`` when it is set, else ``lean`` on PATH. Refused when there is none."""
+    """The ``lean`` executable: ``G6_LEAN`` when it is set, else ``lean`` on PATH. Refused when there is none. The
+    refusal is the agent's to read, so it does not name the setting (the person's install steps, ``INSTALL_LEAN``, do)."""
     named = os.environ.get(LEAN_ENV, "").strip()
     if named:
         found = find_program(named) or (named if Path(named).is_file() else None)
         if not found:
-            raise Refusal(LEAN_MISSING, f"{LEAN_ENV} names {named}, which is not a program here; G6 never installs "
-                                        "Lean")
+            raise Refusal(LEAN_MISSING, f"a setting named in G6's documentation names {named}, which is not a program "
+                                        "here; G6 never installs Lean")
         return found
     found = find_program("lean")
     if not found:
-        raise Refusal(LEAN_MISSING, f"no lean on PATH and {LEAN_ENV} is not set; G6 never installs Lean")
+        raise Refusal(LEAN_MISSING, "no lean on PATH and no setting named in G6's documentation names one; G6 never "
+                                    "installs Lean")
     return found
 
 
@@ -113,7 +115,7 @@ def run(lean: str, arguments: list[str], *, file_text: str | None, seconds: floa
     """Run ``lean`` (from :func:`find_lean`) with ``arguments`` (``["--json", "Proof.lean"]`` or ``["--version"]``)
     in a fresh directory, with ``file_text`` written there as ``Proof.lean``, and remove the directory. Returns the
     exit code and the output."""
-    with confine.run_folder(prefix="g6_lean_", ignore_cleanup_errors=True) as tmp:
+    with confine.run_folder(prefix="g6-lean-", ignore_cleanup_errors=True) as tmp:   # not the setting's name
         root = Path(tmp)
         for sub in ("work", "tmp", "home"):
             (root / sub).mkdir()

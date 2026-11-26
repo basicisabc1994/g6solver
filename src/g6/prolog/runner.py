@@ -177,8 +177,8 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=confine.program_paths(swipl)))
             record["isolation"] = confine_record(confined)
             said = confine_refused(confined)
-            if said:
-                raise Refusal(ISOLATION_UNAVAILABLE, said)
+            if said:   # refused before SWI-Prolog starts: it did not run, and the refusal carries how it would have
+                raise Refusal(ISOLATION_UNAVAILABLE, said, swipl_ran=False, isolation=record["isolation"])
         try:
             return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end, confined)
         finally:
