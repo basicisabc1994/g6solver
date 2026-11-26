@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from distill.held_out.case_gate import CaseRecord, Provenance
-from distill.held_out.sealed_gate import _Payload
+from g6.distill.held_out.case_gate import CaseRecord, Provenance
+from g6.distill.held_out.sealed_gate import _Payload
 
 
 def test_sealed_payload_carries_patterns_instead_of_public_operator_names():
@@ -38,7 +38,7 @@ def test_case_file_prefix_collision_is_rejected_before_staging():
 
 
 def test_public_package_and_operators_do_not_import_judging_or_sealed_data():
-    root = Path(__file__).resolve().parents[2] / "validation/distill"
+    root = Path(__file__).resolve().parents[2] / "src/g6/distill"
     for name in ("__init__.py", "operators.py"):
         tree = ast.parse((root / name).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -50,7 +50,7 @@ def test_public_package_and_operators_do_not_import_judging_or_sealed_data():
 
 def test_all_new_judging_paths_are_protected_by_existing_gate():
     from g6.core.adaptation_gate import protected_hits
-    files = ["validation/distill/held_out/" + name for name in
+    files = ["src/g6/distill/held_out/" + name for name in
              ("oracle.py", "case_gate.py", "registration_gate.py", "sealed_gate.py")]
     assert set(protected_hits(files)) == set(files)
 
@@ -58,7 +58,7 @@ def test_all_new_judging_paths_are_protected_by_existing_gate():
 def test_real_evaluator_module_identity_reaches_registration_before_payload(monkeypatch):
     import sys
     from types import ModuleType
-    from distill.held_out import sealed_gate
+    from g6.distill.held_out import sealed_gate
 
     class RegistrationReached(Exception):
         pass
@@ -83,7 +83,7 @@ def test_real_evaluator_module_identity_reaches_registration_before_payload(monk
 def test_wrong_filename_cannot_impersonate_an_evaluator(monkeypatch):
     import sys
     from types import ModuleType
-    from distill.held_out import sealed_gate
+    from g6.distill.held_out import sealed_gate
 
     module = ModuleType("g6.distill.acceptance_gate")
     module.__dict__["evaluate_sealed"] = sealed_gate.evaluate_sealed

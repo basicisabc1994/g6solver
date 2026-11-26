@@ -198,9 +198,23 @@ def _receipt(monkeypatch, tmp_path, raw):
     return receipt_store.counts_as_pass(body)
 
 
+def _distill_oracle(monkeypatch, tmp_path, raw):
+    import json
+    from g6.distill.held_out import oracle
+    from tests.validation.test_distill_oracle import BEFORE, FIXED, planted
+
+    # Retain every planted state while translating this matrix's synthetic file and module names (a module key left as
+    # "calc" names no module of the staged tree, so a foreign-code plant would never reach the oracle).
+    raw = json.loads(json.dumps(raw).replace("test_calc.py", oracle.TEST_PATH).replace("calc.py", "subject.py")
+                     .replace('"calc"', '"subject"'))
+    monkeypatch.setattr(rt, "_run", lambda *a, **kw: raw)
+    return oracle._run(planted(), FIXED, BEFORE, workspace=tmp_path, timeout_s=1) in rt.RAN
+
+
 #: Every place that states something of a run, with the sides it states (a pass, a failure) and the fields its clean
 #: report needs beyond the common ones.
 ROWS = {
+    "the distill oracle's staged run": (_distill_oracle, ("pass", "fail"), {}),
     "the stated checks' run": (_stated, ("pass", "fail"), {}),
     "another run that observed a stated check": (_observed, ("pass", "fail"), {}),
     "the run at the base commit as a control": (_control, ("fail",), {}),
@@ -318,6 +332,7 @@ def scan(root: Path) -> dict[tuple[str, str], set[str]]:
 #: Every function the scan finds, classified. A row of the matrix (``ROWS``) for each that states something of a run;
 #: for the others, why what they read states nothing.
 CLASSIFIED = {
+    ("distill/held_out/oracle.py", "_run"): "the distill oracle's staged run",
     # the reader itself, and the producer
     ("workforce/repo_tests.py", "read_report"): "the one reader: decides every state from the whole report",
     ("workforce/repo_tests.py", "of"): "the reading's statement for a check, with whose code ran",

@@ -22,6 +22,7 @@ READERS = {
 # Entry points which receive a producer's return. Dispatchers pass to the named
 # decided reader; the replay producer consumes its own reading before returning.
 ADAPTERS = {
+    "distill/held_out/oracle.py": {"_run"},
     "algorithm_design/autonomous.py": {"baseline", "run"},
     "bundles/agent_change.py": {"runner", "run"},
     "harness/patch_review.py": {"_execute", "_execute_at_base"},
@@ -31,6 +32,7 @@ ADAPTERS = {
 }
 
 WHOLE_REPO_CONTEXTS = {
+    "distill/held_out/oracle.py": {"_run"},
     "algorithm_design/autonomous.py": {"_observed"},
     "bundles/agent_change.py": {"_as_run", "run"},
     "metaharness/coding.py": {"oracle", "run_mutant"},

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from distill.held_out.sealed_gate import SealedRef, evaluate_sealed, install, pin, verify
+from g6.distill.held_out.sealed_gate import SealedRef, evaluate_sealed, install, pin, verify
 
 
 def test_pin_and_verify_read_only_digest_and_return_no_content(tmp_path):
@@ -35,13 +35,13 @@ def test_sealed_evaluation_refuses_caller_before_opening_file(tmp_path, monkeypa
 
 
 def test_sealed_module_has_no_public_content_reader():
-    from distill.held_out import sealed_gate
+    from g6.distill.held_out import sealed_gate
     assert sealed_gate.__all__ == ["SealedRef", "pin", "verify", "install", "evaluate_sealed"]
     assert "caller" not in __import__("inspect").signature(evaluate_sealed).parameters
 
 
 def test_internal_bytes_reader_refuses_non_evaluator_callers(tmp_path):
-    from distill.held_out import sealed_gate
+    from g6.distill.held_out import sealed_gate
     with pytest.raises(PermissionError, match="G6_E_DISTILL_SEALED_ACCESS"):
         sealed_gate._bytes(tmp_path / "absent.json")
 
@@ -55,10 +55,10 @@ def test_installed_object_is_content_addressed_and_idempotent(tmp_path):
 
 
 def test_sealed_evaluator_returns_only_labels_and_checks_registration(tmp_path, monkeypatch):
-    from distill.held_out import sealed_gate
-    from distill.held_out.case_gate import CaseRecord, Provenance
-    from distill.held_out.oracle import OraclePolicy, OracleResult
-    from distill.held_out.registration_gate import freeze
+    from g6.distill.held_out import sealed_gate
+    from g6.distill.held_out.case_gate import CaseRecord, Provenance
+    from g6.distill.held_out.oracle import OraclePolicy, OracleResult
+    from g6.distill.held_out.registration_gate import freeze
 
     source = "from subject import answer\ndef test_it():\n    assert answer(1) == 2\n"
     case = CaseRecord(unit_id="selection-planted", provenance=Provenance(source="round3", cohort="selection",
@@ -98,6 +98,6 @@ def test_sealed_evaluator_returns_only_labels_and_checks_registration(tmp_path, 
 
 
 def test_acceptance_identity_cannot_be_claimed_by_a_role_or_function_name():
-    from distill.held_out import sealed_gate
+    from g6.distill.held_out import sealed_gate
     with pytest.raises(PermissionError, match="G6_E_DISTILL_SEALED_ACCESS"):
         sealed_gate._require_evaluator()
