@@ -392,6 +392,9 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "answers in the client's dialog. Never grant for the person; if they decline, go on with local work."),
     "G6_E_CLOUD_CONSENT_STATE": ("none", "core",
         "G6 could not read its sharing state, so nothing was shared. Tell the person."),
+    "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND": ("none", "harness",
+        "G6 could not read its sharing state after this review had already sent a request to the reviewer's provider, "
+        "so the review stopped part way and its result is untested. Tell the person."),
     "G6_E_CODE_CHECKER_NOT_INSTALLED": ("person", "code"),
     "G6_E_CODE_CONFIG_INVALID": ("person", "code"),
     "G6_E_CODE_NO_ROOT": ("none", "code"),

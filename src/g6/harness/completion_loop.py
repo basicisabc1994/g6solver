@@ -71,6 +71,7 @@ from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
+from g6.core.model_calls import counting
 from g6.core import cloud_consent as cloud, consent_callers as consent
 from g6.core.consent_callers import provider_from_env
 from g6.core.storage import state_path
@@ -197,6 +198,44 @@ _PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
 #: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
 Host = Callable[[str, Path, Path, float], str]
 _SOURCE_STATE: contextvars.ContextVar[cloud.Capture | None] = contextvars.ContextVar('g6_completion_sources', default=None)
+#: One step's consent latch (``_advance``): each refusal G6's own consent guard told of (``cloud.telling_refusals``),
+#: and the count of model requests the step made. A consent refusal is read from here, never from a reviewer's error
+#: text, which is the provider's words (wire-typed-fu-4, e74d2b9d).
+_CONSENT: contextvars.ContextVar[tuple[list, Callable[[], int]] | None] = contextvars.ContextVar('g6_completion_consent',
+                                                                                                default=None)
+#: The sharing state could not be read after a request of this loop had gone out (``G6_E_CLOUD_CONSENT_STATE`` says
+#: nothing was shared, which a sent request makes untrue; efa43a2a).
+CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
+
+
+def _consent_code(error: BaseException) -> str:
+    """The consent code of a refusal G6's guard raised (its words lead with it), or ``""``."""
+    text = str(error)
+    return next((code for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE) if text.startswith(code)), "")
+
+
+def _consent_mark() -> int:
+    latch = _CONSENT.get()
+    return len(latch[0]) if latch is not None else 0
+
+
+def _consent_told(mark: int = 0) -> BaseException | None:
+    """The latest consent refusal G6's guard told of in this step since ``mark``, or None."""
+    latch = _CONSENT.get()
+    return next((one for one in reversed(latch[0][mark:]) if _consent_code(one)), None) if latch is not None else None
+
+
+def _latched(error: BaseException) -> BaseException | None:
+    """The refusal the guard told of that ``error`` is, or was raised from or within; None for any other error."""
+    latch = _CONSENT.get()
+    told = latch[0] if latch is not None else []
+    seen, failed = set(), error
+    while failed is not None and id(failed) not in seen:
+        seen.add(id(failed))
+        if any(failed is one for one in told) and _consent_code(failed):
+            return failed
+        failed = failed.__cause__ or failed.__context__
+    return None
 
 
 def literal(text: str) -> str:
@@ -990,6 +1029,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
     diagnostics, notes, observations = {}, {}, {}
+    mark = _consent_mark()                  # the consent latch, read after this round's critic calls
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
     kept.parent.mkdir(parents=True, exist_ok=True)
@@ -1030,8 +1070,11 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
                                told_sources=diagnostics[mine]), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
-    if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
-        raise LLMError(said["error"])
+    # A round the critic could not answer ends as the consent refusal the guard told of during it (the latch), never by
+    # reading its error text, which is the provider's words (wire-typed-fu-4, e74d2b9d).
+    told = _consent_told(mark) if said.get("error") else None
+    if told is not None:
+        raise told
     said.update(n=n, patch=digest(patch), file=mine, test_path=str(where / mine), results=results, failed=failed,
                 notes=notes, observations=observations)
     reviews.append(said)
@@ -1506,9 +1549,14 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         if said.strip():
             cloud.record_sources((cloud.Source.text(cloud.input_source(said), 'agent-reason', ' '.join(said.split())),))
         token = _SOURCE_STATE.set(capture)
+        told: list[BaseException] = []
         try:
-            with cloud.request_sources(capture.sources):
-                return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+            with cloud.request_sources(capture.sources), cloud.telling_refusals(told.append), counting() as counted:
+                latch = _CONSENT.set((told, counted))
+                try:
+                    return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+                finally:
+                    _CONSENT.reset(latch)
         finally:
             _SOURCE_STATE.reset(token)
 
@@ -1584,8 +1632,13 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
+            mark = _consent_mark()
             state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
                                          patch=repo_tests.diff_read(change), system_sources=shipped.sources)
+            told = _consent_told(mark) if state["critic"].get("error") else None
+            if told is not None:    # the latch after the critic's call, never its error text
+                del state["critic"]
+                raise told
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():
@@ -1624,10 +1677,24 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except LLMError as exc:
-        if not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+        # G6's own guard told of it: this error, or one a wrapper (a fallback chain's summary) raised after the guard told
+        # of a refusal in this step. An error that only quotes a code is not one.
+        told = _latched(exc) or _consent_told()
+        if told is None:
             raise
-        state["stop"] = "The review was not sent. " + cloud.WITHHELD
-        code = cloud.STATE_UNAVAILABLE if cloud.STATE_UNAVAILABLE in str(exc) else cloud.REQUIRED
+        code, latch = _consent_code(told), _CONSENT.get()
+        counted = latch[1]() if latch is not None else 0
+        earlier = len(state.get("reviews") or []) + (1 if state.get("critic") else 0)
+        if not counted and not earlier:     # "not sent" only when nothing of the loop was sent (efa43a2a)
+            state["stop"] = "The review was not sent. " + cloud.WITHHELD
+        else:
+            state["requests_sent"] = counted + earlier
+            state["stop"] = ((f"The review stopped part way: {counted} request(s) went out to the reviewer's provider in "
+                              "this step before sharing was refused for the next. " if counted else
+                              "The review stopped part way: this request was not sent, and the loop's earlier reviews "
+                              "had already gone to the reviewer's provider. ") + cloud.WITHHELD)
+            if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here
+                code = CONSENT_STATE_AFTER_SEND
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
