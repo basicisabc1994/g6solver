@@ -40,7 +40,8 @@ from g6.safety_engine import weakening
 from .detectors import SEED_TEMPLATES
 from .facts import _extract_facts
 from .judging import JUDGING_PATHS
-from .ledger import PartialAuthorityWrite, Stores, append_retained, durable_state, failure_writer, retain_before_write
+from .ledger import (CommittedStepsRefusal, PartialAuthorityWrite, Stores, append_retained, defer_reservation_close,
+                     durable_state, failure_writer, retain_before_write)
 from .library import Library
 from .records import (AcceptanceEvidence, Cost, DecidedBy, FieldEvidence,
                       Interval, LibraryEntry, MethodContract, Model, RegressionCase, Sha256,
@@ -786,11 +787,13 @@ def _record_decision(answer, reservation, *, snapshot):
 
 def _close_interrupted_reservation(candidate, reservation, interrupted):
     """Close this live attempt only; an unrelated unfinished reserve stays open."""
+    answer = AcceptanceDecision('refuse', (
+        'evaluation interrupted; no admission decision; method unchanged',), candidate.candidate_id)
+
     def close():
         if not any(row['kind'] == 'decision' and row['body'].get('reservation') == reservation
                    for row in _journal().entries()):
-            _record(AcceptanceDecision('refuse', (
-                'evaluation interrupted; no admission decision; method unchanged',), candidate.candidate_id), reservation)
+            _record(answer, reservation)
 
     entered = False
     steps = _PUBLICATIONS.get()
@@ -799,20 +802,28 @@ def _close_interrupted_reservation(candidate, reservation, interrupted):
         with failure_writer():
             entered = True
             close()
-    except PartialAuthorityWrite as error:
-        if entered and not error.publication_committed and steps is not None:
+        interrupted.recovery_complete = True
+        interrupted.reservation_closed = True
+    except OSError as error:
+        if entered and not getattr(error, 'publication_committed', False) and steps is not None:
             del steps[checkpoint:]
-        if entered or not interrupted.publication_committed or not interrupted.cleanup_intent:
-            raise
-        # No authority reader gets this bypass. It is bound to the exact
-        # committed intent from this live request, under the same store lock.
-        try:
-            with failure_writer(finish_committed=interrupted):
-                close()
-        except PartialAuthorityWrite as closing:
-            if not closing.publication_committed and steps is not None:
-                del steps[checkpoint:]
-            raise
+        if (not entered and isinstance(interrupted, PartialAuthorityWrite)
+                and interrupted.publication_committed and interrupted.cleanup_intent):
+            # Only this live request may finish its exact own committed intent.
+            try:
+                with failure_writer(finish_committed=interrupted):
+                    close()
+                interrupted.recovery_complete = True
+                interrupted.reservation_closed = True
+                return
+            except OSError as closing:
+                if not getattr(closing, 'publication_committed', False) and steps is not None:
+                    del steps[checkpoint:]
+        # An unrelated committed intent or pending undo is never bypassed.
+        # Queue only this request's reserve; recovery validates it against disk.
+        interrupted.reservation_close_path = defer_reservation_close(
+            reservation, asdict(answer) | {'reservation': reservation, 'gate_version': VERSION})
+        interrupted.reservation_close_pending = True
 
 
 def _save_report(data, *, snapshot, provisional=False):
@@ -1174,7 +1185,15 @@ def _publication_context():
     decision_token = _PUBLISHED_DECISIONS.set(decisions)
     try:
         yield
-    except PartialAuthorityWrite as error:
+    except Exception as original:
+        if not isinstance(original, PartialAuthorityWrite) and not steps:
+            raise
+        error = original if isinstance(original, PartialAuthorityWrite) else CommittedStepsRefusal()
+        for name in ('recovery_complete', 'reservation_closed', 'reservation_close_pending'):
+            if hasattr(original, name):
+                setattr(error, name, getattr(original, name))
+        if hasattr(original, 'reservation_close_path'):
+            error.paths = (*error.paths, original.reservation_close_path)
         error.committed_steps = list(steps)
         # Only this request's activation published the requested method change.
         error.publication_committed = any(kind == 'activation' for kind, _ in steps)
@@ -1183,7 +1202,9 @@ def _publication_context():
         if steps:
             error.earlier_publication_committed = False
         error.durable_state = durable_state(error.paths)
-        raise
+        if error is original:
+            raise
+        raise error from None
     finally:
         _PUBLICATIONS.reset(token)
         _PUBLISHED_DECISIONS.reset(decision_token)
@@ -1233,19 +1254,23 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                         answer, evidence, own, data = _assess(candidate, snapshot, frozen, index)
                         require_current(snapshot)
                         evaluated[candidate.candidate_id] = (answer, evidence, own, frozen, data)
-                    except PartialAuthorityWrite as error:
-                        # A completed reservation can fail during cleanup before
-                        # _spend returns its id. Close only this live attempt, never
-                        # a reserve left by a genuinely unfinished evaluation.
-                        reservation = reservation or error.reservation
-                        if reservation:
-                            _close_interrupted_reservation(candidate, reservation, error)
-                        raise
                     except (ValueError, KeyError, FileNotFoundError) as error:
                         # Do not echo corpus bodies, subprocess stderr or model output.
                         reason = str(error) if isinstance(error, ValueError) else "registered input missing"
                         verdict = "refuse" if reservation or "split spent" in reason else "block"
                         answer = AcceptanceDecision(verdict, (reason,), candidate.candidate_id)
+                    except OSError as error:
+                        # A completed reservation can fail during cleanup before
+                        # _spend returns its id. Close only this live attempt, never
+                        # a reserve left by a genuinely unfinished evaluation.
+                        reservation = reservation or getattr(error, 'reservation', '')
+                        if reservation:
+                            _close_interrupted_reservation(candidate, reservation, error)
+                        raise
+                    except BaseException as error:
+                        if reservation:
+                            _close_interrupted_reservation(candidate, reservation, error)
+                        raise
                     results[candidate.candidate_id] = (answer, reservation)
                     # Close the reservation before spending the next look. A later
                     # activation is a separate append-only decision row.
@@ -1253,7 +1278,7 @@ def _decide_batch(candidates, library, registration, *, restoring=''):
                         recorded = _record(
                             replace(answer, verdict="evaluated") if answer.verdict == "admit_probation" else answer,
                             reservation, snapshot=snapshot if answer.verdict == 'admit_probation' else None)
-                    except PartialAuthorityWrite as error:
+                    except BaseException as error:
                         if reservation:
                             _close_interrupted_reservation(candidate, reservation, error)
                         raise

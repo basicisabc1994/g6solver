@@ -58,6 +58,20 @@ class PartialAuthorityWrite(OSError):
         super().__init__(self.code + ': ' + state + '; durable state: ' + '; '.join(self.durable_state))
 
 
+class CommittedStepsRefusal(OSError):
+    """A request failed after earlier rows committed and its undo completed."""
+    code = 'G6_E_DISTILL_INPUT'
+
+    def __init__(self):
+        self.paths = (state_path('distill', 'acceptance_gate.jsonl'), _intent_path())
+        self.committed = self.publication_committed = self.earlier_publication_committed = False
+        self.decision = None
+        self.reservation = ''
+        self.committed_steps = []
+        self.durable_state = durable_state(self.paths)
+        super().__init__(self.code + ': request interrupted after committed steps; failed write rolled back')
+
+
 def durable_state(paths):
     states = []
     try:
@@ -217,8 +231,8 @@ def _recover_intent():
 
 
 def _remove_undo_staging(staging):
-    """Remove only intent-owned undo copies with the expected name and bytes."""
-    for path, content in staging.items():
+    """The validated declaration owns even an empty or torn exclusive copy."""
+    for path in staging:
         try:
             info = path.lstat()
         except FileNotFoundError:
@@ -226,18 +240,21 @@ def _remove_undo_staging(staging):
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                 or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
             continue
-        if path.read_bytes() == content:
-            path.unlink()
-            _sync_parent(path)
+        path.unlink()
+        _sync_parent(path)
 
 
 def _plan_undo_staging(target):
     # Declare the exclusive new name durably before creating any copy. A name
     # and matching bytes alone do not establish that an unrelated file is ours.
-    if _read_intent() is None:
+    intent = _read_intent()
+    if intent is None or target not in intent[1]:
         # The first intent publication can fail before any target write. The
         # in-memory rollback snapshot still needs durable staging ownership.
         _save_intent()
+        intent = _read_intent()
+    if intent is None or target not in intent[1] or intent[1][target] is None:
+        raise ValueError('undo target missing from intent')
     pending = _intent_path().read_bytes()
     body = json.loads(pending)['body']
     while True:
@@ -287,6 +304,19 @@ def append_retained(chain, kind, ident, body, *, recover=None):
 
 def _restore(path, content):
     path = _intent_target(_intent_name(path))
+    intent = _read_intent()
+    if intent is None or path not in intent[1]:
+        # retain_before_write enlists in memory before publishing its intent.
+        # No corresponding target write was allowed if that publication failed.
+        before = getattr(_FAILURE_LOCAL, 'before', None)
+        if before is None or path not in before or before[path] != content:
+            raise ValueError('undo target missing from intent')
+        try:
+            _save_intent()
+        except OSError:
+            if (path.read_bytes() if path.exists() else None) == content:
+                return
+            raise
     if content is None:
         path.unlink(missing_ok=True)
     else:
@@ -310,6 +340,117 @@ def _restore(path, content):
         else:
             staging.unlink(missing_ok=True)
     _sync_parent(path)
+
+
+def defer_reservation_close(reservation, body):
+    """Persist this live request's refusal without replacing a blocked intent."""
+    from g6.core.repair_log import _process_lock
+    if re.fullmatch('[0-9a-f]{64}', reservation) is None or body.get('reservation') != reservation:
+        raise ValueError('invalid deferred reservation close')
+    with _FAILURE_MUTEX, _process_lock(state_path('distill', 'failure_records.lock')):
+        path = state_path('distill', 'reservation_closures', reservation + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = (canonical({'body': body, 'sha256': digest(body)}) + '\n').encode('utf-8')
+        if path.exists():
+            if path.read_bytes() != content:
+                raise ValueError('deferred reservation close differs')
+            return path
+        staging = path.with_suffix('.pending')
+        with staging.open('wb') as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staging, path)
+        _sync_parent(path)
+        _sync_parent(path.parent)
+        return path
+
+
+def _recover_reservation_closes():
+    """Append queued refusals under the recovered intent's normal transaction."""
+    folder = state_path('distill', 'reservation_closures')
+    if not folder.exists():
+        return []
+    completed = []
+    journal = ChainLedger(state_path('distill', 'acceptance_gate.jsonl'))
+    for name in sorted(path.name for path in folder.iterdir() if path.suffix == '.json'):
+        path = state_path('distill', 'reservation_closures', name)
+        data = json.loads(path.read_text(encoding='utf-8'))
+        body = data['body']
+        reservation = name.removesuffix('.json')
+        rows = journal.entries()
+        reserve = next((row for row in rows if row['kind'] == 'reserve' and row['id'] == reservation), None)
+        if (re.fullmatch('[0-9a-f]{64}', reservation) is None or data['sha256'] != digest(body)
+                or body.get('reservation') != reservation or body.get('verdict') != 'refuse'
+                or reserve is None or body.get('candidate_id') != reserve['body']['candidate_id']):
+            raise ValueError('invalid deferred reservation close')
+        if not any(row['kind'] == 'decision' and row['body'].get('reservation') == reservation for row in rows):
+            ident = digest(['decision', len(rows), body])
+            append_retained(journal, 'decision', ident, body)
+        completed.append(path)
+    return completed
+
+
+@contextmanager
+def _authority_transaction(path):
+    """Publish or undo one set under the already held process lock."""
+    _FAILURE_LOCAL.path = path
+    _FAILURE_LOCAL.before = {}
+    _FAILURE_LOCAL.after = {}
+    _FAILURE_LOCAL.recover = []
+    committing = False
+    try:
+        yield True
+        if _FAILURE_LOCAL.before:
+            # All planned records must be on disk before the commit mark.
+            for target, content in _FAILURE_LOCAL.after.items():
+                if (target.read_bytes() if target.exists() else None) != content:
+                    raise OSError('publication differs from its intent')
+                _sync_parent(target)
+            committing = True
+            _save_intent(committed=True)
+    except BaseException:
+        if committing:
+            # A commit-marker flush/rename can fail after replacement.
+            # Make undo durable again BEFORE changing any target back.
+            try:
+                _save_intent()
+            except OSError:
+                raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
+        failed = []
+        for target, content in reversed(tuple(_FAILURE_LOCAL.before.items())):
+            try:
+                _restore(target, content)
+            except (OSError, ValueError):
+                failed.append(target)
+        for target, recover in _FAILURE_LOCAL.recover:
+            try:
+                recover()
+            except (OSError, ValueError, LedgerError):
+                failed.append(target)
+        if failed:
+            raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
+        if _FAILURE_LOCAL.before:
+            _retire_intent()
+        raise
+    else:
+        if _FAILURE_LOCAL.before:
+            # A failed cleanup leaves a committed intent for the next
+            # lock holder; it must never undo a completed publication.
+            try:
+                _retire_intent()
+            except OSError:
+                error = PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before), committed=True)
+                try:
+                    error.cleanup_intent = _intent_path().read_bytes()
+                except OSError:
+                    pass
+                raise error from None
+    finally:
+        _FAILURE_LOCAL.path = None
+        _FAILURE_LOCAL.before = None
+        _FAILURE_LOCAL.after = None
+        _FAILURE_LOCAL.recover = None
 
 
 @contextmanager
@@ -347,63 +488,20 @@ def failure_writer(*, reading=False, finish_committed=None):
                         or finish_committed.cleanup_intent is None or intent is None or not intent[0]
                         or _intent_path().read_bytes() != finish_committed.cleanup_intent):
                     raise PartialAuthorityWrite((_intent_path(),), recovering=True)
-            _FAILURE_LOCAL.path = path
-            _FAILURE_LOCAL.before = {}
-            _FAILURE_LOCAL.after = {}
-            _FAILURE_LOCAL.recover = []
-            committing = False
-            try:
+            if finish_committed is None:
+                # Finish queued refusal rows in their own transaction before the
+                # caller can read or write. A later caller rollback cannot undo them.
+                try:
+                    with _authority_transaction(path):
+                        closed = _recover_reservation_closes()
+                    for closure in closed:
+                        closure.unlink(missing_ok=True)
+                        _sync_parent(closure)
+                except (OSError, ValueError, KeyError, TypeError):
+                    raise PartialAuthorityWrite((state_path('distill', 'reservation_closures'),),
+                                                recovering=True) from None
+            with _authority_transaction(path):
                 yield True
-                if _FAILURE_LOCAL.before:
-                    # All planned records must be on disk before the commit mark.
-                    for target, content in _FAILURE_LOCAL.after.items():
-                        if (target.read_bytes() if target.exists() else None) != content:
-                            raise OSError('publication differs from its intent')
-                        _sync_parent(target)
-                    committing = True
-                    _save_intent(committed=True)
-            except BaseException:
-                if committing:
-                    # A commit-marker flush/rename can fail after replacement.
-                    # Make undo durable again BEFORE changing any target back.
-                    try:
-                        _save_intent()
-                    except OSError:
-                        raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
-                failed = []
-                for target, content in reversed(tuple(_FAILURE_LOCAL.before.items())):
-                    try:
-                        _restore(target, content)
-                    except (OSError, ValueError):
-                        failed.append(target)
-                for target, recover in _FAILURE_LOCAL.recover:
-                    try:
-                        recover()
-                    except (OSError, ValueError, LedgerError):
-                        failed.append(target)
-                if failed:
-                    raise PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before)) from None
-                if _FAILURE_LOCAL.before:
-                    _retire_intent()
-                raise
-            else:
-                if _FAILURE_LOCAL.before:
-                    # A failed cleanup leaves a committed intent for the next
-                    # lock holder; it must never undo a completed publication.
-                    try:
-                        _retire_intent()
-                    except OSError:
-                        error = PartialAuthorityWrite(tuple(_FAILURE_LOCAL.before), committed=True)
-                        try:
-                            error.cleanup_intent = _intent_path().read_bytes()
-                        except OSError:
-                            pass
-                        raise error from None
-            finally:
-                _FAILURE_LOCAL.path = None
-                _FAILURE_LOCAL.before = None
-                _FAILURE_LOCAL.after = None
-                _FAILURE_LOCAL.recover = None
 
 
 class Stores:
