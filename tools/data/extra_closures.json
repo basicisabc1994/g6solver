@@ -731,6 +731,71 @@
     "Pillow>=10.3"
    ]
   },
+  "langextract": {
+   "closure": [
+    "absl-py==2.5.1",
+    "aiohappyeyeballs==2.7.1",
+    "aiohttp==3.14.5",
+    "aiosignal==1.4.0",
+    "annotated-types==0.8.0",
+    "anyio==4.16.0",
+    "async-timeout==5.0.1",
+    "attrs==26.1.0",
+    "certifi==2026.11.20",
+    "cffi==2.1.1",
+    "charset-normalizer==3.5.3",
+    "cryptography==50.0.2",
+    "distro==1.9.0",
+    "exceptiongroup==1.3.2",
+    "frozenlist==1.8.0",
+    "google-api-core==2.44.0",
+    "google-auth==2.63.1",
+    "google-cloud-core==2.8.0",
+    "google-cloud-storage==3.17.2",
+    "google-crc32c==1.9.0",
+    "google-genai==3.6.1",
+    "google-resumable-media==2.11.0",
+    "googleapis-common-protos==1.76.0",
+    "h11==0.16.0",
+    "httpcore2==2.16.2",
+    "httpx2==2.16.2",
+    "idna==3.20",
+    "langextract==1.7.2",
+    "ml-collections==1.1.0",
+    "more-itertools==11.2.1",
+    "multidict==7.2.1",
+    "numpy==2.5.5",
+    "opentelemetry-api==1.45.2",
+    "pandas==3.1.1",
+    "propcache==0.5.4",
+    "proto-plus==1.29.0",
+    "protobuf==7.36.2",
+    "pyasn1==0.6.5",
+    "pyasn1-modules==0.4.2",
+    "pycparser==3.12",
+    "pydantic==2.14.4",
+    "pydantic-core==2.50.5",
+    "python-dateutil==4.0.0",
+    "python-dotenv==1.2.4",
+    "pyyaml==6.0.4",
+    "regex==2026.11.25",
+    "requests==2.34.2",
+    "returns==0.30.0",
+    "sniffio==1.3.1",
+    "tenacity==9.1.4",
+    "tqdm==4.70.1",
+    "truststore==0.10.5",
+    "typing-extensions==4.16.0",
+    "typing-inspection==0.4.5",
+    "tzdata==2026.6",
+    "urllib3==2.8.0",
+    "websockets==17.4",
+    "yarl==1.25.1"
+   ],
+   "requires": [
+    "langextract==1.7.2"
+   ]
+  },
   "lora": {
    "closure": [
     "accelerate==1.15.0",
@@ -1207,6 +1272,11 @@
    "license": "",
    "license_expression": "MIT"
   },
+  "anyio==4.16.0": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "MIT"
+  },
   "arviz==0.23.4": {
    "classifiers": [
     "License :: OSI Approved :: Apache Software License"
@@ -1226,6 +1296,13 @@
     "License :: OSI Approved :: MIT License"
    ],
    "license": "MIT",
+   "license_expression": ""
+  },
+  "async-timeout==5.0.1": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2",
    "license_expression": ""
   },
   "attrs==26.1.0": {
@@ -1292,12 +1369,24 @@
    "license": "MPL-2.0",
    "license_expression": ""
   },
+  "certifi==2026.11.20": {
+   "classifiers": [
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)"
+   ],
+   "license": "MPL-2.0",
+   "license_expression": ""
+  },
   "cffi==2.1.1": {
    "classifiers": [],
    "license": "",
    "license_expression": "MIT-0"
   },
   "charset-normalizer==3.5.2": {
+   "classifiers": [],
+   "license": "MIT",
+   "license_expression": ""
+  },
+  "charset-normalizer==3.5.3": {
    "classifiers": [],
    "license": "MIT",
    "license_expression": ""
@@ -1470,6 +1559,13 @@
    "license": "",
    "license_expression": ""
   },
+  "exceptiongroup==1.3.2": {
+   "classifiers": [
+    "License :: OSI Approved :: MIT License"
+   ],
+   "license": "",
+   "license_expression": ""
+  },
   "fakeredis==2.34.1": {
    "classifiers": [
     "License :: OSI Approved :: BSD License"
@@ -1535,6 +1631,56 @@
    "license": "",
    "license_expression": "BSD-3-Clause"
   },
+  "google-api-core==2.44.0": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
+  "google-auth==2.63.1": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
+  "google-cloud-core==2.8.0": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
+  "google-cloud-storage==3.17.2": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache-2.0",
+   "license_expression": ""
+  },
+  "google-crc32c==1.9.0": {
+   "classifiers": [],
+   "license": "Apache-2.0",
+   "license_expression": ""
+  },
+  "google-genai==3.6.1": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0"
+  },
+  "google-resumable-media==2.11.0": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
+  "googleapis-common-protos==1.76.0": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0"
+  },
   "graphviz==0.21": {
    "classifiers": [],
    "license": "",
@@ -1590,6 +1736,13 @@
    "license": "",
    "license_expression": "BSD-3-Clause"
   },
+  "httpcore2==2.16.2": {
+   "classifiers": [
+    "License :: OSI Approved :: BSD License"
+   ],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
+  },
   "httpcore==1.0.9": {
    "classifiers": [
     "License :: OSI Approved :: BSD License"
@@ -1603,6 +1756,13 @@
    "license_expression": ""
   },
   "httpx2==2.16.0": {
+   "classifiers": [
+    "License :: OSI Approved :: BSD License"
+   ],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
+  },
+  "httpx2==2.16.2": {
    "classifiers": [
     "License :: OSI Approved :: BSD License"
    ],
@@ -1768,6 +1928,11 @@
    "license": "MIT",
    "license_expression": ""
   },
+  "langextract==1.7.2": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0"
+  },
   "langgraph-checkpoint==4.3.0": {
    "classifiers": [],
    "license": "",
@@ -1858,6 +2023,13 @@
    "license": "",
    "license_expression": ""
   },
+  "ml-collections==1.1.0": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "",
+   "license_expression": ""
+  },
   "momentchi2==0.1.8": {
    "classifiers": [
     "License :: OSI Approved :: MIT License"
@@ -1878,6 +2050,11 @@
    "license_expression": ""
   },
   "multidict==7.1.0": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0"
+  },
+  "multidict==7.2.1": {
    "classifiers": [],
    "license": "",
    "license_expression": "Apache-2.0"
@@ -1930,6 +2107,11 @@
    "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
   },
   "numpy==2.5.4": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+  },
+  "numpy==2.5.5": {
    "classifiers": [],
    "license": "",
    "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
@@ -2064,6 +2246,11 @@
    "license": "",
    "license_expression": "Apache-2.0"
   },
+  "opentelemetry-api==1.45.2": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0"
+  },
   "orjson==3.13.0": {
    "classifiers": [
     "License :: OSI Approved :: Apache Software License",
@@ -2104,6 +2291,11 @@
    ],
    "license": "BSD 3-Clause License",
    "license_expression": ""
+  },
+  "pandas==3.1.1": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
   },
   "pathable==0.6.0": {
    "classifiers": [
@@ -2174,12 +2366,24 @@
    "license": "Apache-2.0",
    "license_expression": ""
   },
+  "proto-plus==1.29.0": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
   "protobuf==5.29.6": {
    "classifiers": [],
    "license": "3-Clause BSD License",
    "license_expression": ""
   },
   "protobuf==6.33.6": {
+   "classifiers": [],
+   "license": "3-Clause BSD License",
+   "license_expression": ""
+  },
+  "protobuf==7.36.2": {
    "classifiers": [],
    "license": "3-Clause BSD License",
    "license_expression": ""
@@ -2208,12 +2412,34 @@
    "license": "",
    "license_expression": "Apache-2.0"
   },
+  "pyasn1-modules==0.4.2": {
+   "classifiers": [
+    "License :: OSI Approved :: BSD License"
+   ],
+   "license": "BSD",
+   "license_expression": ""
+  },
+  "pyasn1==0.6.5": {
+   "classifiers": [],
+   "license": "BSD-2-Clause",
+   "license_expression": ""
+  },
   "pycparser==3.11": {
    "classifiers": [],
    "license": "",
    "license_expression": "BSD-3-Clause"
   },
+  "pycparser==3.12": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
+  },
   "pydantic-core==2.50.1": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "MIT"
+  },
+  "pydantic-core==2.50.5": {
    "classifiers": [],
    "license": "",
    "license_expression": "MIT"
@@ -2226,6 +2452,11 @@
    "license_expression": "MIT"
   },
   "pydantic==2.14.1": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "MIT"
+  },
+  "pydantic==2.14.4": {
    "classifiers": [],
    "license": "",
    "license_expression": "MIT"
@@ -2304,6 +2535,11 @@
    "license": "Dual License",
    "license_expression": ""
   },
+  "python-dateutil==4.0.0": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
+  },
   "python-dotenv==1.2.4": {
    "classifiers": [],
    "license": "BSD-3-Clause",
@@ -2328,6 +2564,13 @@
    "license": "MIT",
    "license_expression": ""
   },
+  "pyyaml==6.0.4": {
+   "classifiers": [
+    "License :: OSI Approved :: MIT License"
+   ],
+   "license": "MIT",
+   "license_expression": ""
+  },
   "qdldl==0.1.9.post1": {
    "classifiers": [],
    "license": "Apache 2.0",
@@ -2344,6 +2587,11 @@
    "classifiers": [],
    "license": "",
    "license_expression": "MIT"
+  },
+  "regex==2026.11.25": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "Apache-2.0 AND CNRI-Python"
   },
   "regex==2026.9.29": {
    "classifiers": [],
@@ -2365,6 +2613,13 @@
    "license_expression": ""
   },
   "returns==0.29.0": {
+   "classifiers": [
+    "License :: OSI Approved :: BSD License"
+   ],
+   "license": "BSD-3-Clause",
+   "license_expression": ""
+  },
+  "returns==0.30.0": {
    "classifiers": [
     "License :: OSI Approved :: BSD License"
    ],
@@ -2535,6 +2790,13 @@
    "license": "BSD",
    "license_expression": ""
   },
+  "tenacity==9.1.4": {
+   "classifiers": [
+    "License :: OSI Approved :: Apache Software License"
+   ],
+   "license": "Apache 2.0",
+   "license_expression": ""
+  },
   "tenacity==9.2.1": {
    "classifiers": [],
    "license": "",
@@ -2628,7 +2890,17 @@
    "license": "",
    "license_expression": "MIT"
   },
+  "typing-inspection==0.4.5": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "MIT"
+  },
   "tzdata==2026.5": {
+   "classifiers": [],
+   "license": "Apache-2.0",
+   "license_expression": ""
+  },
+  "tzdata==2026.6": {
    "classifiers": [],
    "license": "Apache-2.0",
    "license_expression": ""
@@ -2678,6 +2950,11 @@
    "license_expression": "BSD-3-Clause"
   },
   "websockets==17.3": {
+   "classifiers": [],
+   "license": "",
+   "license_expression": "BSD-3-Clause"
+  },
+  "websockets==17.4": {
    "classifiers": [],
    "license": "",
    "license_expression": "BSD-3-Clause"
