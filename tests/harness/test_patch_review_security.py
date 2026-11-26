@@ -435,7 +435,9 @@ def test_a_repository_environment_that_would_open_a_folder_of_the_persons_is_ref
     assert got["ok"] is False and got["completion_state"] == "blocked-escalated", got.get("assessment")
     said = got["warning_card"]["message"]
     assert got["warning_card"]["code"] == repo_tests.REPO_PYTHON_INVALID, said
-    assert ".ssh" in said and "standard library" in said and repo_tests.REPO_PYTHON in said, said
+    # The reply names no setting to the agent: commits 0b400900 and 23d19ddb, lead ruling 2026-11-21 (rc-wrp).
+    assert ".ssh" in said and "standard library" in said and repo_tests.REPO_PYTHON not in said, said
+    assert "a setting named in G6's documentation" in said, said
     assert "icacls" not in said and "grant" not in said   # never a request to open the folder
     assert started == []   # no test process was started
 
