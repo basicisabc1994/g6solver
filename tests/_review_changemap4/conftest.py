@@ -19,8 +19,14 @@ def isolated_environment(monkeypatch):
 
 
 @pytest.fixture
-def tmp_path(monkeypatch):
+def tmp_path(monkeypatch, tmp_path_factory):
     root = Path(__file__).resolve().parents[2] / ".bt_rev_changemap4" / uuid.uuid4().hex
     root.mkdir(parents=True)
-    monkeypatch.setenv("G6_HOME", str(root / "g6-home"))
+    monkeypatch.setenv("G6_HOME", str(tmp_path_factory.mktemp("change-map-home") / "g6-home"))
     return root
+
+
+@pytest.fixture(autouse=True)
+def collection_runtime(monkeypatch, request):
+    if os.name == "nt":
+        monkeypatch.setenv("G6_REPO_PYTHON", request.getfixturevalue("confined_python"))
