@@ -670,7 +670,9 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.compl
          # executable_scenario), 018b67b (workflow.adapters)
          'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
          'g6.harness.executable_scenario', 'g6.harness.workflow.adapters',
-         'g6.harness.outcome_history', 'g6.learning_history.block', 'g6.mcp.learning_history')
+         'g6.harness.outcome_history', 'g6.learning_history.block', 'g6.mcp.learning_history',
+         # 11b03e6e / 12374415: folder admission only; neither consumes git-listed names.
+         'g6.mcp.improve', 'g6.mcp.workflow')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:
