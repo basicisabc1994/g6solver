@@ -212,6 +212,28 @@ def _lstat(path: Path) -> os.stat_result | None:
             time.sleep(0.001)
 
 
+def _link_elsewhere(path: Path, below: int) -> None:
+    """Windows: :class:`PathRefused` (outside), before anything goes through it, when a symbolic link or mount point on
+    ``path`` (absolute, as open reads it), from its part ``below`` on, has a network or device path as its target
+    (:func:`_elsewhere`: a mount point to ``\\??\\PIPE\\``, say): going through one opens that device, connecting to a
+    named pipe's server, or a share over the network. Each part is asked about with lstat, which opens the part itself,
+    never its target, so a link is read before anything goes through it; the first missing part ends the walk."""
+    if os.name != "nt":
+        return
+    for depth in range(below + 1, len(path.parts) + 1):
+        part = Path(*path.parts[:depth])
+        found = _lstat(part)
+        if found is None:
+            return
+        if getattr(found, "st_reparse_tag", 0) in (stat.IO_REPARSE_TAG_SYMLINK, stat.IO_REPARSE_TAG_MOUNT_POINT):
+            target = os.readlink(_verbatim(part))
+            if target.startswith("\\\\?\\") and target[5:7] == ":\\":     # a local drive's \\?\X:\ form
+                target = target[4:]
+            if _elsewhere(target):
+                raise PathRefused("a link on the path leads to a network or device path, which G6 never goes "
+                                  "through: going through one opens it, over the network for a share", outside=True)
+
+
 def _holds_nothing(folder: Path) -> bool:
     """Windows: whether the file system answers an open of ``folder`` with STATUS_DELETE_PENDING (it is marked for
     delete), or finds no such name or path (it is gone). Win32 reports a marked folder only as access denied, the same
@@ -350,6 +372,9 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
                 raise PathRefused(f"{ancestor.name!r} is a linked path component", outside=True)
     base = Path(root).resolve()
     joined = given if given.is_absolute() else base / given
+    # resolving goes through every link on the path: one leading to a device (a named pipe) opens it, so such a link is
+    # refused before anything is resolved
+    _link_elsewhere(Path(os.path.abspath(joined)), len((anchor if absolute else base).parts))
     real: Path | None = joined.resolve()
     if os.name == "nt":
         # refuses a link resolving could not follow. Resolving while another thread removes or makes a folder on the
@@ -365,8 +390,10 @@ def contained(root: str | os.PathLike[str], raw: str | os.PathLike[str], *, refu
 def plain_file(path: str | os.PathLike[str]) -> os.stat_result:
     """``path``'s status when it is a regular file kept under this one name; :class:`PathRefused` when it is missing,
     is not a regular file, or is a link: a symbolic link, a Windows reparse point (a junction, a mount point) or a hard
-    link (a second name for a file kept elsewhere, which resolving never shows)."""
+    link (a second name for a file kept elsewhere, which resolving never shows). On Windows a link above it that leads to
+    a network or device path is refused (outside) before lstat goes through it."""
     try:
+        _link_elsewhere(Path(os.path.abspath(path)), 1)   # lstat of the file goes through every link above it
         found = os.lstat(path)
     except OSError:
         raise PathRefused(f"{Path(path).name!r} is not a file there") from None
