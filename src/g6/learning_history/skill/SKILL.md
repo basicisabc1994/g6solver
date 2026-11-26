@@ -70,25 +70,35 @@ request for the client's dialog, never permission for an agent to accept it:
 {"repo": "/absolute/local/repository"}
 ```
 
-This offline example runs from a G6 source checkout. It reads that checkout's repository identity through the
-checked reply function used by `g6_invoke` with a fresh temporary `G6_HOME`; the existing home is restored
-afterwards. It creates no git repository, records no outcomes and requests no deletion. To inspect your own history, supply its absolute
-repository root and keep your normal `G6_HOME` instead.
+This offline example creates a temporary local git repository with one empty commit, and lists its history through
+the checked reply function used by `g6_invoke` with a fresh temporary `G6_HOME`. It needs no installed source checkout
+or existing git identity configuration. The temporary repository is removed and the existing home restored afterwards.
+It records no outcomes and requests no deletion. To inspect your own history, supply its absolute repository root and
+keep your normal `G6_HOME` instead.
 
 ```python
 import json
 import os
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import g6
+from g6.core import git_env
 from g6.mcp import invoke_reply as g6_invoke
 
 
 def inspect_history():
-    repository = Path(g6.__file__).resolve().parents[2]
     with TemporaryDirectory(prefix="g6-history-") as scratch:
+        repository = Path(scratch) / "repo"
+        repository.mkdir()
+        with git_env.safe_git(repository) as environment:
+            for args in (("init", "--quiet"),
+                         ("-c", "user.name=Skill Fixture", "-c", "user.email=skill@example.invalid",
+                          "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--no-verify",
+                          "--quiet", "-m", "offline history fixture")):
+                subprocess.run([git_env.git_program(), "-C", str(repository), *args],
+                               env=environment, check=True, capture_output=True, timeout=30)
         home = Path(scratch) / "home"
         with patch.dict(os.environ, {"G6_HOME": str(home)}):
             value = g6_invoke("learning_history", "list", json.dumps({"repo": str(repository)}))
