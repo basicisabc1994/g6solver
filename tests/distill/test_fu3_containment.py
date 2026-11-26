@@ -1234,3 +1234,121 @@ def test_repair2_amendment2_failed_staging_cleanup_keeps_ownership(home, monkeyp
     assert distill._call(surface.library) == {'entries': []}
     assert not copy.exists() and not ledger._intent_path().exists()
     assert target.read_bytes() == b'before'
+
+
+@pytest.mark.parametrize('refusals', [1, 2], ids=['intent_refused_once', 'intent_refused_again_on_undo'])
+def test_repair3_rollback_never_declares_a_target_missing_from_writes(home, monkeypatch, refusals):
+    first, second = (state_path('distill', name) for name in ('first.dat', 'second.dat'))
+    first.write_bytes(b'first before')
+    second.write_bytes(b'second before')
+    replace, failed = os.replace, []
+
+    def refuse(source, destination):
+        if Path(destination) == ledger._intent_path() and len(failed) < refusals:
+            body = json.loads(Path(source).read_bytes())['body']
+            if any(row['path'] == 'distill/second.dat' for row in body['writes']):
+                failed.append(True)
+                raise PermissionError('intent publication refused')
+        return replace(source, destination)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(os, 'replace', refuse)
+        with pytest.raises(OSError):
+            with ledger.failure_writer():
+                ledger.retain_before_write(first, after=b'changed')
+                first.write_bytes(b'changed')
+                ledger.retain_before_write(second, after=b'never written')
+    assert len(failed) == refusals
+    assert distill._call(surface.library) == {'entries': []}
+    assert first.read_bytes() == b'first before' and second.read_bytes() == b'second before'
+    assert not ledger._intent_path().exists()
+
+
+@pytest.mark.parametrize('boundary', ['receipt', 'own_cleanup', 'other_cleanup'])
+def test_repair3_every_interrupted_live_reservation_closes(tmp_path, monkeypatch, boundary):
+    entry, decide = repair2_restore_door(tmp_path, monkeypatch)
+    replace, unlink, assess = os.replace, Path.unlink, gate._assess
+    failed, planned, other = [], [], []
+
+    def refuse_receipt(source, destination):
+        if boundary == 'receipt' and Path(destination) == ledger._intent_path() and not failed:
+            body = json.loads(Path(source).read_bytes())['body']
+            if not body['committed'] and 'undo_staging' not in body and [
+                    row['path'] for row in body['writes']] == ['distill/acceptance_gate.jsonl']:
+                planned.append(True)
+                if len(planned) == 2:
+                    failed.append(True)
+                    raise PermissionError('receipt intent refused')
+        return replace(source, destination)
+
+    def refuse_cleanup(path, *args, **kwargs):
+        if boundary != 'receipt' and path == ledger._intent_path() and path.exists() and len(failed) < 3:
+            body = json.loads(path.read_bytes())['body']
+            names = [row['path'] for row in body['writes']]
+            wanted = names == ['distill/acceptance_gate.jsonl'] if boundary == 'own_cleanup' else (
+                'distill/failure.jsonl' in names)
+            if body['committed'] and wanted:
+                failed.append(True)
+                raise PermissionError('committed intent held')
+        return unlink(path, *args, **kwargs)
+
+    def evaluate(*args, **kwargs):
+        if boundary == 'other_cleanup' and not other:
+            other.append(distill._call(surface.failure_record, 'user_request', 'capability_extension',
+                                       '{"repo": ""}', 'another caller'))
+        return assess(*args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(os, 'replace', refuse_receipt)
+        fault.setattr(Path, 'unlink', refuse_cleanup)
+        fault.setattr(gate, '_assess', evaluate)
+        reply = asyncio.run(decide(entry.entry_id, 'restore', 'restore it', object()))
+    assert failed
+    rows = gate._journal().entries()
+    [reserve] = [row for row in rows if row['kind'] == 'reserve']
+    assert any(row['kind'] == 'decision' and row['body'].get('reservation') == reserve['id'] for row in rows)
+    assert reserve['id'] in str(reply.get('committed_steps'))
+    assert 'before any state change' not in reply['rollback_or_containment'].lower()
+    assert reply['publication_committed'] is False and Library().list() == [entry]
+    retry = asyncio.run(decide(entry.entry_id, 'restore', 'restore it', object()))
+    assert retry['verdict'] == 'admit_probation'
+
+
+def test_repair3_server_jobs_render_distill_committed_steps(home, monkeypatch):
+    from g6.distill.records import CapabilityExtension, FailureRecord
+    from g6.metaharness.jobs import Jobs
+
+    jobs, found = Jobs(), {}
+
+    class Server:
+        def tool(self):
+            return lambda fn: found.setdefault(fn.__name__, fn)
+
+    distill.register(Server(), object, jobs)
+    failed = repair1_cleanup_failures(monkeypatch, times=1)
+    pending = found['g6_extend']('Check migrations', '')
+    jobs.close()
+    reply = found['g6_distill_job'](pending['job_id'], 'full')
+    assert len(failed) == 1
+    [gap] = ledger.Stores().for_model(FailureRecord).list()
+    [request] = ledger.Stores().for_model(CapabilityExtension).list()
+    assert reply['publication_committed'] is True
+    assert [step['id'] for step in reply['committed_steps']] == [gap.record_id, request.content_id]
+    assert reply['durable_state'] and 'before any state change' not in reply['rollback_or_containment'].lower()
+
+
+@pytest.mark.parametrize('torn', [b'', b'par'], ids=['empty_copy', 'torn_copy'])
+def test_repair3_declared_undo_is_owned_even_before_its_bytes_finish(home, torn):
+    target = state_path('distill', 'retained.dat')
+    target.write_bytes(b'half-published')
+    owned = target.parent / '.authority-undo-33333333333333333333333333333333'
+    unowned = target.parent / '.authority-undo-44444444444444444444444444444444'
+    owned.write_bytes(torn)
+    unowned.write_bytes(torn)
+    body = {'version': 1, 'committed': False, 'writes': [undo('distill/retained.dat', b'before')],
+            'undo_staging': [{'path': owned.relative_to(home).as_posix(), 'target': 'distill/retained.dat'}]}
+    ledger._intent_path().write_text(canonical({'body': body, 'sha256': digest(body)}) + '\n', encoding='utf-8')
+    assert distill._call(surface.library) == {'entries': []}
+    assert not owned.exists()
+    assert unowned.read_bytes() == torn and target.read_bytes() == b'before'
+    assert not ledger._intent_path().exists()
