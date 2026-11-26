@@ -63,17 +63,20 @@ _TAIL = 8000
 
 
 def find_swipl() -> str:
-    """The ``swipl`` program: ``G6_SWIPL`` when it is set, else ``swipl`` on PATH. Refused when there is none."""
+    """The ``swipl`` program: ``G6_SWIPL`` when it is set, else ``swipl`` on PATH. Refused when there is none. The
+    refusal is the agent's to read, so it does not name the setting (the person's install steps, ``INSTALL_SWIPL``, do),
+    as ``g6.lean.runner.find_lean``'s does not."""
     named = os.environ.get(SWIPL_ENV, "").strip()
     if named:
         found = find_program(named) or (named if Path(named).is_file() else None)
         if not found:
-            raise Refusal(SWIPL_MISSING, f"{SWIPL_ENV} names {named}, which is not a program here; G6 never installs "
-                                         "SWI-Prolog")
+            raise Refusal(SWIPL_MISSING, f"a setting named in G6's documentation names {named}, which is not a program "
+                                         "here; G6 never installs SWI-Prolog")
         return found
     found = find_program("swipl")
     if not found:
-        raise Refusal(SWIPL_MISSING, f"no swipl on PATH and {SWIPL_ENV} is not set; G6 never installs SWI-Prolog")
+        raise Refusal(SWIPL_MISSING, "no swipl on PATH and no setting named in G6's documentation names one; G6 never "
+                                     "installs SWI-Prolog")
     return found
 
 
