@@ -265,6 +265,8 @@ def _refused_grant(repo, monkeypatch):
         return found
 
     monkeypatch.setattr(confine, "plan", plan)
+    # the refusal is the case where nobody allowed unconfined runs; the Windows CI job allows them for the whole job
+    monkeypatch.delenv(confine.ALLOW, raising=False)
     monkeypatch.setattr(repo_tests, "_bounded", lambda *a, **k: pytest.fail("refused tests started"))
     with pytest.raises(repo_tests.RepoRefused) as caught:
         repo_tests.run(repo, ["tests/test_calc.py"])
