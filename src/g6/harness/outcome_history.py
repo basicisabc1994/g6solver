@@ -484,6 +484,8 @@ def _judged_its_own_way(instance) -> bool:
     try:
         one = vt.TemplateInstance.model_validate({'id': 'retained', **instance})
         return bool(vt.REGISTRY[one.template].formal) or vt.multi_step(one)
+    except LETS_THROUGH:
+        raise
     except Exception:  # noqa: BLE001 - an instance G6 cannot read again is not judged generically either
         return True
 
