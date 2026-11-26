@@ -40,6 +40,7 @@ from g6.research.echa import (
     evaluate_claim,
 )
 from g6.research.echa.records import UNSEALED
+from g6.research.echa.custody import about
 
 from .fixtures import standard_body
 from .flag import require_research
@@ -272,7 +273,7 @@ def build_bundle(ir: MissionIR, standard: StandardRef, claims: Sequence[ClaimSpe
     if refused:
         raise BundleRefused(refused)
     try:
-        for digest in sorted({r.fixture_version for r in records.values() if r.fixture_version != UNSEALED}):
+        for digest in sorted({about(r)[0].fixture for r in records.values() if about(r)[0].fixture != UNSEALED}):
             ledger.add_vault(f"vault-{digest[:12]}", digest, files=1, roots=1)
         ordered = sorted(observations, key=lambda o: o.purpose != "negative_control")  # a control precedes the check it backs
         for obs in ordered:
