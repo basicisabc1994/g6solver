@@ -131,7 +131,8 @@ def _handler(path, function):
     record = {}
     namespace = dict(json=json, UndecodableRecord=UndecodableRecord, is_undecodable_record=is_undecodable_record,
                      Undecodable=Undecodable, Refusal=Refusal, OUTPUT_UNRECOGNISED=OUTPUT_UNRECOGNISED,
-                     blocked_reply=blocked_reply, record=record, run=SimpleNamespace(output="unreadable"), _TAIL=8000)
+                     blocked_reply=blocked_reply, request_id="decoder-refusal-test", record=record,
+                     run=SimpleNamespace(output="unreadable"), _TAIL=8000)
     # json_value in a pure copy must use that copy's own predicate.
     if path in IMPLEMENTATIONS:
         namespace.update(vars(_module(path)))
@@ -166,6 +167,8 @@ def test_each_handler_handles_refusals_from_every_copy(sender, site):
     else:
         reply = handle(error)
         assert reply["completion_state"] == "blocked-escalated"
+        if site == ("src/g6/mcp/__init__.py", "invoke_reply"):
+            assert reply["request_id"] == "decoder-refusal-test"
         assert ("G6_E_INPUT_VALIDATION" if policy == "input" else "G6_E_META_SCHEMA") in json.dumps(reply)
 
 
