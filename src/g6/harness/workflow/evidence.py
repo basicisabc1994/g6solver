@@ -41,10 +41,11 @@ def source_digests(root, checks: Iterable[str]) -> dict[str, str]:
 def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
     """Bind test machinery before execution, without importing repository code.
 
-    Follow definitions, decorators, requested fixtures and parametrization sources.
-    Imports used only in bodies are product dependencies, not check identity. Whole
-    files (including conftests and re-export chains) are hashed; unresolved machinery
-    withholds identity. Oracle calls hidden in product bodies remain outside scope.
+    R3': follow code that runs at collection, including called helper bodies;
+    recognised fixtures, collected tests and returned test wrappers run at test time.
+    R3'-u: unused imports count only in pytest's attribute-collecting modules.
+    Whole files are hashed; unresolved machinery withholds identity. Oracle calls
+    hidden in product bodies remain outside scope.
     """
     top = Path(root).resolve()
     checks = list(checks)
@@ -122,7 +123,10 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
 
     def identity(file):
         files, scanned, active, done = {}, set(), set(), set()
+        dependency_scanned = set()
+        function_active = set()
         classes = []
+        collected_classes = set()
         plugins, plugin_scanned = [], set()
         collector = top / file
         conftests = []
@@ -131,7 +135,7 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 conftests.append(folder / "conftest.py")
 
         def collection_statements(path, tree, bindings):
-            if "*" in bindings or any(
+            if "*" in bindings or "__getattr__" in bindings or any(
                     name.startswith("pytest_") and name not in {"pytestmark", "pytest_plugins"} for name in bindings):
                 raise ValueError("runtime collection machinery")
             for statement in tree.body:
@@ -181,7 +185,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 resolve(path, ("pytestmark",), "mark")
             for name in parsed[2]:
                 if name.startswith("test_") or name.startswith("Test"):
-                    resolve(path, (name,), "test")
+                    if path in (collector, *conftests, *plugins):
+                        resolve(path, (name,), "test")
                 elif name == "pytestmark":
                     continue  # fixture names resolve in each test's collecting scope
                 elif fixture_options(path, name).get("autouse"):
@@ -288,7 +293,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     if node.id in read(path)[2]:
                         resolve(path, (node.id,), role)
                     elif node.id not in {"True", "False", "None", "range", "list", "tuple", "dict", "set",
-                                         "str", "int", "float", "bool", "len", "enumerate", "zip"}:
+                                         "str", "int", "float", "bool", "len", "enumerate", "zip",
+                                         "type", "object", "super", "isinstance"}:
                         raise ValueError("unresolved machinery name")
                 return
             if isinstance(node, ast.Attribute):
@@ -305,10 +311,17 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     raise ValueError("dynamic machinery")
                 if isinstance(node.func, ast.Attribute) and node.func.attr in {"import_module", "exec_module"}:
                     raise ValueError("dynamic machinery import")
-                if role != "mark" and qualified(path, node.func) == "pytest.mark.usefixtures":
+                if (role != "mark" or classes) and qualified(path, node.func) == "pytest.mark.usefixtures":
+                    # Module marks are first read before collecting classes exist.
+                    # Bind their fixtures in each test/class scope; inherited class
+                    # marks can resolve immediately with the active collecting MRO.
                     for argument in node.args:
                         for name in strings(argument):
                             fixture(path, name)
+                expression(path, node.func, "decorator_factory" if role == "decorator" else "call", locals_)
+                for argument in (*node.args, *(k.value for k in node.keywords)):
+                    expression(path, argument, "value", locals_)
+                return
             if isinstance(node, ast.Lambda):
                 for default in (*node.args.defaults, *node.args.kw_defaults):
                     if default is not None:
@@ -328,18 +341,182 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
 
         def qualified(path, node, seen=frozenset()):
             """Recognize pytest decorator aliases without evaluating them."""
-            if isinstance(node, ast.Attribute):
-                return qualified(path, node.value, seen) + "." + node.attr
-            if isinstance(node, ast.Name) and node.id not in seen:
-                binding = read(path)[2].get(node.id)
-                if binding and binding[0] == "import":
-                    return binding[1]
-                if binding and binding[0] == "from" and not binding[1][0].level:
-                    source, name = binding[1]
-                    return (source.module or "") + "." + name
-                if binding and binding[0] == "value":
-                    return qualified(path, binding[1], seen | {node.id})
+            try:
+                parts = parts_of(node)
+            except ValueError:
+                return ""
+            key = path, parts
+            if key in seen:
+                return ""
+            seen = seen | {key}
+            binding = read(path)[2].get(parts[0])
+            if not binding:
+                return ""
+            kind, value = binding
+            if kind in {"import", "from"}:
+                if kind == "from":
+                    source, name = value
+                    imported = module(path, source.module or "", source.level)
+                    tail = (name, *parts[1:])
+                    prefix = source.module or ""
+                    if imported is None and source.level:
+                        return ""
+                else:
+                    imported, tail, prefix = module(path, value), parts[1:], value
+                if imported is None:
+                    return ".".join((prefix, *tail))
+                if tail:
+                    if tail[0] not in read(imported)[2] and imported.name == "__init__.py":
+                        imported = module(imported, tail[0], 1)
+                        tail = tail[1:]
+                    if imported is not None and tail:
+                        target = ast.Name(id=tail[0])
+                        for part in tail[1:]:
+                            target = ast.Attribute(value=target, attr=part)
+                        return qualified(imported, target, seen)
+            if kind == "value" and isinstance(value, (ast.Name, ast.Attribute)):
+                target = value
+                for part in parts[1:]:
+                    target = ast.Attribute(value=target, attr=part)
+                return qualified(path, target, seen)
             return ""
+
+        def dependencies(path, node, locals_=frozenset(), nested=None):
+            """Read collection-time dependencies, never execute candidate code.
+
+            Uncalled function bodies are deferred. A collection call promotes its
+            body, while a returned decorator wrapper's body stays deferred.
+            """
+            nested = nested or {}
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                raise ValueError("unresolved collection scope mutation")
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+                    raise ValueError("unresolved star import")
+                # Function-local imports need lexical binding resolution that the
+                # module table cannot provide. Refuse rather than omit a source.
+                if locals_:
+                    raise ValueError("unresolved collection-local import")
+                return
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for decorator in node.decorator_list:
+                    expression(path, decorator, "decorator", locals_)
+                annotations = [a.annotation for a in (*node.args.posonlyargs, *node.args.args,
+                                                       *node.args.kwonlyargs)]
+                annotations += [a.annotation for a in (node.args.vararg, node.args.kwarg) if a]
+                for header in (*node.args.defaults, *node.args.kw_defaults, *annotations, node.returns):
+                    if header is not None:
+                        dependencies(path, header, locals_, nested)
+                return
+            if isinstance(node, ast.ClassDef):
+                scope = (path[0] if isinstance(path, tuple) else path, node)
+                collecting = scope in collected_classes
+                if collecting:
+                    classes.append(scope)
+                try:
+                    for decorator in node.decorator_list:
+                        expression(path, decorator, "decorator", locals_)
+                    for base in node.bases:
+                        expression(path, base, "base", locals_)
+                    for keyword in node.keywords:
+                        expression(path, keyword.value, "metaclass" if keyword.arg == "metaclass" else "value")
+                    for statement in node.body:
+                        dependencies(scope, statement, locals_, nested)
+                    unused_imports(scope, node, bindings_in(node.body))
+                finally:
+                    if collecting:
+                        classes.pop()
+                return
+            if isinstance(node, ast.Call):
+                target = node.func
+                if isinstance(target, ast.Name) and target.id in nested:
+                    collection_function(path, nested[target.id], "call", locals_, nested)
+                else:
+                    try:
+                        parts = parts_of(target)
+                    except ValueError:
+                        parts = ()
+                    if parts and parts[0] not in locals_ and parts[0] in read(path)[2]:
+                        resolve(path, parts, "call")
+                    elif parts and parts[0] in locals_:
+                        raise ValueError("unresolved collection callable")
+                if (isinstance(target, ast.Name) and target.id in {
+                        "exec", "eval", "__import__", "getattr", "setattr", "delattr", "globals", "locals", "vars", "compile"}
+                        or isinstance(target, ast.Attribute) and target.attr in {"import_module", "exec_module"}):
+                    raise ValueError("dynamic collection machinery")
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                try:
+                    parts = parts_of(node)
+                except ValueError:
+                    parts = ()
+                if parts and parts[0] not in locals_ and parts[0] in read(path)[2]:
+                    if not isinstance(node, ast.Name) or isinstance(node.ctx, ast.Load):
+                        resolve(path, parts, "value")
+                    return
+            for child in ast.iter_child_nodes(node):
+                dependencies(path, child, locals_, nested)
+
+        def collection_function(path, node, role, outer=frozenset(), nested=None):
+            key = path, node
+            if key in function_active:
+                raise ValueError("cyclic collection call")
+            function_active.add(key)
+            try:
+                local = bindings_in(node.body)
+                nested = {**(nested or {}), **{name: value for name, (kind, value) in local.items()
+                                              if kind == "definition" and not isinstance(value, ast.ClassDef)}}
+                names = outer | set(local) | {a.arg for a in (*node.args.posonlyargs, *node.args.args,
+                                                            *node.args.kwonlyargs)}
+                names |= {a.arg for a in (node.args.vararg, node.args.kwarg) if a}
+                for statement in node.body:
+                    dependencies(path, statement, names, nested)
+                # A function referenced/returned by collection code can execute as
+                # machinery too. Only the decorator's returned inner wrapper gets
+                # the explicit test-time exception in R3'.
+                returned = {n.value.id for n in ast.walk(node) if isinstance(n, ast.Return)
+                            and isinstance(n.value, ast.Name)}
+                if role != "decorator":
+                    for name in returned & nested.keys():
+                        collection_function(path, nested[name],
+                                            "decorator" if role == "decorator_factory" else "call", names, nested)
+            finally:
+                function_active.remove(key)
+
+        def name_loads(node, bound=frozenset()):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                body = [node.body] if isinstance(node, ast.Lambda) else node.body
+                headers = [*node.args.defaults, *node.args.kw_defaults]
+                if not isinstance(node, ast.Lambda):
+                    headers += node.decorator_list
+                used = set().union(*(name_loads(h, bound) for h in headers if h is not None))
+                names = {a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
+                names |= {a.arg for a in (node.args.vararg, node.args.kwarg) if a}
+                names |= set(bindings_in(body))
+                names -= {name for n in body if isinstance(n, ast.Global) for name in n.names}
+                return used | set().union(*(name_loads(n, bound | names) for n in body))
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                return {node.id} - bound
+            return set().union(*(name_loads(child, bound) for child in ast.iter_child_nodes(node)))
+
+        def unused_imports(path, tree, bindings):
+            owner = path[0] if isinstance(path, tuple) else path
+            if owner in (collector, *conftests, *plugins) or path in collected_classes:
+                # Pytest inspects these module attributes even without a lexical
+                # use, including inherited class registrations (F2). Defining
+                # modules themselves do not get this exception (R3'-u).
+                used = set().union(*(name_loads(n) for n in tree.body))
+                for name, (kind, value) in bindings.items():
+                    if kind not in {"from", "import"} or name in used:
+                        continue
+                    source = module(path, value[0].module or "", value[0].level) if kind == "from" else module(path, value)
+                    if source is not None:
+                        resolve(path, (name,), "value")
+
+        def scan_dependencies(path):
+            _, tree, bindings = read(path)
+            for statement in tree.body:
+                dependencies(path, statement)
+            unused_imports(path, tree, bindings)
 
         def fixture_options(path, name):
             """Discover explicit fixture registration through static re-exports."""
@@ -412,6 +589,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
         def definition(path, node, role, inherited=frozenset()):
             if isinstance(node, ast.ClassDef):
                 scope = (path[0] if isinstance(path, tuple) else path, node)
+                if role == "test":
+                    collected_classes.add(scope)
                 classes.append(scope)
                 try:
                     inspect_definition(path, node, role, inherited)
@@ -427,11 +606,17 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 expression(path, ast.Name(id="pytestmark"))
                 direct.update(mark_names(path, ast.Name(id="pytestmark")))
             for decorator in node.decorator_list:
-                expression(path, decorator)
+                expression(path, decorator, "decorator")
                 direct.update(mark_names(path, decorator))
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
-                    expression(path, base, "test")
+                    if not isinstance(base, ast.Name) or base.id not in {"object", "type"}:
+                        expression(path, base, "test" if role == "test" else
+                                   role if role in {"call", "metaclass", "base"} else "value")
+                        if role == "test":
+                            expression(path, base, "base")
+                for keyword in node.keywords:
+                    expression(path, keyword.value, "metaclass" if keyword.arg == "metaclass" else "value")
                 scope = classes[-1]
                 local = bindings_in(node.body)
                 collection_statements(scope, node, local)
@@ -443,7 +628,10 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                     if mark[0] == "value":
                         direct.update(mark_names(scope, mark[1]))
                 for name in local:
-                    if fixture_options(scope, name).get("autouse"):
+                    if (role in {"call", "metaclass"} or role == "base" and name == "__init_subclass__"
+                            ) and local[name][0] == "definition":
+                        definition(scope, local[name][1], "call")
+                    elif fixture_options(scope, name).get("autouse"):
                         resolve(scope, (name,), "fixture")
                     elif name.startswith("test_") or name.startswith("Test"):
                         binding = local[name]
@@ -455,6 +643,8 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             for default in (*node.args.defaults, *node.args.kw_defaults):
                 if default is not None:
                     expression(path, default)
+            if role in {"call", "decorator", "decorator_factory", "metaclass"}:
+                collection_function(path, node, role)
             if role in {"test", "fixture"}:
                 for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
                     if arg.arg not in direct | {"self", "cls"}:
@@ -498,8 +688,14 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                             resolve(imported, tail, role)
                     elif role in {"test", "fixture"}:
                         raise ValueError("module is not a test or fixture definition")
-            elif kind == "definition" and len(parts) == 1:
-                definition(path, value, role)
+            elif kind == "definition":
+                if len(parts) == 1:
+                    definition(path, value, role)
+                elif isinstance(value, ast.ClassDef):
+                    source = path[0] if isinstance(path, tuple) else path
+                    resolve((source, value), parts[1:], role)
+                else:
+                    raise ValueError("unresolved function attribute")
             elif kind == "value" and len(parts) == 1:
                 if value is None or any(
                         isinstance(n, (ast.Await, ast.NamedExpr)) or isinstance(n, ast.Call)
@@ -522,6 +718,12 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
                 include(path)
             for path in plugins:
                 include(path)
+            # Resolve object roles first, then inspect all import/class-time code.
+            # Newly reached files join the same pass until there is no new source.
+            while pending := set(files) - dependency_scanned:
+                for path in sorted(pending):
+                    dependency_scanned.add(path)
+                    scan_dependencies(path)
             if len(files) == 1:
                 return next(iter(files.values()))
             return digest(sorted((p.relative_to(top).as_posix(), sha) for p, sha in files.items()))
@@ -601,13 +803,27 @@ def review_data(assessment: Mapping, repo=None) -> dict:
                     verdict = "changed_code_not_loaded"
                 statuses.setdefault(str(check["id"]), []).append(verdict)
     sources, captured, executed_names = {}, set(), set()
+    withheld_sources, legacy_selections = set(), set()
+    has_capture = False
     for run in runs:
-        sources.update(run.get("check_sources") or {})
+        for name, source in (run.get("check_sources") or {}).items():
+            if not source or name in sources and sources[name] != source:
+                withheld_sources.add(name)
+            sources[name] = source
         if "check_sources" in run:
+            has_capture = True
             captured.update(run.get("tests") or [])
+        else:
+            legacy_selections.update([*(run.get("tests") or []), *(run.get("executed_outcomes") or {})])
         for name, verdict in (run.get("executed_outcomes") or {}).items():
             statuses.setdefault(name, []).append(verdict)
             executed_names.add(name)
+            if "check_sources" in run and name not in (run.get("check_sources") or {}):
+                if any(report_covers(c, name) for c in run.get("tests") or []):
+                    # Preserve the existing refusal of malformed captures within
+                    # their declared scope; do not manufacture bytes after a run.
+                    raise ValueError("executed check source identity was not captured")
+                withheld_sources.add(name)
     # A file/class selection is not an additional test beside its observed nodes.
     statuses = {name: values for name, values in statuses.items() if name in executed_names
                 or not any(report_covers(name, node) for node in executed_names)}
@@ -616,6 +832,10 @@ def review_data(assessment: Mapping, repo=None) -> dict:
     terminal = {n: terminal[n] for n in sorted(terminal) if terminal[n] in ("passed", "failed")}
     if any(n not in sources and any(report_covers(c, n) for c in captured) for n in terminal):
         raise ValueError("executed check source identity was not captured")
+    if has_capture:
+        withheld_sources.update(n for n in terminal if n not in sources
+                                and not any(report_covers(c, n) for c in legacy_selections))
+    sources.update(dict.fromkeys(withheld_sources, ""))
     retained = dict(list(terminal.items())[:50])
     failed = sorted(sha256(n) for n, v in retained.items() if v == "failed")
     passed = sorted(sha256(n) for n, v in retained.items() if v == "passed")

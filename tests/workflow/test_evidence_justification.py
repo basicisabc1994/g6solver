@@ -1163,3 +1163,359 @@ def test_executed_outcomes_without_capture_drive_shared_review_totals():
         card = patch_report.card({"workflow_evidence": evidence.bundle([row])})
         assert data["reproduced"] == shared["reproduced"] == shared["open"] == 2
         assert card["caught"]["reproduced"] == card["open"] == record_md.counts([row])["reproduced"] == 2
+
+
+# Repair 2 amendment 2: written first; NO-LANE leaves execution to the lead.
+def test_remapped_executed_identity_stays_incomplete_after_capture():
+    from dataclasses import replace
+
+    from g6.harness import patch_review
+    from g6.harness.workflow import record_md
+    from tests.harness.test_patch_review import result
+    from tests.workflow.kit import event
+
+    node = "virtual.py::test_case"
+    rows = []
+    for number, verdict in enumerate(("failed", "passed")):
+        value = assessment()
+        value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": verdict}]}]
+        value["scope"]["checks_run"] = [patch_review._record(
+            1, "checks", ["test_case.py"], result(**{verdict: [node]}), sources={"test_case.py": ""})]
+        data = evidence.review_data(value)
+        assert data["source_incomplete_sha256"] == [sha(node)]
+        rows.append(replace(event(str(number) * 32, "review_finished", seconds=number, data=data),
+                            artifact_sha256=sha(str(number))))
+    card = patch_report.card({"workflow_evidence": evidence.bundle(rows)})
+    # Incomplete identity is not known evidence: the card shows both counts as unknown (committed card contract).
+    assert card["repaired"] is None and card["open"] is None
+    assert record_md.counts(rows)["repaired"] == 0
+    assert record_md.counts(rows)["open"] == 1
+
+
+def test_inherited_usefixtures_tracks_the_requested_fixture(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from base import Base\nfrom oracle import observed\n"
+        "class TestCase(Base):\n    def test_case(self): pass\n", encoding="utf-8")
+    (repo / "base.py").write_text(
+        "import pytest\nclass Base:\n    pytestmark = pytest.mark.usefixtures('observed')\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    oracle.write_text("import pytest\n@pytest.fixture\ndef observed(): pass\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    oracle.write_text("import pytest\n@pytest.fixture\ndef observed(): assert False\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_reexported_fixture_decorator_binds_autouse_source(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from oracle import automatic\ndef test_case(): pass\n", encoding="utf-8")
+    (repo / "fixture_api.py").write_text("from pytest import fixture as register\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    source = "from fixture_api import register\n@register(autouse=True)\ndef automatic(): pass\n"
+    oracle.write_text(source, encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    oracle.write_text(source + "# changed fixture\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_parametrization_factory_return_data_binds_transitively(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "import pytest\nfrom factory import cases\n"
+        "@pytest.mark.parametrize('value', cases())\ndef test_case(value): pass\n", encoding="utf-8")
+    (repo / "factory.py").write_text("from oracle import EXPECTED\ndef cases(): return EXPECTED\n", encoding="utf-8")
+    oracle = repo / "oracle.py"
+    oracle.write_text("EXPECTED = [2]\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    oracle.write_text("EXPECTED = [3]\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_class_keyword_metaclass_sources_bind_transitively(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from oracle import Meta\nclass TestCase(metaclass=Meta):\n    def test_case(self): pass\n", encoding="utf-8")
+    (repo / "oracle.py").write_text(
+        "from data import VALUE\nclass Meta(type):\n"
+        "    def __new__(mcls, name, bases, namespace):\n"
+        "        namespace['expected'] = VALUE\n        return super().__new__(mcls, name, bases, namespace)\n",
+        encoding="utf-8")
+    data = repo / "data.py"
+    data.write_text("VALUE = 2\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    data.write_text("VALUE = 3\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_body_only_product_change_preserves_collector_identity(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from product import VALUE\ndef test_case(): assert VALUE == 2\n", encoding="utf-8")
+    product = repo / "product.py"
+    product.write_text("VALUE = 3\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+
+
+def test_imported_test_and_fixture_body_only_product_stays_outside_identity(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "checks_impl.py").write_text(
+        "from product import VALUE\ndef case(): assert VALUE == 2\n", encoding="utf-8")
+    (repo / "forwarding.py").write_text("from checks_impl import case\n", encoding="utf-8")
+    (repo / "fixtures.py").write_text(
+        "from pytest import fixture\nfrom product import VALUE\n@fixture\ndef observed(): return VALUE\n",
+        encoding="utf-8")
+    product = repo / "product.py"
+    for source in ("from forwarding import case as test_case\n",
+                   "from fixtures import observed\ndef test_case(observed): assert observed == 2\n"):
+        (repo / "test_case.py").write_text(source, encoding="utf-8")
+        product.write_text("VALUE = 3\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        product.write_text("VALUE = 2\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) == before
+
+
+def test_unused_imports_bind_only_pytest_attribute_collectors(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    product = repo / "product.py"
+    # Dropping unused names globally misses pytest registrations; adding them
+    # globally incorrectly binds the fixture's unused product import (R3'-u).
+    for scope in ("collector", "conftest", "plugin", "class", "shadowed", "fixture"):
+        for name in ("conftest.py", "plugin.py", "oracle.py"):
+            (repo / name).write_text("", encoding="utf-8")
+        collector = "def test_case(): pass\n"
+        if scope == "collector":
+            collector = "import product\n" + collector
+        elif scope == "class":
+            collector = "class TestCase:\n    import product\n    def test_case(self): pass\n"
+        elif scope == "shadowed":
+            collector = "import product\ndef helper(product): return product\n" + collector
+        elif scope == "fixture":
+            collector = "from oracle import observed\ndef test_case(observed): pass\n"
+            (repo / "oracle.py").write_text(
+                "import pytest\nimport product\n@pytest.fixture\ndef observed(): pass\n", encoding="utf-8")
+        else:
+            (repo / f"{scope if scope == 'conftest' else 'plugin'}.py").write_text(
+                "import product\n", encoding="utf-8")
+            if scope == "plugin":
+                collector = "pytest_plugins = ['plugin']\n" + collector
+        (repo / "test_case.py").write_text(collector, encoding="utf-8")
+        product.write_text("VALUE = 3\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        product.write_text("VALUE = 2\n", encoding="utf-8")
+        after = evidence.capture_sources(repo, ["test_case.py"])
+        assert after["test_case.py"]
+        assert (after == before) == (scope == "fixture"), scope
+
+
+def test_collection_calls_bind_helpers_but_returned_test_wrappers_do_not(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from decorators import checked\n@checked\ndef test_case(): pass\n", encoding="utf-8")
+    (repo / "decorators.py").write_text(
+        "from product import VALUE\nfrom helper import prepare\ndef checked(fn):\n"
+        "    prepare()\n    def wrapped():\n        assert VALUE == 2\n        fn()\n"
+        "    return wrapped\n", encoding="utf-8")
+    (repo / "helper.py").write_text("from data import EXPECTED\ndef prepare(): return EXPECTED\n", encoding="utf-8")
+    product = repo / "product.py"
+    data = repo / "data.py"
+    product.write_text("VALUE = 3\n", encoding="utf-8")
+    data.write_text("EXPECTED = 2\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+    data.write_text("EXPECTED = 3\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_module_attribute_fixture_reexport_preserves_body_boundary(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from oracle import automatic\ndef test_case(): pass\n", encoding="utf-8")
+    (repo / "fixture_api.py").write_text("from pytest import fixture as register\n", encoding="utf-8")
+    (repo / "oracle.py").write_text(
+        "import fixture_api as api\nfrom product import VALUE\n"
+        "@api.register(autouse=True)\ndef automatic(): return VALUE\n", encoding="utf-8")
+    product = repo / "product.py"
+    product.write_text("VALUE = 3\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+    oracle = repo / "oracle.py"
+    oracle.write_text(oracle.read_text(encoding="utf-8") + "# changed fixture\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_unresolved_collection_helpers_withhold_identity(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from oracle import checked\n@checked\ndef test_case(): pass\n", encoding="utf-8")
+    for source in (
+        "def __getattr__(name): return lambda fn: fn\n",
+        "def checked(fn):\n    exec('value = 2')\n    return fn\n",
+        "def checked(fn):\n    fn()\n    return fn\n",
+        "def checked(fn):\n    fn.prepare()\n    return fn\n",
+    ):
+        (repo / "oracle.py").write_text(source, encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) == {"test_case.py": ""}
+
+
+def test_remapped_requirement_and_mixed_captures_never_become_legacy():
+    from g6.harness import patch_review
+    from tests.harness.test_patch_review import result
+
+    node = "virtual.py::test_case"
+    value = assessment()
+    value["requirements"] = [{"id": "R1", "checks": [{"id": node, "verdict": "passed"}]}]
+    # A retained producer can have only aggregate outcomes. The requirement's
+    # remapped terminal id is still not evidence from before source capture.
+    value["scope"]["checks_run"] = [patch_review._record(
+        1, "checks", ["test_case.py"], {"verdict": "passed", "passed": 1}, sources={"test_case.py": ""})]
+    assert evidence.review_data(value)["source_incomplete_sha256"] == [sha(node)]
+    # A later observation in the same assessment cannot erase an explicit gap.
+    value["scope"]["checks_run"] = [
+        patch_review._record(1, "checks", [node], result(passed=[node]), sources={node: ""}),
+        patch_review._record(1, "checks", [node], result(passed=[node]), sources={node: sha("source")}),
+    ]
+    assert evidence.review_data(value)["source_incomplete_sha256"] == [sha(node)]
+    assert evidence.review_data(value)["check_sources_sha256"] == []
+
+
+def test_decorator_factory_runs_returned_decorator_at_collection(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from oracle import checked\n@checked()\ndef test_case(): pass\n", encoding="utf-8")
+    (repo / "oracle.py").write_text(
+        "from data import EXPECTED\nfrom product import VALUE\ndef checked():\n"
+        "    def decorate(fn):\n        assert EXPECTED == 2\n"
+        "        def wrapped():\n            assert VALUE == 2\n            fn()\n"
+        "        return wrapped\n    return decorate\n", encoding="utf-8")
+    product, data = repo / "product.py", repo / "data.py"
+    product.write_text("VALUE = 3\n", encoding="utf-8")
+    data.write_text("EXPECTED = 2\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    product.write_text("VALUE = 2\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) == before
+    data.write_text("EXPECTED = 3\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_base_class_creation_hook_dependencies_are_collection_time(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from base import Base\nclass TestCase(Base):\n    def test_case(self): pass\n", encoding="utf-8")
+    (repo / "base.py").write_text(
+        "from data import EXPECTED\nclass Base:\n"
+        "    def __init_subclass__(cls):\n        cls.expected = EXPECTED\n", encoding="utf-8")
+    data = repo / "data.py"
+    data.write_text("EXPECTED = 2\n", encoding="utf-8")
+    before = evidence.capture_sources(repo, ["test_case.py"])
+    assert before["test_case.py"]
+    data.write_text("EXPECTED = 3\n", encoding="utf-8")
+    assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_uncollected_headers_and_statements_bind_collection_sources(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "helper.py").write_text(
+        "from data import EXPECTED\ndef value(): return EXPECTED\n"
+        "def decorate(cls):\n    assert EXPECTED == 2\n    return cls\n", encoding="utf-8")
+    data = repo / "data.py"
+    for source in (
+        "from helper import value\nSEEN = value()\n",
+        "from helper import value\nclass Helper:\n    SEEN = value()\n",
+        "from helper import value\ndef helper(*, expected=value()): pass\n",
+        "from helper import decorate\n@decorate\nclass Helper: pass\n",
+    ):
+        (repo / "test_case.py").write_text(source + "def test_case(): pass\n", encoding="utf-8")
+        data.write_text("EXPECTED = 2\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        data.write_text("EXPECTED = 3\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) != before
+
+
+def test_class_body_fixture_imports_bind_marks_in_collecting_mro(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    node = "test_case.py::TestCase::test_case"
+    fixture = "import pytest\nfrom product import VALUE\n@pytest.fixture\ndef observed(self): return VALUE\n"
+    oracle = repo / "oracle.py"
+    product = repo / "product.py"
+    for placement in ("collector", "base"):
+        for registration in ("    from oracle import observed\n",
+                             "    import oracle\n    observed = oracle.observed\n"):
+            for request in ("module", "class", "decorator", "method", "inherited", "argument"):
+                base = "import pytest\nclass Base:\n"
+                base += registration if placement == "base" else "    pass\n"
+                if request == "inherited":
+                    base += "    pytestmark = pytest.mark.usefixtures('observed')\n"
+                (repo / "base.py").write_text(base, encoding="utf-8")
+                source = "import pytest\nfrom base import Base\n"
+                if request == "module":
+                    source += "pytestmark = pytest.mark.usefixtures('observed')\n"
+                if request == "decorator":
+                    source += "@pytest.mark.usefixtures('observed')\n"
+                source += "class TestCase(Base):\n"
+                if placement == "collector":
+                    source += registration
+                if request == "class":
+                    source += "    pytestmark = pytest.mark.usefixtures('observed')\n"
+                if request == "method":
+                    source += "    @pytest.mark.usefixtures('observed')\n"
+                source += "    def test_case(self" + (", observed" if request == "argument" else "") + "): pass\n"
+                (repo / "test_case.py").write_text(source, encoding="utf-8")
+                oracle.write_text(fixture, encoding="utf-8")
+                product.write_text("VALUE = 2\n", encoding="utf-8")
+                before = evidence.capture_sources(repo, [node])
+                assert before[node], (placement, registration, request)
+                product.write_text("VALUE = 3\n", encoding="utf-8")
+                assert evidence.capture_sources(repo, [node]) == before
+                oracle.write_text(fixture + "# changed class registration\n", encoding="utf-8")
+                assert evidence.capture_sources(repo, [node]) != before
+
+
+def test_unused_base_class_imports_bind_without_promoting_defining_module_imports(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test_case.py").write_text(
+        "from base import Base\nclass TestCase(Base):\n    def test_case(self): pass\n", encoding="utf-8")
+    registration = repo / "registration.py"
+    product = repo / "product.py"
+    for imported in ("import registration", "from registration import token"):
+        (repo / "base.py").write_text(
+            "import product\nclass Base:\n    " + imported + "\n", encoding="utf-8")
+        original = "import product\ntoken = 2\n"
+        registration.write_text(original, encoding="utf-8")
+        product.write_text("VALUE = 2\n", encoding="utf-8")
+        before = evidence.capture_sources(repo, ["test_case.py"])
+        assert before["test_case.py"]
+        product.write_text("VALUE = 3\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) == before
+        registration.write_text(original + "# changed inherited attribute\n", encoding="utf-8")
+        assert evidence.capture_sources(repo, ["test_case.py"]) != before

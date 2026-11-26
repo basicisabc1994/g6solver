@@ -783,8 +783,10 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
     report = repo_tests.read_report(ran)
     if sources is not None:
         by_file = {n.partition("::")[0]: sha for n, sha in sources.items()}
-        found["check_sources"] = {n: by_file[n.partition("::")[0]] for n in [*ids, *report.phases]
-                                  if n.partition("::")[0] in by_file}
+        # A capture belongs to this run even when a collector rewrites its ids.
+        # An outcome outside its coverage is explicitly incomplete, never legacy.
+        found["check_sources"] = {n: by_file.get(n.partition("::")[0], "")
+                                  for n in [*ids, *report.phases]}
     # Executed identities do not depend on whether source bytes were captured.
     # Keep aggregate-only legacy fixtures when no phase report was supplied.
     if sources is not None or report.phases:
