@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Intake consumes supplied source records; no source reader invokes a tool."""
 import importlib
-import os
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,8 +14,8 @@ from g6.distill.records import FailureRecord
 
 @pytest.fixture
 def local_home(monkeypatch):
-    # Ordinary directories in the prescribed TMP; no ACLs, links or tmp_path mode changes.
-    home = Path(os.environ["TMP"]) / f"rectify-{uuid4().hex}"
+    # Ordinary directories in the platform temp folder; no ACLs, links or tmp_path mode changes.
+    home = Path(tempfile.gettempdir()) / f"rectify-{uuid4().hex}"
     home.mkdir()
     monkeypatch.setenv("G6_HOME", str(home))
     return home
