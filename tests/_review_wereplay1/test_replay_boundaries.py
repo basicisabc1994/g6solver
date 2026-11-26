@@ -2,6 +2,7 @@
 import ctypes
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from worked_examples import replay_rc as rc
 
 COMMIT = "6b8c2567b1b4479e6ad44f8e8f4b4dc0cf8b8e07"
 IMAGE = "sha256:" + "2" * 64
-ROOT = Path("C:/g6-review-fake")
+ROOT = Path(__file__).absolute().parents[2] / ".build" / "wereplay1-fake"
 
 
 @pytest.fixture
@@ -71,6 +72,7 @@ def add_run(files, source, stamp, *, label=False, error=None):
         json.dumps(row).encode() + b"\n" for row in rows)
 
 
+@pytest.mark.skipif(os.name != "nt", reason='Windows GetFullPathNameW and extended-drive alias semantics')
 def test_dotted_sealed_component_reaches_archive_reads(memory):
     files, reads = memory
     source = ROOT / "source"
@@ -89,6 +91,7 @@ def test_dotted_sealed_component_reaches_archive_reads(memory):
     assert forbidden not in reads, f"archive read through sealed alias: {forbidden}"
 
 
+@pytest.mark.skipif(os.name != "nt", reason='Windows GetFullPathNameW and extended-drive alias semantics')
 def test_dotted_final_cohort_score_is_opened(monkeypatch):
     score = ROOT / "final-cohort.json."
     opened = []
@@ -107,6 +110,7 @@ def test_dotted_final_cohort_score_is_opened(monkeypatch):
 
 
 @pytest.mark.parametrize("extended_source", [True, False])
+@pytest.mark.skipif(os.name != "nt", reason='Windows GetFullPathNameW and extended-drive alias semantics')
 def test_extended_prefix_cannot_bypass_output_containment(extended_source):
     plain_source = ROOT / "archive"
     plain_output = plain_source / "output"
