@@ -4,6 +4,7 @@ says ``ok``, ``warn`` or ``fail`` with the fix for that system. Offline; the bac
 started."""
 from __future__ import annotations
 
+import re
 import sys
 
 import pytest
@@ -95,3 +96,59 @@ def test_on_windows_the_doctor_still_reads_only_the_access_lists(monkeypatch) ->
     check = doctor._isolation()
     # fails if the doctor starts a test run in a container on Windows (it reads the access lists only there)
     assert probes == [False] and check.status == "ok" and "access list ok; not started" in check.detail
+
+
+class _Lists:
+    """Stands in for the AppContainer backend: what ALL APPLICATION PACKAGES may do on each folder (path -> mask)."""
+
+    name = confine.APPCONTAINER
+
+    def __init__(self, masks: dict[str, int]):
+        self.masks = masks
+
+    def _granted(self, path: str) -> int:
+        return self.masks.get(path, 0)
+
+
+def _windows_lists(monkeypatch, tmp_path, masks) -> list[str]:
+    temp = (tmp_path / "Users" / "me" / "Temp").resolve()
+    temp.mkdir(parents=True)
+    monkeypatch.setattr(doctor.sys, "platform", "win32")
+    monkeypatch.setattr(doctor.tempfile, "gettempdir", lambda: str(temp))
+    monkeypatch.setattr(confine, "_select", lambda: (_Lists(masks(temp)), ""))
+    return [str(folder) for folder in [*reversed(temp.parents), temp][1:]]   # the drive's top is never checked
+
+
+def test_on_windows_the_doctor_says_a_confined_test_cannot_run_git_where_the_container_sees_no_folder_above(
+        monkeypatch, tmp_path) -> None:
+    # Dogfood pass 2 (2026-11-26): `git init -q` exits 1 in every confined test ("cannot lock ref 'HEAD': unable to
+    # create directory for ...\.git\HEAD"), because Git for Windows checks each folder of the path from the drive's
+    # top and the container may read none of the profile's folders above %TEMP%; the doctor said isolation ok.
+    above = _windows_lists(monkeypatch, tmp_path, lambda temp: {})
+    check = doctor._confined_git()
+    # fails if the doctor says nothing of it (no check), or calls it ok
+    assert check is not None and check.status == "warn", check
+    assert "git" in check.detail and all(folder in check.detail for folder in above)
+    # Owner ruling 2026-11-27, option (a): the doctor prints a one-time grant of the folder's attributes alone, for
+    # each folder the container cannot see, and nothing more (no contents, no inheritance, nothing below it)
+    grants = re.findall(r'icacls "[^"]*" /grant "[^"]*"', check.fix)
+    assert grants == [f'icacls "{folder}" /grant "*{confine.ALL_APPLICATION_PACKAGES}:(RA)"' for folder in above], \
+        check.fix
+    assert "(RX)" not in check.fix and "(OI)" not in check.fix and "(CI)" not in check.fix and "/T" not in check.fix
+    for name in ("_isolation", "_names"):
+        monkeypatch.setattr(doctor, name, lambda: doctor.Check(name, "ok", "stand-in"))
+    monkeypatch.setattr(doctor, "_components", lambda: [])
+    assert check in doctor.run_checks({})   # fails if g6 doctor never prints it
+
+
+def test_on_windows_git_in_confined_runs_is_ok_where_the_container_may_read_each_folder_above(
+        monkeypatch, tmp_path) -> None:
+    read_attributes, list_folder = 0x80, 0x1
+    # every folder's own list grants its attributes, or the folder that holds it may be listed
+    above = _windows_lists(monkeypatch, tmp_path, lambda temp: {
+        **{str(folder): read_attributes for folder in temp.parents}, str(temp.parent): read_attributes | list_folder})
+    check = doctor._confined_git()
+    assert check is not None and check.status == "ok" and above, check
+    # off Windows, or without the AppContainer, there is no such check
+    monkeypatch.setattr(doctor.sys, "platform", "linux")
+    assert doctor._confined_git() is None

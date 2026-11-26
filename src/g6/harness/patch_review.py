@@ -455,6 +455,21 @@ def _import_roots(root: Path, values) -> tuple[str, ...]:
     return tuple(dict.fromkeys(found))
 
 
+#: The most of a failed check's own words a reason quotes (``_failure_excerpt``).
+MAX_FAILURE_EXCERPT = 300
+
+
+def _failure_excerpt(ran: dict, check: str) -> str:
+    """The line a failed check raised (pytest's ``E`` line, else its first: ``verification_search._failure``), read
+    from the run's record of the failure (``failure_messages``), on one line, with secrets and the home and temporary
+    folders' roots masked (``g6.context.redact``) and at most ``MAX_FAILURE_EXCERPT`` characters; "" when none was
+    recorded. The test's own words, quoted as data: nothing is decided from them (dogfood pass 2, 2026-11-26)."""
+    from g6.context.redact import mask_paths, scrub
+    from g6.harness import verification_search
+
+    return mask_paths(scrub(" ".join(verification_search._failure(ran, check).split())))[:MAX_FAILURE_EXCERPT]
+
+
 def _confined(ran: dict) -> dict:
     """``ran``, or a refusal when no operating-system boundary confined it: its results are never assessed."""
     ran = repo_tests.read_report(ran).wire()
@@ -1339,8 +1354,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                         "reason": "no check was stated" if not ids else "no stated check names a file on the tree"})
     for check in ids:
         if verdicts[check]["verdict"] in DEFECTS:
-            reason("tier_1", "check_failed", f"{check}: {verdicts[check]['verdict']} ({verdicts[check]['detail']})",
-                   node=check, ran=first)
+            raised = _failure_excerpt(first, check)
+            reason("tier_1", "check_failed", f"{check}: {verdicts[check]['verdict']} ({verdicts[check]['detail']})"
+                   + (f"; it raised: {raised}" if raised else ""), node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
     # The template instances, after tier 1, so reading and parsing the files never takes its time (review I7): read

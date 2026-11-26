@@ -41,6 +41,9 @@
     "_import_roots": [
       "tuple(dict.fromkeys(found))"
     ],
+    "_failure_excerpt": [
+      "mask_paths(scrub(' '.join(verification_search._failure(ran, check).split())))[:MAX_FAILURE_EXCERPT]"
+    ],
     "_confined/branches": [
       "if 'isolation' in ran and (not isolation.get('backend'))",
       "raise _Refused(ISOLATION_UNAVAILABLE, f\"G6 assesses a patch only from test runs inside an operating-system boundary, and none confined this one ({isolation.get('why') or 'no backend'}), so its results are not used. {BOUNDARY_HELP} Run g6 doctor: it says what this computer needs.\")"
@@ -423,6 +426,7 @@
       "if unusable(1, first)",
       "if not ids",
       "if verdicts[check]['verdict'] in DEFECTS",
+      "if raised",
       "if verdicts[check]['verdict'] != 'passed' and check not in stated_ids",
       "if config is not None and config['propose']",
       "if any((r['stage'] == 'integrity' for r in reasons))",

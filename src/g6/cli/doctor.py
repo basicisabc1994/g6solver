@@ -25,6 +25,7 @@ import platform
 import re
 import sqlite3
 import sys
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -207,6 +208,42 @@ def _isolation() -> Check:
     return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run {where}")
 
 
+#: What a Windows AppContainer must read of each folder above its run folder for git to work in it: Git for Windows
+#: checks every folder of a repository's path from the drive's top down, which needs that folder's attributes
+#: (FILE_READ_ATTRIBUTES in its own access list) or a listing of the folder that holds it (FILE_LIST_DIRECTORY there).
+_READ_ATTRIBUTES, _LIST_FOLDER = 0x80, 0x1
+
+
+def _confined_git() -> Check | None:
+    """Windows with the AppContainer backend only: whether a confined test can run git in the run folders G6 makes
+    under the temporary folder, read from the access lists alone (dogfood pass 2, 2026-11-26: ``git init`` failed in
+    every confined test, "cannot lock ref 'HEAD': unable to create directory for ...", while isolation said ok). The
+    drive's top is never checked by git, so it is left out. None elsewhere."""
+    if sys.platform != "win32":
+        return None
+    from g6.core import confine
+
+    chosen, _ = confine._select()
+    if chosen is None or getattr(chosen, "name", "") != confine.APPCONTAINER:
+        return None
+    root = Path(tempfile.gettempdir()).resolve()
+    unseen = [str(folder) for folder in [*reversed(root.parents), root][1:]
+              if not (chosen._granted(str(folder)) & _READ_ATTRIBUTES or
+                      chosen._granted(str(folder.parent)) & _LIST_FOLDER)]
+    if not unseen:
+        return Check("git in confined runs", "ok", f"the container can read each folder above {root}")
+    # owner ruling 2026-11-27, option (a): a one-time grant of each such folder's attributes alone (RA: no contents, no
+    # listing, nothing inherited below it), so git can see the folder exists; the person runs it, G6 never does
+    grants = [f'icacls "{folder}" /grant "*{confine.ALL_APPLICATION_PACKAGES}:(RA)"' for folder in unseen]
+    return Check("git in confined runs", "warn",
+                 "a test that runs git (git init, git commit) fails inside the container here, though it passes for "
+                 "you: git checks every folder above its repository, and Windows lets the container read none of "
+                 f"{', '.join(unseen)}, which hold the run folders G6 makes in {root}. The grant below lets the "
+                 "container read only those folders' attributes (that each exists), not their files or their names",
+                 f"Run once, as yourself: {', then '.join(grants)}. Until then, read a confined failure of a test that "
+                 "runs git as this computer's limit, not your code's: run that test yourself to tell.")
+
+
 def _components() -> list[Check]:
     from g6.core.registry import get_registry
 
@@ -243,8 +280,9 @@ def run_checks(env: dict[str, str] | None = None) -> list[Check]:
 
     filed = keys.read()
     settings = {**filed, **(os.environ if env is None else env)}
+    git = _confined_git()
     return [_python(), _package(), _home(), _sqlite(), *_extras(), _keys(), _model(settings, filed), _isolation(),
-            *_components(), _names()]
+            *([git] if git else []), *_components(), _names()]
 
 
 def report(checks: list[Check]) -> dict[str, Any]:
