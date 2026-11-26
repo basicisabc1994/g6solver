@@ -123,7 +123,7 @@ def test_self_consistent_same_user_edit_is_outside_the_claim(batch, capsys):
 
 
 @pytest.mark.parametrize("source", [False, True])
-@pytest.mark.parametrize("version", [2, 999])
+@pytest.mark.parametrize("version", [rc.EVIDENCE_RULE_VERSION + 1, 999])
 def test_newer_rule_never_enumerates_source(batch, monkeypatch, capsys, source, version):
     batch.saved["evidence_rule_version"] = version
     save(batch)
@@ -366,7 +366,11 @@ def test_archive_json_preserves_surrogate_text(tmp_path):
 
 # Hash the rule's own syntax, not its line numbers, comments or unrelated CLI.
 # A rule edit must add a new version/digest pair, retaining earlier pairs.
-RULE_DIGESTS = {1: "2bf04bb99b72dc1a6c18009fcf4c6950108889be7e3259c358d4d37dd113a2c2"}
+RULE_DIGESTS = {
+    1: "2bf04bb99b72dc1a6c18009fcf4c6950108889be7e3259c358d4d37dd113a2c2",
+    # WR-5: one omission row per check without a final result.
+    2: "c3acf3e0654be17117713abdf0fe4824f92d2a2982f22ed69e106fb25cb5ae55",
+}
 
 
 def test_evidence_rule_code_requires_a_version_change():
@@ -459,6 +463,7 @@ def test_evidence_rule_code_requires_a_version_change():
         identities = {id(definitions[name]) for source, name in reached if source == key}
         nodes = [node for node in tree.body if id(node) in identities]
         if nodes:
-            syntax.append((key, ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False)))
+            syntax.append((key, ast.dump(ast.Module(body=nodes, type_ignores=[]), include_attributes=False,
+                                      **({"show_empty": True} if sys.version_info >= (3, 13) else {}))))
     digest = hashlib.sha256(json.dumps(syntax, ensure_ascii=True).encode()).hexdigest()
     assert digest == RULE_DIGESTS[rc.EVIDENCE_RULE_VERSION], "evidence rule changed without a new version/digest pair"

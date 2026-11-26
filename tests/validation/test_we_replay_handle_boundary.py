@@ -17,6 +17,7 @@ COMMIT = "a" * 40
 
 @pytest.mark.parametrize("component", range(4))
 @pytest.mark.parametrize("suffix", [":payload", "::$DATA", ":", ".", " "])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space and alternate-stream name semantics')
 def test_ambiguous_component_is_refused_before_read(tmp_path, component, suffix):
     parts = ["run", TASK.id, "001", "final.patch"]
     parts[component] += suffix
@@ -25,6 +26,7 @@ def test_ambiguous_component_is_refused_before_read(tmp_path, component, suffix)
 
 
 @pytest.mark.parametrize("name", ["final-synthetic.json:payload", "sealed:payload/child"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space and alternate-stream name semantics')
 def test_forbidden_stream_is_refused_without_open(tmp_path, monkeypatch, name):
     def unexpected(*args, **kwargs):
         pytest.fail("forbidden name reached a content open")

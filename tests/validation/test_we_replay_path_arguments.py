@@ -33,7 +33,7 @@ def test_each_path_argument_accepts_ordinary_spellings(tmp_path, monkeypatch, ca
         saved = {"records": [], "plan": {"cases": [], "modes": ["hook"], "registered_commit": "a" * 40},
                  "image_ids": {}, "s0": "before", "registration_sha256": registration.sha256}
         (base / "score.json").write_text(json.dumps(saved), encoding="utf-8")
-        assert rc.main(["--score", str(path / "." / "score.json")]) == 0
+        assert rc.main(["--score", str(path / "." / "score.json")]) == 2
         assert json.loads(capsys.readouterr().out)["predictions"]["P4"]["prediction_met"] is None
     else:
         content = rc.REGISTRATION.read_bytes()

@@ -70,7 +70,9 @@ def test_mixed_case_paths_replay_and_score_with_exact_tracked_registration(tmp_p
     assert saved["records"][0]["origins"][0]["run"] == run.rel
     assert len(copies) == 1 and copies[0].startswith(str(output) + os.sep)
     assert rc.main(["--score", str(score).swapcase()]) == 0
-    assert json.loads(capsys.readouterr().out) == evaluation
+    assert json.loads(capsys.readouterr().out) == {**evaluation,
+        "evidence_rule_version": rc.EVIDENCE_RULE_VERSION,
+        "saved_evidence_rule_version": rc.EVIDENCE_RULE_VERSION, "evidence_source": "batch"}
     assert len(git_calls) >= 2
     assert all(call[-1] == "HEAD:validation/worked_examples/REPLAY_RC.md" for call in git_calls)
 

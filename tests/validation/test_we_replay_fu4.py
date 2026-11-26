@@ -309,7 +309,7 @@ def test_pin_failure_exclusion_names_the_actual_rule_and_cause(batch, monkeypatc
     assert status == 2 and result["evidence_source"] == "unavailable"
     gap, = result["index_excluded"]
     assert gap["source_unavailable"] == reason
-    assert gap["current_evidence_rule_version"] == 1
+    assert gap["current_evidence_rule_version"] == rc.EVIDENCE_RULE_VERSION
     assert gap["saved_evidence_rule_version"] == batch.saved.get("evidence_rule_version")
     if route not in ("current", "current-refresh"):
         assert gap["reason"] == "saved under an older evidence rule"

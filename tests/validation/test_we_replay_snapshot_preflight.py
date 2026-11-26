@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ from worked_examples import replay_rc as rc
 @pytest.mark.parametrize("caller", ["snapshot", "dry", "live"])
 @pytest.mark.parametrize("part", ["", "round2", "round3"])
 @pytest.mark.parametrize("field", ["run", "checked_run"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot sealed alias semantics')
 def test_index_refusal_precedes_snapshot_and_execution(monkeypatch, capsys, caller, part, field):
     # Moving identity work before the all-round index preflight must fail here.
     root = Path(__file__).absolute().parents[2] / ".build" / "snapshot-preflight-fake"

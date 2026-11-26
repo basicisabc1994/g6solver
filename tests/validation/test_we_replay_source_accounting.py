@@ -87,7 +87,9 @@ def test_short_index_is_incomplete_in_plan_batch_and_rescore(tmp_path, monkeypat
         assert result["predictions"]["P3"]["status"] == "incomplete"
         assert result["predictions"]["P3"]["prediction_met"] is None
         assert rc.main(["--score", str(batch)]) == 0
-        assert json.loads(capsys.readouterr().out) == result
+        assert json.loads(capsys.readouterr().out) == {**result,
+        "evidence_rule_version": rc.EVIDENCE_RULE_VERSION,
+        "saved_evidence_rule_version": rc.EVIDENCE_RULE_VERSION, "evidence_source": "batch"}
 
 
 @pytest.mark.parametrize("observed_miss", [False, True])
@@ -209,7 +211,8 @@ def test_unused_label_result_remains_named_with_a_good_label(tmp_path):
     path.write_text(json.dumps(record), encoding="utf-8")
     omissions = []
     cases, excluded = rc.enumerate_cases(tmp_path, [TASK], index_excluded=omissions)
-    assert len(cases) == 2 and excluded == []
+    assert len(cases) == 1
+    assert len(excluded) == 1 and excluded[0]["reason"] == "no archived label"
     assert any(row.get("result") == 1 and row["run"] == check and row["reason"] for row in omissions)
 
 

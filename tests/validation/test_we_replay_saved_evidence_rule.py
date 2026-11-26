@@ -78,7 +78,9 @@ def test_current_batch_records_rule_and_rescores_without_source(batch_factory, c
     source.rename(source.with_name("moved-source"))
     before = path.read_bytes()
     assert rc.main(["--score", str(path)]) == 0
-    assert json.loads(capsys.readouterr().out) == live
+    assert json.loads(capsys.readouterr().out) == {**live,
+        "evidence_rule_version": rc.EVIDENCE_RULE_VERSION,
+        "saved_evidence_rule_version": saved["evidence_rule_version"], "evidence_source": "batch"}
     assert path.read_bytes() == before
 
 
@@ -99,13 +101,15 @@ def test_unbound_legacy_batch_is_incomplete_for_every_enabled_prediction(batch_f
     assert all(p["status"] == "incomplete" and p["prediction_met"] is None and p["kill"] is None
                for p in result["predictions"].values())
     assert result["by_bug"] == {}  # no saved labels or review outcomes were counted
-    assert result["index_excluded"][0]["reason"] == "saved under an older evidence rule"
+    assert result["index_excluded"][0]["reason"] == (
+        "saved under a newer evidence rule than this code"
+        if type(version) is int and version > rc.EVIDENCE_RULE_VERSION else "saved under an older evidence rule")
     assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("missing_final", [False, True])
 def test_old_rule_reenumerates_unchanged_source_instead_of_saved_flags(batch_factory, capsys, missing_final):
-    _, path, saved, live, _ = batch_factory(missing_final=missing_final)
+    source, path, saved, live, _ = batch_factory(missing_final=missing_final)
     saved["evidence_rule_version"] = 0
     saved["plan"]["index_excluded"] = []
     saved["plan"]["excluded"] = [{"bug": TASK.id, "reason": "stale saved exclusion"}]
@@ -113,8 +117,10 @@ def test_old_rule_reenumerates_unchanged_source_instead_of_saved_flags(batch_fac
     for row in saved["plan"]["cases"] + saved["records"]:
         row["label"] = "wrong" if row["label"] == "right" else "right"
     save(path, saved)
-    assert rc.main(["--score", str(path)]) == 0
-    assert json.loads(capsys.readouterr().out) == live
+    assert rc.main(["--score", str(path), "--source", str(source)]) == 0
+    assert json.loads(capsys.readouterr().out) == {**live,
+        "evidence_rule_version": rc.EVIDENCE_RULE_VERSION,
+        "saved_evidence_rule_version": saved["evidence_rule_version"], "evidence_source": "source"}
 
 
 @pytest.mark.parametrize("change", ["check", "index", "prompt", "round folder", "missing source", "manifest"])
@@ -137,7 +143,7 @@ def test_old_rule_requires_unchanged_source_manifest(batch_factory, capsys, chan
     else:
         saved["plan"]["source_snapshot"]["files"].pop("runs.jsonl")
     save(path, saved)
-    assert rc.main(["--score", str(path)]) == 2
+    assert rc.main(["--score", str(path), "--source", str(source)]) == 2
     result = json.loads(capsys.readouterr().out)
     assert result["predictions"]["P3"]["status"] == "incomplete"
     assert result["predictions"]["P3"]["prediction_met"] is None
@@ -146,18 +152,20 @@ def test_old_rule_requires_unchanged_source_manifest(batch_factory, capsys, chan
 
 
 def test_new_rule_version_refreshes_existing_source(batch_factory, monkeypatch, capsys):
-    _, path, saved, live, _ = batch_factory()
+    source, path, saved, live, _ = batch_factory()
     monkeypatch.setattr(rc, "EVIDENCE_RULE_VERSION", saved["evidence_rule_version"] + 1)
-    assert rc.main(["--score", str(path)]) == 0
-    assert json.loads(capsys.readouterr().out) == live
+    assert rc.main(["--score", str(path), "--source", str(source)]) == 0
+    assert json.loads(capsys.readouterr().out) == {**live,
+        "evidence_rule_version": rc.EVIDENCE_RULE_VERSION,
+        "saved_evidence_rule_version": saved["evidence_rule_version"], "evidence_source": "source"}
 
 
 def test_refreshed_records_must_match_current_review_arguments(batch_factory, capsys):
-    _, path, saved, _, _ = batch_factory()
+    source, path, saved, _, _ = batch_factory()
     saved["evidence_rule_version"] = 0
     saved["records"][0]["arguments"]["task"] = "different synthetic issue"
     save(path, saved)
-    assert rc.main(["--score", str(path)]) == 0
+    assert rc.main(["--score", str(path), "--source", str(source)]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["predictions"]["P3"]["status"] == "incomplete"
     assert result["predictions"]["P3"]["prediction_met"] is None

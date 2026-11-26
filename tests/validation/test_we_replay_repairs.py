@@ -43,6 +43,7 @@ def sample(label="wrong", *, mode="hook", outcome="defect_detected", seconds=1, 
 
 
 @pytest.mark.parametrize("alias", ["sealed.", "SeAlEd ", "final-cohort.json.", "final-cohort.json "])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_forbidden_alias_is_refused_before_io(tmp_path, monkeypatch, alias):
     def no_read(*args, **kwargs):
         pytest.fail("forbidden alias reached an open")
@@ -110,6 +111,7 @@ def test_short_name_resolves_to_forbidden_component(tmp_path):
         rc.Source(Path(short.value))
 
 
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_score_forbidden_alias_is_refused(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(Path, "open", lambda *a, **k: pytest.fail("forbidden score was opened"))
     assert rc.main(["--score", str(tmp_path / "final-synthetic.json.")]) == 1
@@ -157,11 +159,11 @@ def test_rescore_carries_exclusions_and_registered_hash(tmp_path, registration, 
                  "excluded": [{"bug": "black-5634", "patch": "missing", "reason": "no final patch"}]},
         "records": records, "image_ids": {"black-5634": IMAGE}, "s0": "before",
         "registration_sha256": digest}), encoding="utf-8")
-    assert rc.main(["--score", str(path)]) == 0
+    assert rc.main(["--score", str(path)]) == 2
     result = json.loads(capsys.readouterr().out)
     assert result["registration_sha256"] == digest
     assert result["predictions"]["P3"]["status"] == "incomplete"
-    assert result["predictions"]["P3"]["missing"] == 1
+    assert result["index_excluded"][0]["source_unavailable"] == "--source is required to re-derive saved evidence"
 
 
 @pytest.mark.parametrize("old,new,prediction,mode,seconds", [

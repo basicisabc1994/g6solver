@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from contextlib import contextmanager
 from pathlib import Path
@@ -63,6 +64,7 @@ def index(files, root, rows):
 
 @pytest.mark.parametrize("part", ["", "round2", "round3"])
 @pytest.mark.parametrize("field", ["run", "checked_run"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_index_alias_has_stable_refusal_before_candidate_io(memory, capsys, part, field):
     files, reads = memory
     source = ROOT / "source"
@@ -84,6 +86,7 @@ def test_index_alias_has_stable_refusal_before_candidate_io(memory, capsys, part
 
 
 @pytest.mark.parametrize("part", ["round2", "round3"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_later_index_refusal_precedes_all_candidate_reads(memory, part):
     files, reads = memory
     source = ROOT / "source"
@@ -108,6 +111,7 @@ def test_later_index_refusal_precedes_all_candidate_reads(memory, part):
 
 
 @pytest.mark.parametrize("alias", ["final-cohort.json.", "FiNaL-cohort.JsOn ", "sealed./batch.json"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_score_alias_returns_refusal_without_open(memory, capsys, alias):
     _, reads = memory
     assert rc.main(["--score", str(ROOT / alias)]) == 1
@@ -118,6 +122,7 @@ def test_score_alias_returns_refusal_without_open(memory, capsys, alias):
 
 
 @pytest.mark.parametrize("target", ["final-cohort.json. ", "sealed. /batch.json"])
+@pytest.mark.skipif(os.name != "nt", reason='Windows trailing-dot/space alias expansion')
 def test_resolved_score_alias_returns_refusal_without_open(memory, monkeypatch, capsys, target):
     _, reads = memory
     score = ROOT / "batch.json"

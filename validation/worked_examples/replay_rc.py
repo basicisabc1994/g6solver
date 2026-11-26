@@ -26,7 +26,7 @@ from statistics import median
 from typing import Any
 
 if __package__:
-    from . import run as we
+    from worked_examples import run as we
 else:
     import run as we
 
@@ -38,7 +38,7 @@ OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected"
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
 # Code-owned, independent of registration/image pins. Raise this whenever case
 # eligibility, labels, exclusions or review evidence interpretation changes.
-EVIDENCE_RULE_VERSION = 1
+EVIDENCE_RULE_VERSION = 2
 # Archive.start writers: run.py, loop.py, evolve.py and this module. None marks
 # replay content/labels; every other value is its index-row exclusion reason.
 # test_we_replay_writer_inventory walks all package writers to keep this closed.
@@ -712,14 +712,16 @@ def enumerate_cases(root: Path, tasks: list[we.Task], *,
                 results = record.get("checks")
                 if not isinstance(results, list) or any(not isinstance(result, dict) for result in results):
                     raise ValueError(f'invalid checks in {check["run"]}/run.json')
-                if not results:
-                    omit(check, "archived check has no results")
                 final_label = Path("final.patch").stem
                 finals = [result for result in results if result.get("patch") == final_label]
                 unique_final = len(finals) == 1
                 if not unique_final:
                     omit(check, "archived check does not have exactly one final-patch result",
                          final_results=len(finals))
+                if not finals:
+                    # One check with no final contributes one omission. Its
+                    # metadata cannot fill that gap or count it a second time.
+                    continue
                 # Retain the existing conflict exclusion, including a duplicate
                 # check whose verdicts disagree with another check. These
                 # observations cannot supply final evidence for that check.
