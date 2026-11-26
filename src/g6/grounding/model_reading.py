@@ -2,7 +2,6 @@
 """Advisory passage extraction; lexical status and gates belong to the caller."""
 from __future__ import annotations
 
-import importlib
 import json
 import os
 from typing import Any
@@ -11,10 +10,11 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from g6.core import semantic
 from g6.core.llm import LLMError
+from g6.core.registry import get_registry
 from g6.grounding.claims import _negated, _numbers, check_claim
+from g6.grounding.extraction_backend import ExtractionBackend, ExtractionSpan
 from g6.grounding.retrieval import Passage
 from g6.grounding.sentence_gate import sentence_at
-from g6.sources.ctx_langextract import extract as ex
 
 STANCES = ("supports", "contradicts", "unrelated")
 
@@ -68,25 +68,14 @@ class _Caller:
         return json.dumps(self.last.value, ensure_ascii=True)
 
 
-def _import_langextract():
-    try:
-        library = importlib.import_module("langextract")
-    except ModuleNotFoundError as exc:
-        if exc.name == "langextract":
-            return None
-        raise
-    # The public package may expose extract lazily; load only the provider protocol,
-    # not a provider router or any client selected from environment variables.
-    for name in ("langextract.core.base_model", "langextract.core.types", "langextract.core.data"):
-        importlib.import_module(name)
-    return library
+def _extraction_backend() -> ExtractionBackend:
+    backend = get_registry().get_module("ctx_langextract").grounding_backend
+    if not callable(getattr(backend, "load_library", None)) or not callable(getattr(backend, "extract_passages", None)):
+        raise TypeError("the extraction component has no usable backend")
+    return backend
 
 
-def _load_langextract():
-    return _import_langextract()
-
-
-def _record(claim: str, source: str, text: str, stance: str, span: ex.Span, *,
+def _record(claim: str, source: str, text: str, stance: str, span: ExtractionSpan, *,
             status: str | None = None, alignment: str = "") -> dict:
     status = status or ("found" if span.grounded else "refused" if span.match == "none" else "flagged")
     sentence = sentence_at(text, span.start, span.end)
@@ -123,10 +112,19 @@ def model_reading(claim: str, sources: dict[str, str], *, patterns: dict[str, st
                 "span_engine": "ctx_langextract", "passages": [], "patterns": [], "windows": [], "errors": [],
                 "quote": "", "quote_found": False, "lexical_on_quote": None, "source": "",
                 "reason": "grounding model engine disabled"}
+    try:
+        backend = _extraction_backend()
+        ex = backend.extraction
+    except Exception as exc:
+        return {"reading": "unclear", "engine": "ctx_langextract", "model_ran": False,
+                "span_engine": "ctx_langextract", "passages": [], "patterns": [], "windows": [],
+                "errors": [{"code": "extraction_failed", "source": "", "type": type(exc).__name__}],
+                "quote": "", "quote_found": False, "lexical_on_quote": None, "source": "",
+                "reason": "extraction incomplete"}
     engine = "langextract"
     passages, errors, pattern_results, windows = [], [], [], []
     try:
-        library = langextract_module if langextract_module is not None else _load_langextract()
+        library = langextract_module if langextract_module is not None else backend.load_library()
     except Exception as exc:
         library = None
         errors.append({"code": "library_import_failed", "source": "", "type": type(exc).__name__})
@@ -158,8 +156,7 @@ def model_reading(claim: str, sources: dict[str, str], *, patterns: dict[str, st
                 for stance in STANCES:
                     passages.extend(_record(claim, source, text, stance, span) for span in found[stance].spans)
             else:
-                from g6.grounding.langextract_backend import extract_passages
-                extracted = extract_passages(library, caller.complete, claim, text)
+                extracted = backend.extract_passages(library, caller.complete, claim, text)
                 if caller.model_reads == before_reads:
                     raise ex.ExtractStopped("model_not_run", "no model reading completed for this source")
                 for stance, span, status, alignment in extracted:

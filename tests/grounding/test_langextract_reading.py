@@ -12,7 +12,7 @@ from g6.core import semantic
 from g6.core.llm import FakeLLM
 from g6.grounding import GroundingBlock, GroundingInput
 
-reader = importlib.import_module("g6.grounding.model_reading")
+backend = importlib.import_module("g6.sources.ctx_langextract.langextract_backend")
 CLAIM = "Customers have a month to return the product"
 POLICY = "You can return items within thirty days of purchasing them."
 
@@ -24,7 +24,7 @@ def fields(*, supports=None, contradicts=None, unrelated=None):
 @pytest.fixture(autouse=True)
 def absent_library(monkeypatch):
     # Pin this suite to the built-in engine regardless of the lead's environment.
-    monkeypatch.setattr(reader, "_load_langextract", lambda: None, raising=False)
+    monkeypatch.setattr(backend, "load_library", lambda: None)
 
 
 def run(raw, *, sources=None, claim=CLAIM, patterns=None, library=None):
@@ -270,7 +270,7 @@ def test_library_invalid_stance_is_not_reported_as_a_known_reading():
 
 
 def test_imported_library_is_selected_without_explicit_injection(monkeypatch):
-    monkeypatch.setattr(reader, "_load_langextract", lambda: library_with(extraction()))
+    monkeypatch.setattr(backend, "load_library", lambda: library_with(extraction()))
     out, _ = run('{"value":{"extractions":[]}}')
     assert out["check"]["model_reading"]["engine"] == "langextract"
     assert out["check"]["model_reading"]["reading"] == "supports"
@@ -279,9 +279,9 @@ def test_imported_library_is_selected_without_explicit_injection(monkeypatch):
 def test_import_absence_uses_import_identity(monkeypatch):
     def missing(name):
         raise ModuleNotFoundError("arbitrary diagnostic", name="langextract")
-    monkeypatch.setattr(reader.importlib, "import_module", missing)
+    monkeypatch.setattr(backend.importlib, "import_module", missing)
     # Use the actual loader, rather than the suite's deterministic override.
-    assert reader._import_langextract() is None
+    assert backend._import_langextract() is None
 
 
 def test_import_loads_only_the_explicit_provider_protocol(monkeypatch):
@@ -290,23 +290,23 @@ def test_import_loads_only_the_explicit_provider_protocol(monkeypatch):
     def load(name):
         names.append(name)
         return library if name == "langextract" else SimpleNamespace()
-    monkeypatch.setattr(reader.importlib, "import_module", load)
-    assert reader._import_langextract() is library
+    monkeypatch.setattr(backend.importlib, "import_module", load)
+    assert backend._import_langextract() is library
     assert names == ["langextract", "langextract.core.base_model", "langextract.core.types", "langextract.core.data"]
 
 
 def test_transitive_import_failure_is_not_library_absence(monkeypatch):
     def missing(name):
         raise ModuleNotFoundError("langextract absent", name="google.genai")
-    monkeypatch.setattr(reader.importlib, "import_module", missing)
+    monkeypatch.setattr(backend.importlib, "import_module", missing)
     with pytest.raises(ModuleNotFoundError):
-        reader._import_langextract()
+        backend._import_langextract()
 
 
 def test_broken_import_is_a_caveat_without_a_fallback_send(monkeypatch):
     def broken():
         raise RuntimeError("unresolvable optional package")
-    monkeypatch.setattr(reader, "_load_langextract", broken)
+    monkeypatch.setattr(backend, "load_library", broken)
     out, fake = run(fields(supports=POLICY))
     reading = out["check"]["model_reading"]
     assert not fake.calls and reading["engine"] == "langextract"

@@ -18,8 +18,8 @@ POLICY = "You can return items within thirty days of purchasing them."
 
 @pytest.fixture(autouse=True)
 def builtin_engine(monkeypatch):
-    module = importlib.import_module("g6.grounding.model_reading")
-    monkeypatch.setattr(module, "_load_langextract", lambda: None, raising=False)
+    module = importlib.import_module("g6.sources.ctx_langextract.langextract_backend")
+    monkeypatch.setattr(module, "load_library", lambda: None)
 
 
 def reply(reading="supports", quote=POLICY):

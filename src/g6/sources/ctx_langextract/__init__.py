@@ -26,6 +26,7 @@ any two capitalised words); the 20 store ops for patterns, schemas, sessions and
 the rerank; and every extraction it labelled verified without checking it against the text.
 """
 from g6.sources.ctx_langextract import extract as extraction
+from g6.sources.ctx_langextract import langextract_backend as grounding_backend
 from g6.sources.ctx_langextract.block import SENSITIVE_OPS, CtxLangExtractBlock, CtxLangExtractInput, Example
 
 __g6_component__ = True
@@ -41,7 +42,7 @@ __g6_introduces__: tuple[str, ...] = ("prompt_injection",)
 __g6_outside__: tuple = ()
 __g6_extras__: dict[str, tuple[str, ...]] = {}
 
-__all__ = ["SENSITIVE_OPS", "CtxLangExtractBlock", "CtxLangExtractInput", "Example", "extraction"]
+__all__ = ["SENSITIVE_OPS", "CtxLangExtractBlock", "CtxLangExtractInput", "Example", "extraction", "grounding_backend"]
 
 #: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
 #: G6's words where they are not the class's own. A census test holds every code it writes to one entry.

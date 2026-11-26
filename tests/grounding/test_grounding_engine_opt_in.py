@@ -13,6 +13,7 @@ from g6.grounding import GroundingBlock, GroundingInput
 from g6.mcp import invoke_reply
 
 reader = importlib.import_module("g6.grounding.model_reading")
+backend = importlib.import_module("g6.sources.ctx_langextract.langextract_backend")
 CLAIM = "Customers have a month to return the product"
 SOURCE = "You can return items within thirty days of purchasing them."
 CODE = "G6_E_GROUNDING_LEXICAL_ONLY"
@@ -24,7 +25,7 @@ FIELDS = json.dumps({"value": {"supports": SOURCE, "contradicts": None, "unrelat
 def isolated_engine(monkeypatch):
     monkeypatch.delenv("G6_GROUNDING_ENGINE", raising=False)
     monkeypatch.delenv("G6_DISABLE_LLM", raising=False)
-    monkeypatch.setattr(reader, "_load_langextract", lambda: None)
+    monkeypatch.setattr(backend, "load_library", lambda: None)
 
 
 def run(*, llm=None, library=None, **params):
@@ -90,7 +91,7 @@ def test_environment_off_switch_prevents_import_and_model_reading(monkeypatch, s
     def forbidden_import():
         raise AssertionError("the disabled engine must not import the optional library")
 
-    monkeypatch.setattr(reader, "_load_langextract", forbidden_import)
+    monkeypatch.setattr(backend, "load_library", forbidden_import)
     fake = FakeLLM(default=FIELDS)
     out = run(llm=fake, judge="model", library=google_library())
     assert_lexical(out)
@@ -138,7 +139,7 @@ def test_fallback_reading_has_only_the_named_recommendation():
 
 
 def test_installed_google_engine_runs_by_default_without_recommendation(monkeypatch):
-    monkeypatch.setattr(reader, "_load_langextract", google_library)
+    monkeypatch.setattr(backend, "load_library", google_library)
     fake = FakeLLM(default='{"value":{"extractions":[]}}')
     out = run(llm=fake)
     reading = out["check"]["model_reading"]

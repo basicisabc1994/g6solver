@@ -2,10 +2,32 @@
 """Optional LangExtract adapter: explicit G6 provider, no global registration."""
 from __future__ import annotations
 
+import importlib
 import json
 
 from g6.grounding.sentence_gate import sentence_at
 from g6.sources.ctx_langextract import extract as ex
+
+
+extraction = ex
+
+
+def _import_langextract():
+    try:
+        library = importlib.import_module("langextract")
+    except ModuleNotFoundError as exc:
+        if exc.name == "langextract":
+            return None
+        raise
+    # The public package may expose extract lazily; load only the provider protocol,
+    # not a provider router or any client selected from environment variables.
+    for name in ("langextract.core.base_model", "langextract.core.types", "langextract.core.data"):
+        importlib.import_module(name)
+    return library
+
+
+def load_library():
+    return _import_langextract()
 
 
 def extract_passages(library, read_prompt, claim: str, text: str) -> list[tuple]:
