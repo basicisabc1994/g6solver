@@ -19,7 +19,6 @@ import concurrent.futures
 import dis
 import hashlib
 import inspect
-import importlib.machinery
 import json
 import os
 import re
@@ -413,6 +412,15 @@ def path_inside(root, path):
         return False
 
 
+def find_owned(name, locations):
+    """Only held/deleted module files beneath locations used for this find can own it."""
+    candidates = globals().get('_owned_module_files', ())
+    leaf = name.rsplit('.', 1)[-1]
+    return any(path_key(os.path.join(location or os.getcwd(), leaf + suffix)) in candidates
+               for location in locations if type(location) is str
+               for suffix in ('.py', '/__init__.py'))
+
+
 def own_import_absent(exc, args):
     """Read explicit host module ownership first, then unambiguous regular packages."""
     if not exception_matches(exc, ImportError):
@@ -426,24 +434,9 @@ def own_import_absent(exc, args):
         return True
     tree = path_key(globals().get('root', os.getcwd()))
     parts = name.split('.')
-    owners = globals().get('data', {}).get('own_modules', ())
-    inventory = globals().get('data', {}).get('own_module_paths')
-    if inventory is not None:
-        # Potential names retain their import entry. An unused archive owns nothing;
-        # a later entry cannot claim a child of an earlier selected regular package.
-        entries = {path_key(os.path.join(tree, entry)): names for entry, names in inventory.items()}
-        owners = ()
-        for prefix in sys.path:
-            if type(prefix) is not str:
-                continue
-            folder = path_key(prefix or os.getcwd())
-            spec = importlib.machinery.PathFinder.find_spec(parts[0], [folder])
-            names = entries.get(folder, ())
-            if name in names:
-                owners = names
-                break
-            if spec is not None and spec.loader is not None:
-                break
+    # A recorded find, not a potential-name inventory or a replay of precedence,
+    # decides which held/deleted file could supply the missing module.
+    owners = {name for name, owned in globals().get('_find_ownership', {}).items() if owned}
     if missing_module and name in owners:
         return True
     if not missing_module:
@@ -491,8 +484,22 @@ def own_import_absent(exc, args):
                    or (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                        and node.func.id in ('exec', 'globals', 'locals', 'setattr')) for node in nodes)
 
-    def owned_spec(name, locations):
-        spec = importlib.machinery.PathFinder.find_spec(name, locations)
+    def owned_spec(name):
+        loaded = sys.modules.get(name)
+        spec = globals().get('_selected_import_specs', {}).get(name)
+        if spec is None and type(loaded) is type(sys):
+            spec = type(sys).__dict__['__dict__'].__get__(loaded).get('__spec__')
+        if spec is None:
+            # Portable setup can fail before installing the observer. An
+            # initializer's traceback retains Python's actual selected spec.
+            trace = BaseException.__dict__['__traceback__'].__get__(exc)
+            while trace is not None:
+                space = trace.tb_frame.f_globals
+                if space.get('__name__') == name:
+                    spec = space.get('__spec__')
+                    if spec is not None:
+                        break
+                trace = trace.tb_next
         if spec is None:
             return None
         archive = getattr(spec.loader, 'archive', None)
@@ -510,35 +517,32 @@ def own_import_absent(exc, args):
         except (OSError, ImportError, AttributeError):
             return False
 
-    for prefix in sys.path:
-        if type(prefix) is not str:
-            continue
-        folder = path_key(prefix or os.getcwd())
-        selected = importlib.machinery.PathFinder.find_spec(parts[0], [folder])
-        if not path_inside(tree, folder):
-            if selected is not None and selected.loader is not None:
-                break
-            continue
-        locations = [folder]
-        for end in range(1, len(parts)):
-            spec = owned_spec('.'.join(parts[:end]), locations)
-            if not regular(spec):
-                break
-            locations = list(spec.submodule_search_locations)
-        else:
-            spec = owned_spec(name, locations)
-            if missing_module:
-                if len(parts) > 1 and spec is None:
-                    return True
-                continue
-            if type(path) is not str or spec is None or type(spec.origin) is not str:
-                continue
-            if path_key(spec.origin) == path_key(path) and (spec.submodule_search_locations is None or regular(spec)):
-                return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports')
-                             or globals().get('_pending_imports', lambda: False)())
-                            and guarded_export(spec.loader.get_source(name)))
-        if selected is not None and selected.loader is not None:
-            break
+    # Preserve the established closed-package/export failure decisions from the
+    # package Python loaded. They do not grant failed-find ownership to R1'.
+    if missing_module:
+        if len(parts) > 1 and regular(owned_spec(name.rpartition('.')[0])):
+            return True
+        # Portable setup has no find observer. A direct, named code exception
+        # in the requested initializer is still a code failure, not a failed find.
+        if len(parts) > 1 and args and type(args[0]) is str and '_find_ownership' not in globals():
+            selected = owned_spec(args[0])
+            trace = BaseException.__dict__['__traceback__'].__get__(exc)
+            while trace is not None and trace.tb_next is not None:
+                trace = trace.tb_next
+            if (selected is not None and trace is not None
+                    and trace.tb_frame.f_globals.get('__spec__') is selected
+                    and type(selected.origin) is str
+                    and path_key(trace.tb_frame.f_code.co_filename) == path_key(selected.origin)):
+                from dis import opmap as portable_opcodes
+
+                return trace.tb_frame.f_code.co_code[trace.tb_lasti] == portable_opcodes['RAISE_VARARGS']
+        return False
+    spec = owned_spec(name)
+    if type(path) is str and spec is not None and type(spec.origin) is str:
+        if path_key(spec.origin) == path_key(path) and (spec.submodule_search_locations is None or regular(spec)):
+            return not ((globals().get('_missing_preparation_imports') or globals().get('_missing_imports')
+                         or globals().get('_pending_imports', lambda: False)())
+                        and guarded_export(spec.loader.get_source(name)))
     return False
 
 
@@ -549,9 +553,15 @@ def track_imports():
     import threading
 
     global _missing_preparation_imports, _missing_imports, _missing_import_requests, _pending_imports
-    global _missing_request_identities, _failed_import_finds
+    global _missing_request_identities, _failed_import_finds, _call_failed_finds, _find_ownership, _owned_module_files
+    global _selected_import_specs
     _missing_preparation_imports, _missing_imports, _missing_import_requests = set(), [], set()
     _missing_request_identities, _failed_import_finds = set(), []
+    _call_failed_finds, _find_ownership = [], {}
+    _selected_import_specs = {}
+    tree = globals().get('root', os.getcwd())
+    _owned_module_files = {path_key(os.path.join(tree, path))
+                           for paths in globals().get('data', {}).get('own_module_files', {}).values() for path in paths}
     load = importlib._bootstrap._find_and_load
     find = importlib._bootstrap._find_spec
     unlocked = importlib._bootstrap._find_and_load_unlocked.__code__
@@ -570,11 +580,18 @@ def track_imports():
         return active.requests
 
     def failed_find(name, path, target=None):
+        locations = tuple(sys.path if path is None else path)
         spec = find(name, path, target)
         if spec is None:
             if not hasattr(active, 'finds'):
                 active.finds = []
             active.finds.append(name)
+            owned = find_owned(name, locations)
+            _find_ownership[name] = owned
+            _call_failed_finds.append((name, owned))
+        else:
+            _find_ownership.pop(name, None)
+            _selected_import_specs[name] = spec
         return spec
 
     def failed_cause(exc):
@@ -601,13 +618,8 @@ def track_imports():
     def requested_absent(name):
         # Only absence of the requested owned module is a code failure here. Never let the missing name
         # of a dependency erase an escaping failure of an existing requested module.
-        locations = sys.path
-        parts = name.split('.')
-        for end in range(1, len(parts) + 1):
-            spec = importlib.machinery.PathFinder.find_spec('.'.join(parts[:end]), locations)
-            if spec is None or end < len(parts) and spec.submodule_search_locations is None:
-                return own_import_absent(ModuleNotFoundError(name=name), ())
-            locations = spec.submodule_search_locations
+        if name in _find_ownership:
+            return _find_ownership[name] or own_import_absent(ModuleNotFoundError(name=name), ())
         return False
 
     def requester(frame):
@@ -959,6 +971,7 @@ BOOTSTRAP = (CODE_CARRIER_HELPERS + inspect.getsource(observable_exception) + '\
              + inspect.getsource(_exception_observation) + '\n' + inspect.getsource(CheckSetupError) + '\n'
              + inspect.getsource(ObservationUnavailable) + '\n'
              + inspect.getsource(path_key) + '\n' + inspect.getsource(path_inside) + '\n'
+             + inspect.getsource(find_owned) + '\n'
              + inspect.getsource(own_import_absent) + '\n'
              + inspect.getsource(track_imports) + '\n'
              + inspect.getsource(setup_call) + '\n' + inspect.getsource(runtime_method) + '\n'
@@ -1159,12 +1172,16 @@ def named(spec):
     except Exception:
         return None
 def resolved():
+    global import_error_types
+    import_error_types = {}
     found = {}
     for spec in data["errors"]:
         key = dumps(spec, sort_keys=True)
         error = fixed[key] if key in fixed else named(spec)
         alive.append(error)
         found[key] = None if error is None else identity(error)
+        if error is not None and any(base is ImportError for base in type.__dict__['__mro__'].__get__(error)):
+            import_error_types[key] = identity(error)
     return found
 
 def setup_failed(exc, *, constructor=False):
@@ -1230,7 +1247,7 @@ def observe(request):
 def observe_calls():
     global errors, outcomes, alive
     global _missing_imports, _missing_import_requests
-    global _missing_request_identities, _failed_import_finds
+    global _missing_request_identities, _failed_import_finds, _call_failed_finds
     try:
         function = load(data["function"])
     except CheckSetupError as exc:
@@ -1256,6 +1273,9 @@ def observe_calls():
         _missing_request_identities = set(preparation_identities)
         _failed_import_finds = list(preparation_finds)
         args, kwargs = copy.deepcopy(call["args"]), copy.deepcopy(call.get("kwargs", {}))
+        # R1' reads only the dynamic extent of this call, including caught finds
+        # and finds on worker threads. Preparation and previous calls are excluded.
+        _call_failed_finds = []
         try:
             result = function(*args, **kwargs)
         except CheckSetupError as exc:
@@ -1264,6 +1284,7 @@ def observe_calls():
             if ((execution_control(exc) and (raised_during_setup(exc) or not exception_matches(exc, KeyboardInterrupt)))
                     or (raised_during_setup(exc) and exception_matches(exc, CheckSetupError))):
                 raise
+            call_finds = tuple(_call_failed_finds)
             preparation = setup_outcome(exc)
             if preparation is not None:
                 return setup_failed(preparation, constructor=raised_during_setup(exc, 'constructor'))
@@ -1279,6 +1300,7 @@ def observe_calls():
                 # An import that did not run cannot establish even a confirmed raises-ImportError outcome.
                 outcomes[-1]['unavailable_import'] = exception_detail(unavailable, 'setup')
         else:
+            call_finds = tuple(_call_failed_finds)
             errors = resolved()
             one = {"returned": encode(result), "arguments": [encode(arg) for arg in args]}
             if data["probe"]:
@@ -1287,6 +1309,11 @@ def observe_calls():
             outcomes.append(one)
         # Retain shared preparation and this call's imports without marking independent cases.
         outcomes[-1].update(import_mark())
+        names = sorted({name for name, owned in call_finds if not owned})
+        if names and 'raised' in outcomes[-1]:
+            matches = {key: names for key, token in import_error_types.items() if token in outcomes[-1]['raised']}
+            if matches:
+                outcomes[-1]['import_error_finds'] = matches
     return {"version": "observation.v2", "outcomes": outcomes, "errors": errors}
 
 def publish(value):
@@ -1472,6 +1499,17 @@ def read_frame(raw: bytes) -> dict | None:
                         or not one['unavailable_import'].startswith(ObservationUnavailable.DETAIL + ': ')):
                     return None
                 fields.remove('unavailable_import')
+            if 'import_error_finds' in fields:
+                finds = one['import_error_finds']
+                if (value['version'] != 'observation.v2' or 'raised' not in fields
+                        or type(finds) is not dict or not finds or len(finds) > len(value['errors'])
+                        or any(key not in value['errors'] or type(value['errors'][key]) is not int
+                               or value['errors'][key] not in one['raised']
+                               or not valid_marks({'missing_import': ObservationUnavailable.DETAIL,
+                                                   'missing_imports': names})
+                               for key, names in finds.items())):
+                    return None
+                fields.remove('import_error_finds')
             if 'exception_detail' in fields:
                 detail = one['exception_detail']
                 if (value['version'] != 'observation.v2'
@@ -1622,6 +1660,16 @@ def finish(code: int | None, raw: bytes, data: dict) -> dict:
                 "owned_probe": True, "observations": [{"case": index, "input": call, "output": one["probe"]}
                     for index, (call, one) in enumerate(zip(calls, observed["outcomes"], strict=True))]},
                       observed['outcomes'], list(range(len(calls))))
+    # Only a matching ImportError-family expectation can consume the full find
+    # window. Apply this after the existing independence decisions so this one
+    # confirmation rule does not alter another call's failure or rerun policy.
+    for case, outcome in zip(calls, observed['outcomes'], strict=True):
+        names = outcome.get('import_error_finds', {}).get(_encoded(case.get('error')))
+        if case.get('expect') == 'raises' and names and 'unavailable_import' not in outcome:
+            outcome.update(unavailable_import=ObservationUnavailable.DETAIL + ': builtins.ImportError',
+                           missing_import=ObservationUnavailable.DETAIL,
+                           missing_imports=sorted(set(outcome.get('missing_imports', ())) | set(names)),
+                           missing_import_details=sorted(set(outcome.get('missing_import_details', ())) | set(names)))
     failures = []
     for index, (case, outcome) in enumerate(zip(calls, observed["outcomes"], strict=True)):
         expected = case["expect"]
@@ -1715,6 +1763,7 @@ def request(data: dict, *, budget_s: float = 10) -> dict:
             "probe": "cases" not in data, "mode": data.get("mode", "outputs"), 'budget_s': budget_s,
             **({'own_modules': data['own_modules']} if 'own_modules' in data else {}),
             **({'own_module_paths': data['own_module_paths']} if 'own_module_paths' in data else {}),
+            **({'own_module_files': data['own_module_files']} if 'own_module_files' in data else {}),
             **({'import_roots': data['import_roots']} if 'import_roots' in data else {})}
 
 

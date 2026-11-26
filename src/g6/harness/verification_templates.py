@@ -890,16 +890,20 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
              | set(getattr(getattr(tree, 'change', None), 'files', ())))
     modules = set()
     files = {}
+    held_files = {}
     archive_members = _archive_members(tree, paths)
     by_path = {}
     for archive, members in archive_members.items():
-        owned = by_path.setdefault(archive, set())
+        disk, exact = repo_tests._on_disk(archive)
+        owned = by_path.setdefault(disk, set()) if exact else set()
         for member in members:
             if member.endswith('.py'):
                 module = member[:-12] if member.endswith('/__init__.py') else member[:-3]
                 parts = module.split('/')
                 if all(part.isidentifier() for part in parts):
                     owned.update('.'.join(parts[:end]) for end in range(1, len(parts) + 1))
+                    if exact:
+                        held_files.setdefault('.'.join(parts), []).append(disk + '/' + member)
         modules.update(owned)
     for prefix in tree.folders():
         for path in paths:
@@ -915,9 +919,13 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                 by_path.setdefault(prefix.rstrip('/') or '.', set()).update(
                     '.'.join(parts[:end]) for end in range(1, len(parts) + 1))
                 files.setdefault('.'.join(parts), []).append(path)
+                disk, exact = repo_tests._on_disk(path)
+                if exact:
+                    held_files.setdefault('.'.join(parts), []).append(disk)
     # Keep the historical potential-name inventory, but do not grant archive names
     # ownership until the child resolves the actual ordered path used by that run.
-    full = ({'own_modules': sorted(modules), **({'own_module_paths': {
+    full = ({'own_modules': sorted(modules), 'own_module_files': {
+        name: sorted(set(paths)) for name, paths in sorted(held_files.items())}, **({'own_module_paths': {
         prefix: sorted(names) for prefix, names in by_path.items() if names}} if archive_members else {})}
             if modules else {})
     if len(json.dumps(sorted(modules))) > 8192 and not archive_members:
@@ -966,7 +974,8 @@ def _own_modules(tree: Tree, target: Target, side: str) -> dict:
                     except (ValueError, SyntaxError):
                         return full
         modules.intersection_update(wanted)
-    return {**full, 'own_modules': sorted(modules)} if modules else {}
+    return {**full, 'own_modules': sorted(modules), 'own_module_files': {
+        name: paths for name, paths in full['own_module_files'].items() if name in modules}} if modules else {}
 
 
 def _call_target(tree: Tree, dotted: str, side: str, constructor: MethodConstructor | None = None) -> Target:
@@ -1669,7 +1678,7 @@ def compile_text(definition: TemplateDefinition, data: dict, *, tree: Tree | Non
             return runner.ExecutableSource(compact, data)
         # The product runner receives the full inventory through request(data), independent of this literal.
         source = definition.text.replace(SLOT, ascii({key: value for key, value in data.items()
-                                                     if key not in ('own_modules', 'own_module_paths')}))
+                                                     if key not in ('own_modules', 'own_module_paths', 'own_module_files')}))
         return runner.ExecutableSource(source, data)
     return source
 
