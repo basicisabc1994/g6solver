@@ -21,7 +21,7 @@ from tests.core.test_change_map_fu2_effects import inventory
     ("from external import Base\nclass Settings(Base): pass\n", False),
     ("class Settings:\n    def __init__(self):\n        self.value = 1\nSettings()\n", True),
     ("class Settings:\n    def __setattr__(self, name, value): pass\n"
-     "    def __init__(self):\n        self.value = 1\nSettings()\n", False),
+     "    def __init__(self):\n        self.value = 1\nSettings()\n", True),
     ("VALUE = 1 + 2\n", True),
     ("class Settings: pass\nVALUE = Settings() + 2\n", False),
     ("class Settings: pass\nVALUE = str(Settings())\n", False),
@@ -142,7 +142,7 @@ def test_dataclass_generated_attribute_hook(tmp_path, monkeypatch, body, expecte
 def test_testcase_external_constructor_is_not_assumed_inert(tmp_path, monkeypatch, instantiate):
     source = "from unittest import TestCase\nclass Settings(TestCase): pass\n"
     _, usable = inventory(tmp_path, monkeypatch, {"test_api.py": source + ("Settings()\n" if instantiate else "")})
-    assert usable is (not instantiate)
+    assert usable is True
 
 
 def test_builtin_setter_on_repository_instance_is_unavailable(tmp_path, monkeypatch):

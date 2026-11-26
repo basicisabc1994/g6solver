@@ -5,6 +5,8 @@ import inspect
 
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.core.git_name import GitName, shown_name
 from g6.harness import change_map, patch_review
 from tests.harness.test_change_map import change, target
@@ -51,7 +53,7 @@ def test_injected_collector_expands_file_with_pytest_node_ids():
     after = {**before, "api.py": API.replace("return 1", "return 2")}
 
     def collector(repo, checks, **kwargs):
-        return {"status": "available", "nodes": ["test_api.py::check_call"]}
+        return collection_answer(before, {"status": "available", "nodes": ["test_api.py::check_call"]})
 
     record = change_map.build(change(before, after), before, after, stated_checks=("test_api.py",),
                               collector=collector)
@@ -86,7 +88,7 @@ def test_reader_accepts_an_injected_collector(tmp_path):
     delta = repository(tmp_path, before, {**before, "api.py": API.replace("return 1", "return 2")})
 
     def collector(repo, checks, **kwargs):
-        return {"status": "available", "nodes": ["test_api.py::test_call"]}
+        return collection_answer(before, {"status": "available", "nodes": ["test_api.py::test_call"]})
 
     record = patch_review._change_neighbourhood(delta, ("test_api.py",), (), (), deadline=1e20,
                                                collector=collector)

@@ -71,7 +71,7 @@ def test_folder_identity_binds_one_digest(tmp_path, present, conflict):
         assert (tmp_path / run).samefile(tmp_path / run.swapcase())
     cases = [SimpleNamespace(origins=[{"run": run}], digest="a"),
              SimpleNamespace(origins=[{"run": run.swapcase()}], digest="b" if conflict else "a")]
-    assert rc._unique_origin_digests(cases, source=tmp_path) is (not conflict)
+    assert rc._unique_origin_digests(cases, source=tmp_path) is (present and not conflict)
 
 
 def test_source_refresh_rejects_case_aliased_origin_conflict(batch, monkeypatch, capsys):

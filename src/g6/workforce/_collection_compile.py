@@ -87,5 +87,5 @@ def compile_sources(request):
 if __name__ == "__main__":
     try:
         print(json.dumps({"compiled": compile_sources(json.load(sys.stdin))}))
-    except (ImportError, OSError, ValueError, TypeError, SyntaxError, RecursionError) as exc:
+    except (ImportError, OSError, ValueError, TypeError, SyntaxError, RecursionError, MemoryError) as exc:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))

@@ -2764,7 +2764,8 @@ class CollectionEffects:
         # existing read. Function bodies otherwise matter only when called.
         for node in self._all_nodes(file):
             component_process.checkpoint()
-            if (isinstance(node, _FUNCTIONS) and node.name.startswith("pytest_") or
+            if (isinstance(node, _FUNCTIONS) and node.name.startswith("pytest_") and not
+                    self._selection_hook(node, self.scopes[file]) or
                     isinstance(node, ast.Name) and (node.id in ("pytest_plugins", "collect_ignore", "collect_ignore_glob") or
                         isinstance(node.ctx, ast.Store) and node.id.startswith("pytest_")) or
                     isinstance(node, ast.ImportFrom) and any(
@@ -2779,6 +2780,42 @@ class CollectionEffects:
             return all(self._pytest_value(binding, 0, binding_name=name)
                        for name, binding in list(scope.bindings.items()))
         return True
+
+    def _selection_hook(self, node, scope):
+        """Two remove-only hook shapes cannot introduce or replace a body.
+
+        Everything else, including decorators, defaults, alternate signatures,
+        arbitrary calls and nonempty replacement lists, stays unavailable.
+        """
+        if (not isinstance(node, ast.FunctionDef) or node.decorator_list or node.returns or node.type_params or
+                node.args.posonlyargs or node.args.vararg or node.args.kwarg or node.args.kwonlyargs or
+                node.args.defaults or any(arg.annotation for arg in node.args.args) or len(node.body) != 1):
+            return False
+        condition = node.body[0]
+        if (not isinstance(condition, ast.If) or condition.orelse or len(condition.body) != 1 or
+                not isinstance(condition.test, ast.Compare) or len(condition.test.ops) != 1 or
+                len(condition.test.comparators) != 1):
+            return False
+        test, action = condition.test, condition.body[0]
+        arguments = [arg.arg for arg in node.args.args]
+        if node.name == "pytest_pycollect_makeitem" and arguments == ["collector", "name", "obj"]:
+            return (isinstance(test.left, ast.Name) and test.left.id == "name" and
+                    isinstance(test.ops[0], ast.Eq) and isinstance(test.comparators[0], ast.Constant) and
+                    isinstance(test.comparators[0].value, str) and isinstance(action, ast.Return) and
+                    isinstance(action.value, ast.List) and not action.value.elts)
+        if node.name == "pytest_collection_modifyitems" and arguments == ["items"]:
+            call = test.left
+            return (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and
+                    self.follow(scope.resolve(call.func)) == "builtins.len" and not call.keywords and
+                    len(call.args) == 1 and isinstance(call.args[0], ast.Name) and call.args[0].id == "items" and
+                    isinstance(test.ops[0], ast.NotEq) and isinstance(test.comparators[0], ast.Constant) and
+                    type(test.comparators[0].value) is int and isinstance(action, ast.Assign) and
+                    len(action.targets) == 1 and isinstance(action.targets[0], ast.Subscript) and
+                    isinstance(action.targets[0].value, ast.Name) and action.targets[0].value.id == "items" and
+                    isinstance(action.targets[0].slice, ast.Slice) and not any((action.targets[0].slice.lower,
+                        action.targets[0].slice.upper, action.targets[0].slice.step)) and
+                    isinstance(action.value, ast.List) and not action.value.elts)
+        return False
 
     @staticmethod
     def _pytest_names(target):

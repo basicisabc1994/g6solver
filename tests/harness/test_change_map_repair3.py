@@ -2,6 +2,8 @@
 """Regression classes for file identity, pytest collectors and source headers."""
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map, patch_review
 from tests.harness.test_change_map import change, mapped, target
 from tests.harness.test_change_map_repair2 import API, reader_record
@@ -26,8 +28,8 @@ def test_ambiguous_import_does_not_choose_either_file():
     before = {"api.py": API, "src/api.py": API,
               "test_api.py": "from api import neighbour\ndef test_call():\n    neighbour()\n"}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                    stated_checks=("test_api.py",), collector=lambda *a, **k: {
-                        "status": "available", "nodes": ["test_api.py::test_call"]})
+                    stated_checks=("test_api.py",), collector=lambda *a, **k: collection_answer(before, {
+                        "status": "available", "nodes": ["test_api.py::test_call"]}))
     assert target(record, "neighbour")["exercised"] is False
 
 
@@ -51,8 +53,8 @@ def test_failed_colliding_file_does_not_make_the_import_unambiguous(monkeypatch)
     before = {"api.py": API, "src/api.py": API,
               "test_api.py": "from api import neighbour\ndef test_call():\n    neighbour()\n"}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                    stated_checks=("test_api.py",), collector=lambda *a, **k: {
-                        "status": "available", "nodes": ["test_api.py::test_call"]})
+                    stated_checks=("test_api.py",), collector=lambda *a, **k: collection_answer(before, {
+                        "status": "available", "nodes": ["test_api.py::test_call"]}))
     assert target(record, "neighbour")["exercised"] is False
     assert any("src/api.py" in s["check"] and "RecursionError" in s["reason"] for s in record["skipped"])
 
@@ -85,7 +87,9 @@ def test_configured_patterns_apply_to_the_whole_chain(config, text, parent, expe
     before = {"api.py": API, "test_api.py": source, config: text}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
                     stated_checks=("test_api.py",))
-    assert target(record, "neighbour")["exercised"] is expected
+    # 6ef4fdc4: no collection establishes neither a positive nor a negative.
+    assert target(record, "neighbour")["exercised"] == "uncertain"
+    assert target(record, "neighbour")["checks"] == []
 
 
 def test_empty_primary_config_masks_lower_priority_patterns():
@@ -95,7 +99,9 @@ def test_empty_primary_config_masks_lower_priority_patterns():
                              "    def test_call(self):\n        neighbour()\n"}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
                     stated_checks=("test_api.py",))
-    assert target(record, "neighbour")["exercised"] is True
+    # 6ef4fdc4: config precedence alone cannot expand an uncollected file.
+    assert target(record, "neighbour")["exercised"] == "uncertain"
+    assert target(record, "neighbour")["checks"] == []
 
 
 @pytest.mark.parametrize("config", ["[pytest]\npython_functions = check_*\n", "[pytest\n"])
@@ -114,18 +120,23 @@ def test_reader_supplies_collection_config_or_disables_selection(tmp_path, monke
     monkeypatch.setattr(rt, "blob_bytes", lambda repo, key: blobs[key])
     record = patch_review._change_neighbourhood(change(before, after, tmp_path), ("test_api.py",), (), (),
                                                 deadline=10**20)
-    assert target(record, "neighbour")["exercised"] is config.startswith("[pytest]")
+    assert target(record, "neighbour")["exercised"] == "uncertain"
     if not config.startswith("[pytest]"):
         assert any("pytest.ini" in s["check"] for s in record["skipped"])
 
 
+_HIERARCHY_LIMIT = pytest.mark.xfail(strict=True, reason="known limit: without collection a file selection is not "
+                                                       "checked for hierarchy skips (KNOWN_LIMITS)")
+
+
 @pytest.mark.parametrize("base, expected", [
-    ("class Base:\n    def test_call(self):\n        neighbour()\n"
-     "class TestBad(object, Base):\n    pass\n", False),
+    pytest.param("class Base:\n    def test_call(self):\n        neighbour()\n"
+                 "class TestBad(object, Base):\n    pass\n", False, marks=_HIERARCHY_LIMIT),
     ("class object:\n    def test_call(self):\n        neighbour()\n"
      "class TestGood(object):\n    pass\n", True),
-    ("from builtins import object as Root\nclass Base:\n"
-     "    def test_call(self):\n        neighbour()\nclass TestBad(Root, Base):\n    pass\n", False),
+    pytest.param("from builtins import object as Root\nclass Base:\n"
+                 "    def test_call(self):\n        neighbour()\nclass TestBad(Root, Base):\n    pass\n", False,
+                 marks=_HIERARCHY_LIMIT),
     ("class object:\n    def test_call(self):\n        neighbour()\n"
      "Alias = object\nclass TestGood(Alias):\n    pass\n", True),
 ])
@@ -133,7 +144,9 @@ def test_resolved_object_participates_in_c3(base, expected):
     before = {"api.py": API, "test_api.py": "from api import neighbour\n" + base}
     record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
                     stated_checks=("test_api.py",))
-    assert target(record, "neighbour")["exercised"] is expected
+    # 6ef4fdc4: no collection establishes neither a positive nor a negative.
+    assert target(record, "neighbour")["exercised"] == "uncertain"
+    assert target(record, "neighbour")["checks"] == []
     if not expected:
         assert any("test_api.py" in s["check"] and "hierarchy" in s["reason"] for s in record["skipped"])
 

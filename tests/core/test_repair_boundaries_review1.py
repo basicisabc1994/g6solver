@@ -46,7 +46,15 @@ def test_undeclared_arguments_send_no_source_and_never_execute_tool(tmp_path, mo
     assert reply["repair"]["fill"] == []
     assert "synthetic-secret" not in json.dumps(reply)
     assert captures == [()]
-    assert not list(home.rglob("*")), "No grant, disclosure, source record or tool state is written"
+    # since 3d45b793 the refusal goes through repair.observe, which writes the repair log's rows of codes and ids
+    # (9f85fcf7) on its own thread (42a3f587): that log is all that is written, and no argument reaches it
+    from g6.core import repair_log
+    assert repair_log.flush(10)
+    written = sorted(p.relative_to(home).as_posix() for p in home.rglob("*") if p.is_file())
+    assert set(written) <= {"repairs/repairs.jsonl", "repairs/repairs.lock"}, (
+        "No grant, disclosure, source record or tool state is written", written)
+    assert not any("synthetic-secret" in (home / name).read_text(encoding="utf-8", errors="replace")
+                   for name in written)
 
 
 def test_cross_process_log_appends_keep_all_twelve_thousand_rows(tmp_path, monkeypatch):

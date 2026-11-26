@@ -35,10 +35,12 @@ def test_unselected_exception_import_must_not_change_the_confirmed_fresh_call(tm
         capture_output=True, text=True, check=True, timeout=10)
     assert fresh.stdout.strip() == '-1'
     children = []
+    collections = []
 
     def execute(command, *, cwd, env, timeout_s, log, **kwargs):
         child = subprocess.run(command, cwd=cwd, env=env, capture_output=True, timeout=timeout_s)
         children.append(child.returncode)
+        collections.append("--collect-only" in command)
         log.write_bytes(child.stdout + child.stderr)
         return child.returncode
 
@@ -49,10 +51,11 @@ def test_unselected_exception_import_must_not_change_the_confirmed_fresh_call(tm
     reply = behaviour.reviewed(patch_review.review_patch, str(root), TASK, requirements=REQUIREMENTS)
     assessment = reply['assessment']
     [held] = assessment['confirmed_expectations']['expectations']
-    # Changed on purpose from the review's `[0, 0, 0]`: the third child is the replay, which the product makes only
-    # after the patch run passed. It passed there because of the import this test is about; without that import the
-    # patch run observes the fresh call's -1 and fails, so two children run (the patch run and the base control).
-    assert children == [0, 0]
+    # df32ce0b / 6ef4fdc4 add one advisory collection child. The two
+    # scenario children remain the patch run and base control; no replay runs
+    # after the patch scenario fails. Collection never executes test bodies.
+    assert children == [0, 0, 0]
+    assert sum(collections) == 1
     assert held['check']['runs']['patch']['result'] == 'failed' and 'again' not in held['check']['runs']
     assert held['check']['runs']['base']['result'] == 'failed'
     [evidence] = assessment['confirmed_expectations']['evidence']['expectations']

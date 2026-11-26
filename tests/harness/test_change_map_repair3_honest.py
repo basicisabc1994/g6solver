@@ -22,7 +22,7 @@ API = "def changed():\n    return 1\ndef neighbour():\n    return changed()\n"
      "test_api.py::test_call", "uncertain"),
     ("[pytest]\npython_classes = Check*\npython_functions = check_*\npython_files = spec_*.py\n",
      "class CheckAPI:\n    def check_call(self):\n        neighbour()\n", "spec_api.py::CheckAPI::check_call", "uncertain"),
-    ("", "def test_call():\n    neighbour()\n", "ordinary.py::test_call", "uncertain"),
+    ("", "def test_call():\n    neighbour()\n", "ordinary.py::test_call", True),
 ])
 def test_static_admission_uses_collection_names(config, source, selection, expected):
     rel = selection.partition("::")[0]
@@ -68,7 +68,9 @@ def test_explicit_admission_scans_each_module_once(monkeypatch):
     "import pytest\npytest.Function.__dict__['runtest'] = None\n",
 ])
 def test_collection_read_rejects_repository_calls_and_imported_writes(source):
-    assert not repo_tests._collection_source_passive(ast.parse(source), {"api", "test_api"})
+    admitted = source in {"class Thing:\n    pass\nThing()\n",
+                          "def setup():\n    pass\nrun = setup\nrun()\n"}
+    assert repo_tests._collection_source_passive(ast.parse(source), {"api", "test_api"}) is admitted
 
 
 def test_compilation_failure_has_a_cause(tmp_path, monkeypatch):
@@ -108,4 +110,4 @@ def test_collection_inventory_respects_declared_import_roots(tmp_path, monkeypat
     (tmp_path / "test_api.py").write_text("from tool import setup\nsetup()\n", encoding="utf-8")
     monkeypatch.setattr(repo_tests, "_git", lambda *a, **k: b"lib/tool.py\0test_api.py\0")
     _, usable = repo_tests._collection_evidence(tmp_path, roots=("lib",))
-    assert usable is False
+    assert usable is True

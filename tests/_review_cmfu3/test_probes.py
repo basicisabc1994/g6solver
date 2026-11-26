@@ -1,4 +1,4 @@
-﻿import json
+import json
 import pytest
 from g6.workforce import repo_tests
 from tests._review_cmfu2.test_authority import API, NODE, mapped, oracle

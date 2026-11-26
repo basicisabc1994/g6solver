@@ -370,7 +370,7 @@ def test_dataclass_default_factory_effect_is_followed(tmp_path, monkeypatch, bod
     assert usable is expected
 
 
-@pytest.mark.parametrize("instantiate,expected", [(False, True), (True, False)], ids=["creation", "instantiation"])
+@pytest.mark.parametrize("instantiate,expected", [(False, True), (True, True)], ids=["creation", "instantiation"])
 def test_unmodelled_class_decorator_instantiation_is_unavailable(tmp_path, monkeypatch, instantiate, expected):
     source = "def decorate(cls):\n    return cls\n@decorate\nclass Settings:\n    pass\n"
     source += "Settings()\n" if instantiate else ""

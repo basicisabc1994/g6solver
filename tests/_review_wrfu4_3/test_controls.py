@@ -46,7 +46,7 @@ def test_fresh_scoring_keeps_evidence_bound(batch, capsys, mutation):
     elif mutation == "response":
         batch.saved["records"][0]["review"] = {"ok": False}
     elif mutation == "newer":
-        batch.saved["evidence_rule_version"] = 2
+        batch.saved["evidence_rule_version"] = rc.EVIDENCE_RULE_VERSION + 1
     batch.path.write_text(json.dumps(batch.saved), encoding="utf-8")
     status = rc.main(["--score", str(batch.path), "--source", str(batch.source)])
     captured = capsys.readouterr()

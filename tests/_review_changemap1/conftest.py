@@ -26,3 +26,9 @@ def tmp_path():
     path = root / ("case-" + uuid.uuid4().hex)
     path.mkdir(parents=True)
     return path
+
+
+@pytest.fixture(autouse=True)
+def collection_runtime(monkeypatch, request):
+    if os.name == "nt":
+        monkeypatch.setenv("G6_REPO_PYTHON", request.getfixturevalue("confined_python"))

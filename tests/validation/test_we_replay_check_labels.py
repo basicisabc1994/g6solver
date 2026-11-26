@@ -31,7 +31,7 @@ def score(cases, excluded):
     return rc.evaluate(records, cases, modes=["hook"], excluded=excluded)
 
 
-@pytest.mark.parametrize("label", ["base", "round-1", "round-2", "round-123456789"])
+@pytest.mark.parametrize("label", ["base", "round-1", "round-2", "round-123456789", "Round-1", "round-0", "round-01", "round-1\n", "round-\u0661"])
 @pytest.mark.parametrize("fields", [{}, {"patch_applied": False, "passes": "unreadable"},
                                     {"patch_applied": True, "passes": False}])
 def test_known_nonfinal_labels_are_named_metadata(tmp_path, label, fields):
@@ -62,14 +62,21 @@ def test_known_nonfinal_labels_are_named_metadata(tmp_path, label, fields):
 def test_unknown_or_unusable_final_labels_keep_denominator_uncertain(tmp_path, extra):
     labelled_source(tmp_path, extra)
     cases, excluded = rc.enumerate_cases(tmp_path, [TASK])
-    assert len(cases) == 2 and excluded == []
-    assert len(excluded.index_excluded) == 2
-    assert all(row["result"] == 0 and row["reason"] and row["affects_denominator"] is True
+    duplicate = extra.get("patch") == "final"
+    label = extra.get("patch")
+    metadata = isinstance(label, str) and label in {"Round-1", "round-0", "round-01",
+                                                  "round-1\n", "round-\u0661"}
+    assert len(cases) == (0 if duplicate else 2)
+    assert len(excluded) == (2 if duplicate else 0)
+    assert len(excluded.index_excluded) == (6 if duplicate else 2)
+    assert all(row["reason"] and row["affects_denominator"] is (not metadata)
                for row in excluded.index_excluded)
+    if not duplicate:
+        assert all(row["result"] == 0 for row in excluded.index_excluded)
     result = score(cases, excluded)
     assert result["index_excluded"] == excluded.index_excluded
-    assert result["predictions"]["P3"]["status"] == "incomplete"
-    assert result["predictions"]["P3"]["prediction_met"] is None
+    assert result["predictions"]["P3"]["status"] == ("met" if metadata else "incomplete")
+    assert result["predictions"]["P3"]["prediction_met"] is (True if metadata else None)
 
 
 @pytest.mark.parametrize("label", ["base", "round-1"])
@@ -84,4 +91,19 @@ def test_known_nonfinal_label_cannot_supply_a_final_label(tmp_path, label):
     assert cases == []
     assert excluded == [{"bug": TASK.id, "patch": f"{run.rel}/final.patch", "reason": "no archived label"}]
     assert len(excluded.index_excluded) == 1
-    assert excluded.index_excluded[0]["affects_denominator"] is False
+    assert excluded.index_excluded[0]["affects_denominator"] is True
+
+
+@pytest.mark.parametrize("results", [[], [{"patch": "base"}],
+                                    [{"patch": "base"}, {"patch": "round-1"}]])
+def test_missing_final_is_one_check_omission(tmp_path, results):
+    archive = rc.c.Archive(tmp_path)
+    run = archive.start("run", TASK.id)
+    run.write("final.patch", b"unlabelled final")
+    run.finish({}, "finished")
+    check = archive.start("check", TASK.id, checked_run=run.rel)
+    check.finish({"checks": results}, "finished")
+    cases, excluded = rc.enumerate_cases(tmp_path, [TASK])
+    assert cases == []
+    assert len(excluded.index_excluded) == 1
+    assert excluded.index_excluded[0]["affects_denominator"] is True

@@ -10,7 +10,7 @@ from worked_examples import replay_rc as rc
 
 COMMIT = "a" * 40
 IMAGE = "sha256:" + "b" * 64
-TASK = SimpleNamespace(id="black-5634", repo="/home/tester/work/black", parent="c" * 40)
+TASK = SimpleNamespace(id="black-5634", repo=str(Path(__file__).resolve().parent / "synthetic-black"), parent="c" * 40)
 
 
 def archive(root, *, foreign_task=False, check_prefix="check"):

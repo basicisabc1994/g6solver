@@ -134,7 +134,7 @@ def test_rule_digest_covers_batch_start_validation(world, tmp_path, monkeypatch,
         guard.test_evidence_rule_code_requires_a_version_change()
 
 
-@pytest.mark.parametrize("version", [2, float("nan"), "half \ud83d"])
+@pytest.mark.parametrize("version", [rc.EVIDENCE_RULE_VERSION + 1, float("nan"), "half \ud83d"])
 def test_unavailable_versions_emit_standard_json(world, capsys, version):
     world.saved["evidence_rule_version"] = version
     save(world)
@@ -175,7 +175,7 @@ def test_duplicate_records_and_mixed_start_versions_are_refused(world, capsys):
     rows = [json.loads(line) for line in index.read_text(encoding="utf-8").splitlines()]
     for row in rows:
         if row.get("kind") == "replay-rc-batch":
-            row["evidence_rule_version"] = 2
+            row["evidence_rule_version"] = rc.EVIDENCE_RULE_VERSION + 1
     index.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     code, result = score(world, capsys)
     assert code == 2 and result["evidence_source"] == "unavailable"

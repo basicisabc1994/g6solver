@@ -23,7 +23,8 @@ def _ledger(tainted_role, location, category):
 
     def record(role, eid, code, **over):
         bound_fixture = DIRTY if role == tainted_role and location == "binding" else H["FX"]
-        declared_fixture = DIRTY if role == tainted_role and location == "field" else H["FX"]
+        declared_fixture = (bound_fixture if location == "binding" else
+                            DIRTY if role == tainted_role else H["FX"])
         source = H["canonical"](H["CheckBinding"](
             "request", "task", "p-keep", "b" * 64, H["STD"].standard_sha256,
             bound_fixture, code * 64).to_dict())
@@ -73,3 +74,17 @@ def test_contamination_voids_every_receipt_role(role, location, category, incide
     assert trace["ledger_ok"] is True
     if role == "check":
         assert trace["evidence"][0]["contaminated"] is True
+
+
+@pytest.mark.parametrize("declared, refused", [(H["FX"], False), (DIRTY, True)])
+def test_declared_fixture_must_match_custody_binding(declared, refused):
+    from g6.evidence.mapping import NO_ENVIRONMENT
+    from g6.research.echa.custody import about
+
+    source = H["canonical"](H["CheckBinding"](
+        "request", "task", "p-keep", "b" * 64, H["STD"].standard_sha256,
+        H["FX"], "a" * 64).to_dict())
+    rec = H["ev"]("e1", source_ref=source, fixture_version=declared)
+    parts, refusals = about(rec)
+    assert parts.fixture == H["FX"]
+    assert [code for code, _ in refusals] == ([NO_ENVIRONMENT] if refused else [])

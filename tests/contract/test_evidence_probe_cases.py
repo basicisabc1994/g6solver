@@ -104,12 +104,12 @@ def test_echa_refuses_a_formal_check_with_no_negative_control_and_counts_one_wit
 
     led, std, ev = _echa_ledger()
     led.add_evidence(ev("f-lone"))
-    led.add_claim(_claim(std, "c-lone", ["f-lone"], breadth="general"))
+    led.add_claim(_claim(std, "c-lone", ["f-lone"], breadth="covered_cases"))
     lone = evaluate_claim(led, "c-lone")
     assert lone["result"] != "supported" and lone["active_evidence"] == [] and lone["structural"] == ["f-lone"]
     led.add_evidence(ev("f-ctl", purpose="negative_control", result="fail", scope="a seeded defect the check rejects"))
     led.add_evidence(ev("f-held", negative_control_ref="f-ctl"))
-    led.add_claim(_claim(std, "c-held", ["f-held"], breadth="general"))
+    led.add_claim(_claim(std, "c-held", ["f-held"], breadth="covered_cases"))
     held = evaluate_claim(led, "c-held")   # positive control: the same check with its control is active
     assert held["result"] == "supported" and held["active_evidence"] == ["f-held"]
 
@@ -261,3 +261,18 @@ def test_a_confirmed_expectation_is_bound_to_the_question_it_answers():
     with pytest.raises(ValueError, match="question"):
         got.for_question(other)   # an answer to one question never stands for another
     assert json.loads(json.dumps(got.to_dict()))["provenance"] == "person_confirmed"
+
+
+def test_echa_general_breadth_requires_scope_mapping():
+    from g6.research.echa import evaluate_claim
+
+    led, std, ev = _echa_ledger()
+    led.add_evidence(ev("f-ctl", purpose="negative_control", result="fail",
+                        scope="a seeded defect the check rejects"))
+    led.add_evidence(ev("f-held", negative_control_ref="f-ctl"))
+    led.add_claim(_claim(std, "c-covered", ["f-held"], breadth="covered_cases"))
+    led.add_claim(_claim(std, "c-general", ["f-held"], breadth="general"))
+    assert evaluate_claim(led, "c-covered")["result"] == "supported"
+    general = evaluate_claim(led, "c-general")
+    assert general["result"] != "supported"
+    assert "checked_statement_or_scope_mapping_missing" in general["reasons"]

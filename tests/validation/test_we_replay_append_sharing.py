@@ -41,7 +41,7 @@ def test_every_source_open_site_coexists_with_archive_append(tmp_path, monkeypat
         elif site == "content":
             assert rc.Source(tmp_path).read_bytes(content.name) == b"payload"
         else:
-            assert rc.main(["--score", str(score)]) == 0
+            assert rc.main(["--score", str(score)]) == 2
             capsys.readouterr()
 
     @contextmanager

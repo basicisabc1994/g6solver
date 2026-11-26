@@ -2,6 +2,8 @@
 """Static selections cannot enter a class pytest would suppress."""
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map
 from tests.harness.test_change_map import change, target
 from tests.harness.test_change_map_repair2 import API
@@ -46,7 +48,7 @@ def test_real_collection_remains_authoritative_for_custom_collectors():
     source = ("from api import neighbour\nclass SpecOuter:\n    class SpecInner:\n"
               "        def check_call(self):\n            neighbour()\n")
     assert change_map.exercised([{"binding": "api.neighbour"}], {node: source}, collection={
-        node: {"status": "available", "nodes": [node]}}) == {"api.neighbour": [node]}
+        node: collection_answer({"test_api.py": source}, {"status": "available", "nodes": [node]})}) == {"api.neighbour": [node]}
 
 
 @pytest.mark.parametrize("header", ["@decorate\nclass TestOuter:", "class TestOuter(metaclass=Factory):"])

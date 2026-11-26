@@ -110,8 +110,9 @@ def probe(server_id: str, repo: str, client: str, seconds: float = 240.0) -> dic
     connection and its job is polled once it ends. The caller allows the review (``G6_MCP_SENSITIVE``) and switches
     model calls off. ``reply`` is ``returned``, ``withheld`` (G6's consent check withheld the poll's reply),
     ``unfinished`` or ``error``; ``named`` is every source the withheld reply names, ``unshared`` those this home's
-    decisions do not share with the provider (the poll's own arguments aside: they are its literal input), and
-    ``review_input`` the source of the review call's own arguments."""
+    decisions do not share with the provider (the poll's own arguments aside: they are its literal input; and the
+    review call's own literal inputs that no decision names, which admission admits for the session that sent them),
+    and ``review_input`` the source of the review call's own arguments."""
     import asyncio
     import json
     import re
@@ -121,6 +122,7 @@ def probe(server_id: str, repo: str, client: str, seconds: float = 240.0) -> dic
     from mcp.types import Implementation
 
     from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
 
     name, provider = PROBE_CLIENTS[client]
     args = {"repo": str(repo), "task": PROBE_TASK}
@@ -152,8 +154,20 @@ def probe(server_id: str, repo: str, client: str, seconds: float = 240.0) -> dic
     said = re.search(r"Withheld source identifiers: (.*?)\. Provider:", str(inner.get("error", "")))
     named = [part.strip() for part in said.group(1).split(",")] if said else []
     own = cloud.input_source(json.dumps({"job_id": ident}, sort_keys=True))
+    # The review call's own literal inputs (its arguments, and each text in them, as G6's server counts them) are shared
+    # with the session that sent them while no decision names them, as admission admits them; once the person revokes
+    # one, it is unshared.
+    literal = {found["review_input"], *(cloud.input_source(value) for value in args.values())}
+
+    def undecided(source: str) -> bool:
+        try:
+            return not cloud.preview(source, provider)[1]
+        except LLMError:   # sharing state G6 cannot read admits nothing: the input counts as unshared
+            return False
+
     return {**found, "reply": "withheld", "named": named,
-            "unshared": [source for source in named if source != own and not cloud.is_granted(source, provider)]}
+            "unshared": [source for source in named if source != own and not cloud.is_granted(source, provider)
+                         and not (source in literal and undecided(source))]}
 
 
 def main() -> None:

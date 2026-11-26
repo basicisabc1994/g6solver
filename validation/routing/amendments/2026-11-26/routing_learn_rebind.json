@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-26",
+  "before_any_arm": true,
+  "reason": "merge 5 (claude/distill-reach-fu-3) adds the learn route to the using-g6 skill; no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "ce8a43afce147516a2059ab7e722981309ad35dea8a9d1a06850495a83f1e6c1"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2684dad8be2be6406669af15493e5296c9c98c9839db4ff49b46b60b887c1741"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-ce8a43afce14.json",
+    "frozen.json": "frozen.retired-1d0aad8a7cab.json"
+  },
+  "routes": {
+    "learn": {
+      "before": null,
+      "after": "79ff862bd13ff9ac43129d857aabb876c97276223eeb9b84f414488c0436ae8d"
+    },
+    "every-route": {
+      "before": "542bc7d1e448e7cf8c0f72860607546531d7b6a0aad116c028bd2672d750de9b",
+      "after": "4da418590c2f59e1d7924c0b37852e7a31d7bd31d2366eaa612dbe6a6129c94b"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "lead ruling, 2026-11-26: merge 5 ships under the owner's 2026-11-26 freeze ruling and brings the learn route; bind it and the every-route digest it moves before any session runs, as the 2026-11-21 and 2026-11-26 rebinds did; the routing trials have run no session and this changes no result",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment.",
+    "The review route's digest is the one the 2026-11-26 review rebind bound."
+  ]
+}

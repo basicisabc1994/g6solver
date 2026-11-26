@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map, patch_review
 from tests.harness.test_change_map import change, mapped, target
 
@@ -249,7 +251,7 @@ class TestPytestSelections:
         before = {"api.py": API, "test_api.py": source}
         record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
                         stated_checks=["test_api.py::TestAPI"])
-        assert target(record, "neighbour")["exercised"] is False
+        assert target(record, "neighbour")["exercised"] == "uncertain"
     @pytest.mark.parametrize("selection", [
         "test_api.py", "test_api.py::TestAPI", "test_api.py::TestAPI::test_call",
         "test_api.py::TestAPI::test_call[value]",
@@ -262,8 +264,8 @@ class TestPytestSelections:
             source += "class TestAPI(Base):\n    pass\n"
         before = {"api.py": API, "test_api.py": source}
         record = mapped(before, {**before, "api.py": API.replace("return 1", "return 2")},
-                        stated_checks=[selection], collector=lambda *a, **k: {
-                            "status": "available", "nodes": ["test_api.py::TestAPI::test_call[value]"]})
+                        stated_checks=[selection], collector=lambda *a, **k: collection_answer(before, {
+                            "status": "available", "nodes": ["test_api.py::TestAPI::test_call[value]"]}))
         assert target(record, "neighbour")["checks"] == [selection]
 
     def test_other_selected_method_does_not_include_caller(self):

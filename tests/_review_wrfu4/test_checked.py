@@ -56,7 +56,7 @@ def test_failed_and_interrupted_batches(world):
     _, batch, captured = world.live(source, world.tmp / "pin", docker=Docker(bad_pin=True), expect=1)
     assert "task image G6 commit differs from registered commit" in captured.err
     saved = json.loads(batch.read_text(encoding="utf-8"))
-    assert saved["status"] == "failed" and saved["records"] == [] and saved["evidence_rule_version"] == 1
+    assert saved["status"] == "failed" and saved["records"] == [] and saved["evidence_rule_version"] == rc.EVIDENCE_RULE_VERSION
     code, captured = score(batch, world.capsys)
     result = json.loads(captured.out)
     assert code == 0 and all(p["status"] in ("incomplete", "disabled") and p["prediction_met"] is None
@@ -72,7 +72,9 @@ def test_failed_and_interrupted_batches(world):
     assert code == 1 and not captured.out and "absent" in captured.err
 
 
-@pytest.mark.parametrize("version", ["1.0", "1e0", "true", '"1"', "1" + "0" * 30, "-1", "0", "2", "[1]", '{"a": 1}',
+@pytest.mark.parametrize("version", [f"{rc.EVIDENCE_RULE_VERSION}.0", f"{rc.EVIDENCE_RULE_VERSION}e0", "true",
+                                     f'"{rc.EVIDENCE_RULE_VERSION}"', "1" + "0" * 30, "-1", "0",
+                                     str(rc.EVIDENCE_RULE_VERSION + 1), f"[{rc.EVIDENCE_RULE_VERSION}]", '{"a": 1}',
                                      "null", "absent", "1" + "0" * 5000])
 @pytest.mark.parametrize("source_present", [True, False])
 def test_version_spellings(world, version, source_present):
@@ -80,7 +82,7 @@ def test_version_spellings(world, version, source_present):
     rich_source(source)
     live, batch, _ = world.live(source, world.tmp / "out")
     text = batch.read_text(encoding="utf-8")
-    needle = '"evidence_rule_version": 1,'
+    needle = f'"evidence_rule_version": {rc.EVIDENCE_RULE_VERSION},'
     assert text.count(needle) == 1
     batch.write_text(text.replace(needle, "" if version == "absent" else f'"evidence_rule_version": {version},'),
                      encoding="utf-8")

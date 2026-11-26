@@ -582,3 +582,14 @@ stay for the final cohort's own writer. `tasks.json` and `frozen.json` were reti
 `tasks.retired-a7c5e8f6d7e0.json` and `frozen.retired-814d2b62d100.json`) and written again with `freeze.freeze`; no
 session has been run. `tests/validation/test_routing_select_development_amendment.py` holds the record to the files,
 and the rebind's test now reads what the rebind froze from the copy this amendment retired.
+
+### The `review` route rebound, 2026-11-26 (before any arm)
+
+**State: `evidence_pending`.** `amendments/2026-11-26/routing_review_rebind.json` records it: an honesty copy fix in
+the review route's own section of the using-g6 skill (its link to `deliver.md` now reads "review, repair and proposed
+checks"); no session has run; re-frozen before any arm, under the coordinator's ruling of 2026-11-26 (the routing
+trials ship as not yet measured). Only the `review` route's digest moved; every other route digest, every task, the
+bars and `gates.json` are unchanged. `tasks.json` and `frozen.json` were retired with `freeze.retire` (kept as
+`tasks.retired-9f13fb2998d4.json` and `frozen.retired-3765d39af99b.json`) and written again with `freeze.freeze`.
+`tests/validation/test_routing_review_rebind_amendment.py` holds the record to the files, and the two 2026-11-21
+amendments' tests now read what each froze from the copies retired after it.

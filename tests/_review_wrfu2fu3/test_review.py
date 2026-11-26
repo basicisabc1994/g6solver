@@ -20,10 +20,11 @@ TASK = SimpleNamespace(id="black-5634", repo="/synthetic/project", parent="c" * 
 
 
 @pytest.fixture
-def tmp_path(request):
+def tmp_path(request, tmp_path_factory):
     # pytest's mode=0o700 mkdir produces inaccessible Windows sandbox folders.
     # Keep the requested basetemp on real disk using inherited permissions.
-    base = Path(request.config.getoption("basetemp"))
+    base = (Path(request.config.getoption("basetemp"))
+            if request.config.getoption("basetemp") else tmp_path_factory.getbasetemp())
     base.mkdir(parents=True, exist_ok=True)
     path = base / uuid.uuid4().hex
     path.mkdir()

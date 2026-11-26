@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map, patch_review
 from g6.workforce import repo_tests
 from tests.harness.test_change_map import change, target
@@ -102,7 +104,7 @@ def test_collected_helper_path_is_transitive_and_parameter_ids_are_opaque():
     after = {**before, "api.py": API.replace("return 1", "return 2")}
     node = "test_api.py::test_call[id::with.dots[inside]]"
     record = change_map.build(change(before, after), before, after, stated_checks=("test_api.py",),
-                              collection={"test_api.py": {"status": "available", "nodes": [node]}})
+                              collection={"test_api.py": collection_answer(before, {"status": "available", "nodes": [node]})})
     assert target(record, "neighbour")["exercised"] is True
     assert target(record, "neighbour")["checks"] == ["test_api.py"]
 
@@ -215,9 +217,9 @@ def test_available_collection_keeps_inherited_calls_and_unrelated_selection(sele
     from tests.harness.test_change_map_repair2 import CHECKS
 
     other = "test_api.py::TestA::test_other"
-    collection = {selection: {"status": "available", "nodes": [
-        "test_api.py::TestB::test_call[value::with.dots[brackets]]"]},
-        other: {"status": "available", "nodes": [other]}}
+    collection = {selection: collection_answer({"test_api.py": CHECKS}, {"status": "available", "nodes": [
+        "test_api.py::TestB::test_call[value::with.dots[brackets]]"]}),
+        other: collection_answer({"test_api.py": CHECKS}, {"status": "available", "nodes": [other]})}
     calls = change_map.exercised([{"binding": "api.neighbour"}], {selection: CHECKS, other: CHECKS},
                                  collection=collection)
     assert calls == {"api.neighbour": [selection]}
@@ -227,7 +229,7 @@ def test_available_collection_keeps_inherited_calls_and_unrelated_selection(sele
 def test_stubbed_collector_keeps_definite_answers(tmp_path, monkeypatch, calls_neighbour):
     source = "def test_call():\n    " + ("neighbour()" if calls_neighbour else "pass") + "\n"
     record = mapped_repository(tmp_path, source, {}, monkeypatch=monkeypatch,
-                               collector=lambda *a, **k: {"status": "available", "nodes": ["test_api.py::test_call"]})
+                               collector=lambda *a, **k: collection_answer({"test_api.py": "import abc\nfrom api import neighbour\n" + source}, {"status": "available", "nodes": ["test_api.py::test_call"]}))
     sibling = target(record, "neighbour")
     assert sibling["exercised"] is calls_neighbour
     assert sibling["collection"] == "available"

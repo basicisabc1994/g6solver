@@ -22,8 +22,9 @@ _spec.loader.exec_module(synthetic)
 batch = synthetic.batch
 
 @pytest.fixture
-def tmp_path(request):
-    base = Path(request.config.getoption("basetemp"))
+def tmp_path(request, tmp_path_factory):
+    base = (Path(request.config.getoption("basetemp"))
+            if request.config.getoption("basetemp") else tmp_path_factory.getbasetemp())
     base.mkdir(parents=True, exist_ok=True)
     folder = base / uuid.uuid4().hex
     folder.mkdir()
@@ -98,6 +99,9 @@ def test_traverse_only_ancestor_remains_usable(tmp_path, revision):
 def test_cli_honest_batch_below_traverse_only_ancestor(
         batch, tmp_path, monkeypatch, capsys, revision, source):
     module = base_module() if revision == "parent" else rc
+    if source:
+        # The parent control scores the honest batch as its current-rule batch, as it did at rule 1.
+        monkeypatch.setattr(module, "EVIDENCE_RULE_VERSION", rc.EVIDENCE_RULE_VERSION)
     registration = module._parse_registration(module.REGISTRATION.read_bytes())
     monkeypatch.setattr(module, "load_registration", lambda: registration)
     monkeypatch.setattr(synthetic, "rc", module)
@@ -110,12 +114,13 @@ def test_cli_honest_batch_below_traverse_only_ancestor(
 
 
 @pytest.mark.parametrize("source", [False, True], ids=["without-source", "with-source"])
-@pytest.mark.parametrize("version", [0, 1, 2, None, True, 1.0, -1, 10**100])
+@pytest.mark.parametrize("version", [0, rc.EVIDENCE_RULE_VERSION, rc.EVIDENCE_RULE_VERSION + 1, None, True,
+                                     float(rc.EVIDENCE_RULE_VERSION), -1, 10**100])
 def test_replay_save_score_controls(batch, capsys, source, version):
     batch.saved["evidence_rule_version"] = version
     observed = synthetic.score(batch, capsys, source=source)
-    current = type(version) is int and version == 1
-    newer = type(version) is int and version > 1
+    current = type(version) is int and version == rc.EVIDENCE_RULE_VERSION
+    newer = type(version) is int and version > rc.EVIDENCE_RULE_VERSION
     expected = ((0, "batch", "met") if current else
                 (0, "source", "met") if source and not newer else
                 (2, "unavailable", "incomplete"))
@@ -239,16 +244,18 @@ class IntegerSubclass(int):
     pass
 
 
-@pytest.mark.parametrize("version", [None, False, True, 0, -1, 1.0, 1, 2, 10**100,
-                                    IntegerSubclass(1), IntegerSubclass(2)])
+@pytest.mark.parametrize("version", [None, False, True, 0, -1, float(rc.EVIDENCE_RULE_VERSION),
+                                    rc.EVIDENCE_RULE_VERSION, rc.EVIDENCE_RULE_VERSION + 1, 10**100,
+                                    IntegerSubclass(rc.EVIDENCE_RULE_VERSION),
+                                    IntegerSubclass(rc.EVIDENCE_RULE_VERSION + 1)])
 def test_exclusion_reason_uses_exact_integer_control(batch, version):
     batch.saved["evidence_rule_version"] = version
     # Missing start evidence forces the incomplete route even for current-rule data.
     result, status = rc.score_saved(batch.saved)
     assert status == 2
     gap, = result["index_excluded"]
-    newer = type(version) is int and version > 1
-    current = type(version) is int and version == 1
+    newer = type(version) is int and version > rc.EVIDENCE_RULE_VERSION
+    current = type(version) is int and version == rc.EVIDENCE_RULE_VERSION
     unavailable = ("newer evidence rules cannot be reviewed by this code" if newer else
                    "--source is required to re-derive saved evidence")
     reason = ("saved under a newer evidence rule than this code" if newer else

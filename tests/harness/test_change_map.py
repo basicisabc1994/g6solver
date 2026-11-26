@@ -10,8 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness.collection_fixtures import collection_answer
+
 from g6.harness import change_map, patch_review
 from g6.workforce.repo_tests import Change, GitName
+from g6.core.git_name import shown_name
 
 
 BAR = """class ProgressBar:
@@ -117,7 +120,7 @@ def test_exercised_by_name_from_each_check_source(channel):
         # This fixture tests named-call resolution. File expansion is supplied
         # explicitly rather than depending on a host collection backend.
         rel = "tests/test_bar.py" if channel == "changed" else "tests/test_proposed.py"
-        kwargs["collector"] = lambda *a, **k: {"status": "available", "nodes": [rel + "::test_update"]}
+        kwargs["collector"] = lambda *a, **k: collection_answer({rel: source}, {"status": "available", "nodes": [rel + "::test_update"]})
     record = mapped(before, after, **kwargs)
     assert target(record, "ProgressBar.update")["exercised"] is True
     assert not any("ProgressBar.update" in s["check"] for s in record["skipped"])
@@ -205,7 +208,7 @@ def test_rebinding_an_import_does_not_invent_a_caller():
 def test_invalid_proposed_check_has_a_named_skip():
     record = mapped({"bar.py": BAR}, {"bar.py": PATCHED_BAR},
                     proposed_checks=[{"file": "test_bad.py", "source": "def broken(:", "test": "broken"}])
-    assert target(record, "ProgressBar.update")["exercised"] is False
+    assert target(record, "ProgressBar.update")["exercised"] == "uncertain"
     assert any("test_bad.py" in s["check"] and "syntax" in s["reason"] for s in record["skipped"])
 
 
@@ -242,7 +245,7 @@ def test_git_listed_module_parts_are_quoted_before_becoming_binding_text():
     rel = GitName(b'src/odd\n\xff/bar.py')
     record = mapped({rel: BAR}, {rel: PATCHED_BAR})
     update = target(record, "ProgressBar.update")
-    assert update["file"] == rel
+    assert update["file"] == shown_name(rel)
     assert update["binding"] == '"odd\\n\\377".bar.ProgressBar.update'
     assert all("\n" not in item["binding"] and "\udcff" not in item["binding"] for item in record["targets"])
 
@@ -268,8 +271,9 @@ def test_git_listed_folder_selection_preserves_exact_path_parts(folder, listed, 
     before = {"bar.py": BAR, rel: checks}
     record = mapped(before, {**before, "bar.py": PATCHED_BAR}, stated_checks=[GitName(folder)])
     update = target(record, "ProgressBar.update")
-    assert update["exercised"] is selected
-    assert update["checks"] == ([rel] if selected else [])
+    # 6ef4fdc4: folder bytes alone cannot establish selection without collection.
+    assert update["exercised"] == "uncertain"
+    assert update["checks"] == []
 
 
 def test_map_never_imports_repository_code(tmp_path, monkeypatch):

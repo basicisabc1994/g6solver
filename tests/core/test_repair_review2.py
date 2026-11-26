@@ -74,6 +74,8 @@ def test_agent_surface_census(monkeypatch):
         }.items():
             why = confine.bwrap_reason(facts)
             assert "sudo" in why
+            # a refusal only where isolation is required: the Windows and macOS CI jobs run with the person's opt-in
+            patch.setenv(confine.REQUIRE, "1")
             patch.setattr(confine, "_plan", lambda confinement, python=None: confine.Plan(None, why, confinement))
 
             def linux_refusal(*args, **kwargs):

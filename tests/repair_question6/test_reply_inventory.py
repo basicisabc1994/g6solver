@@ -295,5 +295,9 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
         actual = original(*bound.args, **bound.kwargs)
         with monkeypatch.context() as old:
             old.setattr(patch_report, 'render', renderer_68ca0eb.render)
-            expected = frozen(review_entry_68ca0eb._reply, patch_review)(*bound.args, **bound.kwargs)
+            historical = dict(bound.arguments)
+            historical.pop("neighbourhood", None)
+            expected = frozen(review_entry_68ca0eb._reply, patch_review)(**historical)
+        actual = copy.deepcopy(actual)
+        actual["assessment"]["completion"].pop("neighbourhood", None)
         same(actual, expected)
