@@ -752,7 +752,12 @@ def test_machinery_identity_tracks_roles_and_preserves_product_repairs(tmp_path)
         before = evidence.capture_sources(repo, [node])
         assert before[node]
         (repo / "module.py").write_text("VALUE = 2\n", encoding="utf-8")
-        assert evidence.capture_sources(repo, [node]) == before
+        if "cases()" in collector:
+            # Lead ruling 2026-11-27 (later rounds R3'/R5: a collection-time read binds): the product value builds
+            # this test's own parameters at collection, so changing it changes the check itself.
+            assert evidence.capture_sources(repo, [node]) != before
+        else:
+            assert evidence.capture_sources(repo, [node]) == before
         (repo / "oracle.py").write_text(oracle + "# changed machinery\n", encoding="utf-8")
         assert evidence.capture_sources(repo, [node]) != before
 

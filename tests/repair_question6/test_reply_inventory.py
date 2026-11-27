@@ -13,7 +13,7 @@ from g6.core import component_process
 from g6.harness import patch_report, patch_review, standard_publication
 from g6.mcp import behaviour, review_reply
 from tests.repair_question5 import renderer_68ca0eb
-from tests.repair_question5.test_rendering_differential import strings
+from tests.repair_question5.test_rendering_differential import _without_card, strings
 from tests.repair_question6 import review_entry_68ca0eb, reviewed_68ca0eb, tool_68ca0eb, transport_68ca0eb
 
 
@@ -192,7 +192,8 @@ def test_report_error_return_and_all_outcome_renderers(tmp_path, monkeypatch, te
     for outcome in patch_report.OUTCOMES:
         one = copy.deepcopy(assessment)
         one.update(outcome=outcome, summary=text, unknowns=[text], next_actions=[text])
-        same(patch_report.safe_render(one), renderer_68ca0eb.safe_render(one))
+        # rc030-card: the frozen renderer predates the card block and the unlabelled-finding suffix.
+        same(_without_card(patch_report.safe_render(one)), renderer_68ca0eb.safe_render(one))
     monkeypatch.setattr(patch_report, 'render', lambda _: (_ for _ in ()).throw(ValueError(text)))
     monkeypatch.setattr(renderer_68ca0eb, 'render', patch_report.render)
     same(patch_report.safe_render(assessment), renderer_68ca0eb.safe_render(assessment))
@@ -300,4 +301,7 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
             expected = frozen(review_entry_68ca0eb._reply, patch_review)(**historical)
         actual = copy.deepcopy(actual)
         actual["assessment"]["completion"].pop("neighbourhood", None)
+        # rc030-card: the frozen producer predates the card field and the card block in the report.
+        actual["assessment"].pop("card")
+        actual["assessment"]["report"] = _without_card(actual["assessment"]["report"])
         same(actual, expected)
