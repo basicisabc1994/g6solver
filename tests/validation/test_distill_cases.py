@@ -6,8 +6,8 @@ import pytest
 from g6.core.ledger import digest
 from pydantic import ValidationError
 
-from distill.held_out.case_gate import CaseRecord, Provenance, cut, training_view
-from distill.held_out.registration_gate import freeze, read_registration
+from g6.distill.held_out.case_gate import CaseRecord, Provenance, cut, training_view
+from g6.distill.held_out.registration_gate import freeze, read_registration
 
 
 def case(unit="bug-1", cohort="development", **changes):
@@ -99,7 +99,7 @@ def test_registration_freezes_digest_cut_policy_and_operator_refs(tmp_path):
 
 
 def test_registration_detects_changed_oracle_code(tmp_path, monkeypatch):
-    from distill.held_out import registration_gate
+    from g6.distill.held_out import registration_gate
     path, frozen = registration(tmp_path)
     monkeypatch.setattr(registration_gate, "oracle_digest", lambda: "f" * 64)
     with pytest.raises(ValueError, match="oracle"):

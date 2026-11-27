@@ -3,7 +3,7 @@ import ast
 
 import pytest
 
-from distill.operators import LEGITIMATE, TRAINING, apply_operator
+from g6.distill.operators import LEGITIMATE, TRAINING, apply_operator
 
 SUITE = """from subject import answer
 def test_answer():

@@ -6,9 +6,9 @@ import pytest
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.workforce import mutation_check, repo_tests
 
-from distill.held_out import oracle
-from distill.held_out.case_gate import CaseRecord, Provenance
-from distill.operators import apply_operator
+from g6.distill.held_out import oracle
+from g6.distill.held_out.case_gate import CaseRecord, Provenance
+from g6.distill.operators import apply_operator
 
 BEFORE = "from subject import answer\ndef test_answer():\n    assert answer(1) == 2\n"
 FIXED = "def answer(x):\n    return x + 1\n"
