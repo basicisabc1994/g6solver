@@ -7,14 +7,19 @@ service, outside mission custody. No key discovery or in-process production key.
 """
 from pathlib import Path
 
-from g6.core.ledger import ChainLedger, LedgerCorrupt, canonical, digest
+from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical, digest
+
+_LIMIT = "a ledger line exceeds the JSON decoder's limits"
 
 
 class Generations:
     def __init__(self, path, host, *, expect_head=None):
         self.path = Path(path) if path is not None else None
         self.host = host
-        self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+        try:
+            self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError(_LIMIT) from exc
         self.chain.expect_head = None
 
     def _validate(self, kind, ident, record, seen):
@@ -41,8 +46,12 @@ class Generations:
         return []
 
     def read(self):
-        self.chain.reload()
-        return [row['body'] for row in self.chain.entries()]
+        try:
+            self.chain.reload()
+            rows = self.chain.entries()
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError(_LIMIT) from exc
+        return [row['body'] for row in rows]
 
     def prepare(self, *, change, evidence, kind=None, trigger=None):
         history = self.read()
@@ -73,4 +82,7 @@ class Generations:
         self.read()
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        return self.chain.append('generation', digest(record), record)
+        try:
+            return self.chain.append('generation', digest(record), record)
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError(_LIMIT) from exc

@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Mapping
 
-from g6.core.ledger import ChainLedger, canonical, digest
+from g6.core.ledger import ChainLedger, LedgerError, canonical, digest
 from g6.core.storage import state_path
 from g6.metaharness.evaluate import EvaluationReport, evaluate
 from g6.metaharness.gate import decide
@@ -217,7 +217,10 @@ class FrozenMetaEvaluation:
         if not method_ids or set(method_ids) & _meta_case_ids(workflow):
             raise ValueError('meta cases must be separate from method cases; no overlap')
         if journal is None:
-            journal = ChainLedger(state_path('distill', 'meta', 'evaluations.jsonl'))
+            try:
+                journal = ChainLedger(state_path('distill', 'meta', 'evaluations.jsonl'))
+            except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+                raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         return cls(workflow.digest(), workflow.suite.digest('held_out'), confirmation['judging_sha256'],
                    method_ids, journal, digest(_unit_custody(workflow)))
 

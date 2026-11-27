@@ -65,8 +65,12 @@ def record_fire(found: dict, before: dict, after: dict, snapshot) -> None:
                 raise LedgerError("field writer busy or recovery required") from None
             try:
                 with stream:
-                    ledger = ChainLedger(path)
-                    if not any(row["id"] == ident for row in ledger.entries()):
+                    try:
+                        ledger = ChainLedger(path)
+                        held = ledger.entries()
+                    except (RecursionError, MemoryError) as exc:   # a home ledger line past the decoder
+                        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
+                    if not any(row["id"] == ident for row in held):
                         append_retained(ledger, "field_fire", ident, body)
             finally:
                 lock.unlink()

@@ -7,7 +7,7 @@ detect replacement of an entire history. Predictions never feed an admission gat
 """
 from __future__ import annotations
 
-from g6.core.ledger import ChainLedger, LedgerCorrupt, canonical
+from g6.core.ledger import ChainLedger, LedgerCorrupt, LedgerError, canonical
 from g6.core.lessons import hit_rate
 from g6.core.storage import state_path
 from g6.self_model.model import Field
@@ -63,23 +63,35 @@ def _validate(kind, ident, body, seen):
 class MetaLedger:
     def __init__(self, path=None, *, expect_head=None, memory=False):
         self.path = None if memory else path if path is not None else state_path('distill', 'meta', 'predictions.jsonl')
-        self.chain = ChainLedger(self.path, expect_head=expect_head, validate=_validate)
+        try:
+            self.chain = ChainLedger(self.path, expect_head=expect_head, validate=_validate)
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
+
+    def _rows(self, *, reload=True):
+        try:
+            if reload:
+                self.chain.reload()
+            return self.chain.entries()
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
     def _append(self, kind, ident, body):
         if self.path is not None:
             from pathlib import Path
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.chain.append(kind, ident, body)
+        try:
+            self.chain.append(kind, ident, body)
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
     def predictions(self) -> tuple[MetaPrediction, ...]:
-        self.chain.reload()
         return tuple(MetaPrediction.model_validate_json(canonical(row['body']))
-                     for row in self.chain.entries() if row['kind'] == 'prediction')
+                     for row in self._rows() if row['kind'] == 'prediction')
 
     def scores(self) -> tuple[ScoredSimulation, ...]:
-        self.chain.reload()
         return tuple(ScoredSimulation.model_validate_json(canonical(row['body']['scored']))
-                     for row in self.chain.entries() if row['kind'] == 'score')
+                     for row in self._rows() if row['kind'] == 'score')
 
     def predict(self, *, kind, subject_id, action, snapshot, reference_actions, relationships,
                 protected_manifest, now) -> MetaPrediction:
@@ -97,7 +109,7 @@ class MetaLedger:
     def score(self, decision_id, outcome, *, now) -> ScoredSimulation:
         rows = {r.decision_id: r for r in self.predictions()}
         row = rows[decision_id]
-        if any(r['kind'] == 'score' and r['id'] == decision_id for r in self.chain.entries()):
+        if any(r['kind'] == 'score' and r['id'] == decision_id for r in self._rows(reload=False)):
             raise ValueError('prediction already scored')
         if outcome.prediction_record != row.receipt:
             raise ValueError('outcome receipt differs from recorded receipt')
@@ -114,8 +126,7 @@ class MetaLedger:
         row = model.model_validate_json(value.model_dump_json())
         body = row.model_dump(mode='json')
         ident = digest(body)
-        self.chain.reload()
-        if any(row['kind'] == model.__name__ and row['id'] == ident for row in self.chain.entries()):
+        if any(row['kind'] == model.__name__ and row['id'] == ident for row in self._rows()):
             return ident
         self._append(model.__name__, ident, body)
         return ident
@@ -123,8 +134,7 @@ class MetaLedger:
     def data(self, model):
         if _DATA_MODELS.get(model.__name__) is not model:
             raise ValueError('unknown M data model')
-        self.chain.reload()
-        return tuple(model.model_validate_json(canonical(row['body'])) for row in self.chain.entries()
+        return tuple(model.model_validate_json(canonical(row['body'])) for row in self._rows()
                      if row['kind'] == model.__name__)
 
     def hit_rates(self) -> dict[str, float | None]:

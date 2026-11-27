@@ -315,13 +315,16 @@ class Service:
             _put_once(concept)
             result = synth.synthesise(concept, cases)
             if result.reuses:
-                from g6.core.ledger import ChainLedger
+                from g6.core.ledger import ChainLedger, LedgerError
                 with failure_writer():
-                    journal = ChainLedger(state_path('distill', 'reuse_ledger.jsonl'))
-                    for reuse in result.reuses:
-                        body = reuse.model_dump(mode='json')
-                        if not any(row['id'] == digest(body) for row in journal.entries()):
-                            journal.append('reuse', digest(body), body)
+                    try:
+                        journal = ChainLedger(state_path('distill', 'reuse_ledger.jsonl'))
+                        for reuse in result.reuses:
+                            body = reuse.model_dump(mode='json')
+                            if not any(row['id'] == digest(body) for row in journal.entries()):
+                                journal.append('reuse', digest(body), body)
+                    except (RecursionError, MemoryError) as exc:   # a home ledger line past the decoder
+                        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
             for candidate in result.candidates:
                 _put_once(candidate.contract)
                 _put_once(candidate)

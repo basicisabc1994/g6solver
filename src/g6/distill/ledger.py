@@ -97,7 +97,7 @@ def durable_state(paths):
         states.extend(f"library {ident} {body['status']}/{body['authority']}" for ident, body in latest.items())
         if not latest:
             states.append('library empty/A0')
-    except (OSError, ValueError, KeyError, LedgerError, RecursionError):
+    except (OSError, ValueError, KeyError, LedgerError, RecursionError, MemoryError):
         states.append('library unreadable/authority unknown')
     for path in paths:
         try:
@@ -109,7 +109,7 @@ def durable_state(paths):
                 state = f'{len(ChainLedger(path).entries())} durable rows'
             else:
                 state = 'present'
-        except (OSError, ValueError, LedgerError, RecursionError):
+        except (OSError, ValueError, LedgerError, RecursionError, MemoryError):
             state = 'unreadable/authority unknown'
         states.append(f'{path.name} {state}')
     return tuple(states)
@@ -386,13 +386,19 @@ def _recover_reservation_closes():
     if not folder.exists():
         return []
     completed = []
-    journal = ChainLedger(state_path('distill', 'acceptance_gate.jsonl'))
+    try:
+        journal = ChainLedger(state_path('distill', 'acceptance_gate.jsonl'))
+    except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder: G6's refusal
+        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
     for name in sorted(path.name for path in folder.iterdir() if path.suffix == '.json'):
         path = state_path('distill', 'reservation_closures', name)
         data = _decode_json(path.read_text(encoding='utf-8'))
         body = data['body']
         reservation = name.removesuffix('.json')
-        rows = journal.entries()
+        try:
+            rows = journal.entries()
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         reserve = next((row for row in rows if row['kind'] == 'reserve' and row['id'] == reservation), None)
         if (re.fullmatch('[0-9a-f]{64}', reservation) is None or data['sha256'] != digest(body)
                 or body.get('reservation') != reservation or body.get('verdict') != 'refuse'
@@ -536,7 +542,10 @@ class RecordStore:
         with failure_writer(reading=True):
             # Naming the file creates nothing. Even before the state directory
             # exists, direct legacy appends must persist to this same chain.
-            self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+            try:
+                self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+            except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+                raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
     def _validate(self, kind, ident, body, seen):
         try:
@@ -557,15 +566,23 @@ class RecordStore:
     def _read(self, *, references=True) -> list[Record]:
         with failure_writer(reading=True) as locked:
             if not locked:
-                if self.chain.entries() or self._expect_head:
+                try:
+                    held = self.chain.entries()
+                except (RecursionError, MemoryError) as exc:
+                    raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
+                if held or self._expect_head:
                     raise LedgerCorrupt('previously observed failure ledger is missing')
                 return []
             return self._read_locked(references=references)
 
     def _read_locked(self, *, references=True) -> list[Record]:
-        self.chain.reload()
+        try:
+            self.chain.reload()
+            rows = self.chain.entries()
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         records = []
-        for row in self.chain.entries():
+        for row in rows:
             path = self._object(row["id"])
             try:
                 raw = path.read_text(encoding="utf-8")
@@ -712,4 +729,7 @@ class RecordStore:
 
     def _recover_chain(self):
         # A caller may retry with this same store after a failed transaction.
-        self.chain = ChainLedger(self.path, expect_head=self._expect_head, validate=self._validate)
+        try:
+            self.chain = ChainLedger(self.path, expect_head=self._expect_head, validate=self._validate)
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc

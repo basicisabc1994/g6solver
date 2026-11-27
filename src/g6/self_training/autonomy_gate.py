@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from g6.core.ledger import ChainLedger, digest
+from g6.core.ledger import ChainLedger, LedgerError, digest
 
 
 class Autonomy(BaseModel):
@@ -69,7 +69,10 @@ class RateState:
     """
     def __init__(self, path=None, *, expect_head=None):
         self.path = Path(path) if path is not None else None
-        self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+        try:
+            self.chain = ChainLedger(self.path, expect_head=expect_head, validate=self._validate)
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         # The supplied external anchor authenticates reopening. Prefix checking
         # protects this live instance as the service appends subsequent entries.
         self.chain.expect_head = None
@@ -98,7 +101,10 @@ class RateState:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     lock = self.path.with_suffix('.lock')
                     handle = lock.open('x', encoding='utf-8')
-                self.chain.reload()
+                try:
+                    self.chain.reload()
+                except (RecursionError, MemoryError) as exc:
+                    raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
                 yield
             finally:
                 if handle is not None:
@@ -106,14 +112,20 @@ class RateState:
                     lock.unlink()
 
     def rows(self):
-        self.chain.reload()
-        return self.chain.entries()
+        try:
+            self.chain.reload()
+            return self.chain.entries()
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
     def append(self, kind, *, now, **fields):
         body = dict(at=clock(now), **fields)
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.chain.append(kind, digest(body), body)
+        try:
+            self.chain.append(kind, digest(body), body)
+        except (RecursionError, MemoryError) as exc:
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
     def demoted(self):
         return any(row['kind'] == 'demote' for row in self.rows())

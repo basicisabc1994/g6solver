@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from g6.core import stop as global_stop
-from g6.core.ledger import ChainLedger, digest
+from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.distill.meta import MetaController, MetaLedger, choose_experiment
 from g6.distill.meta.policy_gate import diagnose_runner_tick
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -77,8 +77,11 @@ class Runner:
         self.repository, self.clock, self.stop = repository, clock, stop or (lambda: False)
         self.meta = meta if meta is not None else MetaLedger()
         self.controller = MetaController(self.meta)
-        self.journal = journal if journal is not None else ChainLedger(
-            Path(home) / 'distill/runner_ledger.jsonl' if home is not None else None)
+        try:
+            self.journal = journal if journal is not None else ChainLedger(
+                Path(home) / 'distill/runner_ledger.jsonl' if home is not None else None)
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         self.intake, self.merge_gate = intake, merge_gate
 
     def stopped(self):

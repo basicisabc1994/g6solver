@@ -29,7 +29,7 @@ from pydantic import Field
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.binomial import upper_bound
-from g6.core.ledger import ChainLedger, canonical, digest
+from g6.core.ledger import ChainLedger, LedgerError, canonical, digest
 from g6.core.storage import state_path
 from g6.distillation.sandbox import run_batch
 from g6.metaharness import gate as meta_gate
@@ -708,7 +708,10 @@ def _assess(candidate, entries, frozen, reuse_index):
 
 @failure_writer(reading=True)
 def _journal():
-    return ChainLedger(state_path("distill", "acceptance_gate.jsonl"))
+    try:
+        return ChainLedger(state_path("distill", "acceptance_gate.jsonl"))
+    except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder: G6's refusal
+        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
 
 
 def _append(journal, kind, body):
@@ -1336,7 +1339,10 @@ def _field(candidate_id):
         return 0, 0, 0
     root = state_path("distill", "held_out")
     _plain(path, root)
-    rows = ChainLedger(path).entries()
+    try:
+        rows = ChainLedger(path).entries()
+    except (RecursionError, MemoryError) as exc:
+        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
     return _field_counts(rows, candidate_id)
 
 
@@ -1402,7 +1408,11 @@ def _health(candidate):
         return None
     _plain(path, state_path("distill", "held_out"))
     now, costs, conditions, seen = datetime.now(timezone.utc), [], [], set()
-    for row in ChainLedger(path).entries():
+    try:
+        rows = ChainLedger(path).entries()
+    except (RecursionError, MemoryError) as exc:
+        raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
+    for row in rows:
         value = HealthObservation.model_validate(row["body"])
         if (row["kind"] != "health" or value.candidate_id != candidate.candidate_id
                 or value.observation_id in seen or value.observed_at.tzinfo is None

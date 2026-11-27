@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from pydantic import TypeAdapter
 
-from g6.core.ledger import ChainLedger, digest
+from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
 from .ledger import Stores, failure_writer
 from .library import Library, public_entry
@@ -27,10 +27,13 @@ def library(op: str = "list", entry_id: str = "") -> dict:
     TypeAdapter(Sha256).validate_python(entry_id)
     historical = Stores().for_model(LibraryEntry).get(entry_id)
     if op == "history":
+        try:
+            fires = ChainLedger(state_path("distill", "field_fires_ledger.jsonl")).entries()
+        except (RecursionError, MemoryError) as exc:   # a home ledger line nested past the decoder
+            raise LedgerError("a ledger line exceeds the JSON decoder's limits") from exc
         return {"entries": [public_entry(e) for e in Stores().for_model(LibraryEntry).list()
                             if e.candidate_id == historical.candidate_id],
-                "unlabelled_fires": [row["body"] for row in ChainLedger(
-                    state_path("distill", "field_fires_ledger.jsonl")).entries()
+                "unlabelled_fires": [row["body"] for row in fires
                     if row["kind"] == "field_fire" and row["body"].get("candidate_id") == historical.candidate_id]}
     current = next(e for e in Library().list() if e.candidate_id == historical.candidate_id)
     return {"entry": public_entry(current), "requested_entry_id": entry_id}
