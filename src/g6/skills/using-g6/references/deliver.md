@@ -28,3 +28,5 @@ For a Python task, work in this order (each step in full: `lifecycle.md`).
 
 Loop: in Claude Code with G6's plugin, its Stop hook runs the review-until-clean loop when you finish; elsewhere,
 call `g6_review_until_clean` (`lifecycle.md`).
+By default that hook runs a model-free patch review; the loop runs only after the person approves a reviewer in
+their key file. Never add that line yourself.

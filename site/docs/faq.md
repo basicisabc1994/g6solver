@@ -5,7 +5,7 @@ Today's language models can do more than they reliably deliver. G6 is a harness 
 challenges its work, so you can see what the evidence supports.
 {: .why }
 
-**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+**Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 ## Why G6
 
@@ -73,7 +73,7 @@ training a model:
 - **From plain words.** With a coding agent, you can teach it in your own language: the agent turns what you say into
   changes, and G6 tests each one before you approve it.
 
-That learning can be read, tested and rolled back. G6 is early alpha: whether it helps on your work is for your own
+That learning can be read, tested and rolled back. G6 is in beta: whether it helps on your work is for your own
 held-out examples to show.
 
 ### What can I do with it that I could not before?

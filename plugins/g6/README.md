@@ -1,6 +1,6 @@
 # G6 for Claude Code
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 Coding agents say a task is finished when the code handles the example they were given. This plugin tests that claim. When
 Claude Code finishes a Python task, the Stop hook runs G6's model-free patch review of the change and shows you its report.

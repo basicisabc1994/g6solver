@@ -5,7 +5,7 @@ evidence, checks and action control. Its north star is **AI for AI**: agents con
 propose redesigns and test hypotheses against frozen checks, with evaluation and activation outside the candidate's
 writable scope. Components and workflow tools are available today; benefits for a particular application require testing.
 
-**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+**Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 The first use is a check on a coding agent's work. Before your agent (Claude Code or Codex) says a Python change is
 done, it calls `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
@@ -117,7 +117,7 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 58 tools.
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 70 tools.
 
 - Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`; `g6_agentic_run` lets a model stand in for a declared part after a declared limit or computation failure, or replace a successful answer when the caller names a part. Remote admission records provider consent; local admission records local model; process callers record allowed in code; refusal records refused by the consent check. The reply names the model and keeps the original answer beside it.
 - Patch review and missions: `g6_review_patch`, `g6_review_until_clean`, `g6_premortem`, `g6_mission_*` (six).
@@ -132,6 +132,9 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 - The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; on by default, off when
   `G6_WORKFLOW_RECORD=off` is set where the server is registered.
 - The meta-harness: `metaharness_*` (13), for constructing, measuring and revising applications.
+- Learning from failures: `g6_failure_record`, `g6_distill_start`, `g6_distill_job`, `g6_library`,
+  `g6_library_decide`, `g6_self_model`, `g6_simulate`, `g6_extend`, and the research runner's `g6_research_*`
+  (four), which refuse until research authority is turned on and a host runner is attached.
 
 Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given
 with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent.
@@ -199,8 +202,9 @@ separate account to enforce that separation.
 
 The public `v0.1.0` tag is immutable. [The launch release notes](docs/releases/launch.md) say what ships, what does
 not, and its limits; [the v0.1.1 release gates](docs/releases/v0.1.1.md) list the checks required before
-recommending a new release. 0.3.0 is in preparation, not published (no tag, nothing on PyPI):
-[its note](docs/releases/v0.3.0.md) and [known limits](docs/releases/v0.3.0-known-limits.md).
+recommending a new release. 0.3.0 is the first beta, installed from this repository (nothing on PyPI):
+[its release notes](docs/releases/v0.3.0.md) and [known limits](docs/releases/KNOWN_LIMITS.md). macOS is out of
+scope for 0.3.0.
 
 ## What is in it
 
@@ -250,12 +254,15 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
 | Completion loop (`g6_review_until_clean`) | `implemented`. Measured on seven training bugs only |
-| Consent before any cloud model (`g6_cloud_*`) | `implemented`; `g6.invoke` joins before the tag. Not yet measured in a real client's dialog |
+| Stop hook in Claude Code's plugin: a model-free patch review by default, with the end-of-task card | `implemented`. Not yet measured |
+| Consent before any cloud model (`g6_cloud_*`) | `implemented`, `g6.invoke` included. Not yet measured in a real client's dialog |
 | Self-improvement loop (`g6_improve_*`) | `implemented`. Not yet measured: an unattended week, adoption |
 | Allowances; behaviour questions | `implemented`. Not yet measured against real provider windows, or with real people |
 | Context Engine (`g6_knowledge_*`) | `implemented`, search by words. Retrieval quality not yet measured |
-| Workflow record | `implemented`, off by default. Its suggestions not yet measured |
+| Workflow record | `implemented`, on by default (`G6_WORKFLOW_RECORD=off` turns it off). Its suggestions not yet measured |
 | `using-g6` routing to every tool | `implemented`. No routing session run yet |
+| Learning from failures: the library of learned checking methods and G6's model of itself (`g6_failure_record`, `g6_distill_*`, `g6_library*`, `g6_self_model`) | `implemented`. Not yet measured: the distillation study has not run |
+| Research runner (`g6_research_*`) | `wired-but-inert`: off until research authority is turned on and a host runner is attached |
 | G6 maintains its own repository through its self-improvement loop | `aspirational`: the loop runs but pushes nothing; pull requests are designed, and being built in the open |
 
 Until a pre-registered study says otherwise, treat G6 as careful engineering, not as a proven uplift. The studies run

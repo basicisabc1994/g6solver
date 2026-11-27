@@ -32,6 +32,9 @@ WORKFLOW = HERE / "amendments" / "2026-11-26" / "routing_workflow_rebind.json"
 #: The 2026-11-27 review rebind (tests/validation/test_routing_review_rebind_2026_11_27_amendment.py): it moves
 #: the review route's digest again, so what stood before it is read from its record.
 REVIEW27 = HERE / "amendments" / "2026-11-27" / "routing_review_rebind.json"
+#: The 2026-11-27 release-skill rebind (tests/validation/test_routing_release_skill_rebind_amendment.py): it
+#: moves the review and every-route digests, so what stood before it is read from its record.
+RELEASE = HERE / "amendments" / "2026-11-27" / "routing_release_skill_rebind.json"
 
 
 def _before_question() -> dict:
@@ -39,7 +42,8 @@ def _before_question() -> dict:
     rebinds."""
     return {**run.route_digests(), "question": freeze.read(QUESTION)["routes"]["question"]["before"],
             "workflow": freeze.read(WORKFLOW)["routes"]["workflow"]["before"],
-            "review": freeze.read(REVIEW27)["routes"]["review"]["before"]}
+            "review": freeze.read(REVIEW27)["routes"]["review"]["before"],
+            run.EVERY_ROUTE: freeze.read(RELEASE)["routes"][run.EVERY_ROUTE]["before"]}
 
 
 def test_the_rebind_is_recorded_before_any_arm_with_its_reason():

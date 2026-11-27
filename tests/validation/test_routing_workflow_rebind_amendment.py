@@ -24,6 +24,9 @@ EARLIER = HERE / "amendments" / "2026-11-26" / "routing_question_rebind.json"
 #: The 2026-11-27 review rebind (tests/validation/test_routing_review_rebind_2026_11_27_amendment.py): it moves
 #: the review route's digest again, so what stood before it is read from its record.
 REVIEW27 = HERE / "amendments" / "2026-11-27" / "routing_review_rebind.json"
+#: The 2026-11-27 release-skill rebind (tests/validation/test_routing_release_skill_rebind_amendment.py): it
+#: moves the review and every-route digests, so what stood before it is read from its record.
+RELEASE = HERE / "amendments" / "2026-11-27" / "routing_release_skill_rebind.json"
 #: The 2026-11-27 workflow rebind (tests/validation/test_routing_workflow_rebind_2026_11_27_amendment.py): it
 #: moves the workflow route's digest again, so what stood before it is read from its record.
 WF27 = HERE / "amendments" / "2026-11-27" / "routing_workflow_rebind.json"
@@ -53,7 +56,8 @@ def test_only_the_workflow_route_is_rebound_as_it_stands_and_no_task_changed():
     before = freeze.read(HERE / record["retired"]["tasks.json"])["retired"]
     assert freeze.digest(now) == record["pins"]["tasks_digest"]
     assert now["routes"] == {**run.route_digests(), "review": freeze.read(REVIEW27)["routes"]["review"]["before"],
-                             "workflow": freeze.read(WF27)["routes"]["workflow"]["before"]}
+                             "workflow": freeze.read(WF27)["routes"]["workflow"]["before"],
+                             run.EVERY_ROUTE: freeze.read(RELEASE)["routes"][run.EVERY_ROUTE]["before"]}
     assert set(record["routes"]) == {"workflow"}
     assert record["routes"]["workflow"] == {"before": before["routes"]["workflow"], "after": now["routes"]["workflow"]}
     assert record["routes"]["workflow"]["before"] != record["routes"]["workflow"]["after"]

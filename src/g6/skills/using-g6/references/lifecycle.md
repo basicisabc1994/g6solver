@@ -74,7 +74,8 @@ which the person grants; never change permissions yourself.
 
 ## The review-until-clean loop, over MCP
 
-Claude Code's plugin runs this loop from its Stop hook. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
+Claude Code's plugin runs this loop from its Stop hook once the person has approved a reviewer; until then the hook runs a
+model-free patch review. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
 file, call `g6_review_until_clean` when you finish, with the folder, the task and one session name for the task, then poll
 `metaharness_job`. Repeat the same task on each call: another is refused. It needs the host permission
 `patch_review.review`. Codex reads your patch without your reasoning (another model family only if you are not Codex), and

@@ -1,6 +1,6 @@
 # G6 0.3.0: patch review, consent and the improvement loop over MCP
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 This version is not yet tagged or published: no tag, nothing on PyPI. Merging, tagging, publishing and deploying the
 site are the owner's steps. The full preparation note is [v0.3.0.md](v0.3.0.md); the notes for 0.2.0 are

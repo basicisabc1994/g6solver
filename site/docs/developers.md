@@ -1,6 +1,6 @@
 # For developers and coding agents
 
-**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+**Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 G6 is a Python library (3.12 or 3.13). Every component works on its own and declares any other component it uses.
 

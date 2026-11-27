@@ -7,7 +7,7 @@ from datetime import date
 from g6.self_maintenance.digest import MOST_LINES, digest_path, latest, render, write
 
 DAY = date(2026, 11, 1)
-STATUS = "Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established."
+STATUS = "Beta. Individual capabilities have been tested; general application-level improvements have not yet been established."
 USE = ({"provider": "claude", "day": 3, "used": 120.0, "target": 428.6, "ceiling": 600.0, "estimated": True,
         "account": "its tool reports no usage without a model call, so the meter counts model calls"},)
 

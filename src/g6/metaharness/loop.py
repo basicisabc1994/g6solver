@@ -16,7 +16,7 @@ there. Someone has to say what "better" means, and it cannot be the thing being 
 ``python -B -X pycache_prefix=<an empty folder> -P -m g6.metaharness.loop run <folder>`` runs ticks on their own
 (``g6.metaharness.runner``).
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
 """
 from __future__ import annotations
@@ -196,7 +196,7 @@ _SOURCE = Path(g6.__file__).resolve().parent
 #: provider's SDK at its first request) is not a change to what judges.
 _INSTALLED = tuple(dict.fromkeys((_SOURCE, *(Path(place).resolve() for place in (
     sys.prefix, sys.base_prefix, sys.exec_prefix, *getattr(site, "getsitepackages", list)(), site.getusersitepackages())))))
-STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
+STATUS_LINE = ("Beta. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
 
 

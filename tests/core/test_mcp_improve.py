@@ -993,7 +993,7 @@ def test_status_says_where_the_loop_stands(rig):
     assert got["constraint"] == {"name": "wrong_answer", "basis": "b", "tick": 1}
     assert got["last_cycle"]["outcome"] == "adopted" and got["last_cycle"]["structure"] == "a regularity"
     assert got["digest"]["text"] == "# the page\n" and got["digest"]["path"].endswith("2026-10-28.md")
-    assert got["pause"] is None and got["stop"] == "" and "Early alpha" in got["g6_status"]
+    assert got["pause"] is None and got["stop"] == "" and "Beta." in got["g6_status"]
 
 
 def test_status_shows_a_live_runner(rig):

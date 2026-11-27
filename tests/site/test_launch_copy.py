@@ -14,7 +14,7 @@ import pytest
 from g6.cli import setup
 
 OSS = Path(__file__).resolve().parents[2]
-STATUS = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
+STATUS = ("Beta. Individual capabilities have been tested; general application-level improvements have not "
           "yet been established.")
 PAGES = ("/get-started/", "/faq/", "/security/", "/developers/")
 #: The first journey, as setup itself says it: the command for each client, the existing entry, the review.

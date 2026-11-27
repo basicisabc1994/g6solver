@@ -21,7 +21,7 @@ from tests.s16r3.test_retained_files import write_completed_state
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "plugins" / "g6"
-STATUS = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not yet "
+STATUS = ("Beta. Individual capabilities have been tested; general application-level improvements have not yet "
           "been established.")
 
 

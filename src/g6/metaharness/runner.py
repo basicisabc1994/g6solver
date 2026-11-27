@@ -41,7 +41,7 @@ interpreter the runner uses, bound to what the dialog showed (``person_terms``):
 and checks it again under the folder's lock before it runs or records anything. ``enrol``, ``resume`` and ``demote`` on
 the command line record nothing and say so: there is no terminal fallback and no agent answer.
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
 """
 from __future__ import annotations
