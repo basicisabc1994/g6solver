@@ -182,7 +182,9 @@ def test_code_derived_retained_read_inventory(tmp_path):
     from g6.metaharness.jobs import DETAILS
     assert set(DETAILS) == {'full', 'compact'}
     source = (root / 'metaharness/jobs.py').read_text(encoding='utf-8')
-    assert retained_stores(source) == {'_jobs', '_compact', '_provenance'}
+    # _refreshers (rc030-card): a finished review's card is re-read from the workflow record on each poll, under the
+    # polling client's own grant (tests/workflow/test_card_refresh_consent.py); it holds callables, never a reply.
+    assert retained_stores(source) == {'_jobs', '_compact', '_provenance', '_refreshers'}
     assert retained_stores(source + '\ndef extra(self):\n    self._extra_retained = {}\n') - retained_stores(source) == {
         '_extra_retained'}
     planted = 'def read(job):\n    return job.result()\n'
