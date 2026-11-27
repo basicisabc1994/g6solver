@@ -21,6 +21,9 @@ MODULES = {
                             "_finite", "check_id_of",
                             "CheckBinding.__post_init__", "CheckBinding.to_dict", "id_of"},
     "core/ledger.py": {"canonical", "digest"},
+    # strict_json reads a binding's text through the guarded decoder (62b6905f)
+    "core/decoder_limits.py": {"json_value", "decode", "_hook", "_integer", "is_undecodable_record",
+                               "_is_refusal_type"},
 }
 # These imports serve other branches of the modules, outside premise admission.
 OUTSIDE_PREMISES = {
@@ -68,6 +71,9 @@ def refusal(rel, function, receiver, field):
         return None  # construction/serialization, never authority for a bound subject
     if rel == "evidence/mapping.py":
         return None  # the shared reader of the immutable CheckBinding
+    if (rel, function, receiver, field) == ("core/decoder_limits.py", "_is_refusal_type", "kind",
+                                            "getattr:'__g6_decoder_refusal__'"):
+        return None  # the decoder's refusal declaration on an exception type, never a subject field
     if rel == "research/echa/custody.py" and function in {"about", "binding_of"}:
         return None  # the sole ECHA accessor compares declarations against custody
     if ((receiver in PARTS or receiver.startswith("about(")) and field not in {
