@@ -172,10 +172,12 @@ def test_hook_accepts_real_completion_reproduction_shape(monkeypatch):
 def test_field_fires_are_unlabelled_deduplicated_and_not_gate_custody(surface):
     from g6.core.ledger import ChainLedger
     from g6.core.storage import state_path
+    from g6.distill.runtime_state import status_snapshot
     from g6.harness.library_review_gate import record_fire
     found = {"verdict": "concern", "entry_id": "a" * 64, "candidate_id": "b" * 64, "authority": "A1"}
-    record_fire(found, {"test_a.py": "old"}, {"test_a.py": "new"})
-    record_fire(found, {"test_a.py": "old"}, {"test_a.py": "new"})
+    snapshot = status_snapshot()    # 9a09f73f: the write rechecks the library's authority it was decided under
+    record_fire(found, {"test_a.py": "old"}, {"test_a.py": "new"}, snapshot)
+    record_fire(found, {"test_a.py": "old"}, {"test_a.py": "new"}, snapshot)
     [row] = ChainLedger(state_path("distill", "field_fires_ledger.jsonl")).entries()
     assert row["body"]["label"] == "unlabelled"
     assert not state_path("distill", "held_out").exists()

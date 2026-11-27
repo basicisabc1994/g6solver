@@ -106,6 +106,9 @@ def test_the_repair_log_keeps_codes_and_ids_only_and_says_how_each_repair_ended(
 
     _session([("g6_select", {"task": SECRET, "phase": "later"}),
               ("g6_select", {"task": SECRET, "phase": "verify"})])
+    from g6.core.repair_log import flush
+
+    assert flush(10)                    # rows go through the log's writer thread; a reply never waits for it
     log = home / "repairs" / "repairs.jsonl"
     text = log.read_text(encoding="utf-8")
     assert "zebra" not in text and "later" not in text and "person's own" not in text

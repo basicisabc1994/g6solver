@@ -134,7 +134,9 @@ def test_on_windows_the_doctor_says_a_confined_test_cannot_run_git_where_the_con
     grants = re.findall(r'icacls "[^"]*" /grant "[^"]*"', check.fix)
     assert grants == [f'icacls "{folder}" /grant "*{confine.ALL_APPLICATION_PACKAGES}:(RA)"' for folder in above], \
         check.fix
-    assert "(RX)" not in check.fix and "(OI)" not in check.fix and "(CI)" not in check.fix and "/T" not in check.fix
+    assert "(RX)" not in check.fix and "(OI)" not in check.fix and "(CI)" not in check.fix
+    # The icacls recursive switch, as its own word: a POSIX path such as .../Temp holds "/T" as text.
+    assert not re.search(r"(^|\s)/T(\s|$)", check.fix)
     for name in ("_isolation", "_names"):
         monkeypatch.setattr(doctor, name, lambda: doctor.Check(name, "ok", "stand-in"))
     monkeypatch.setattr(doctor, "_components", lambda: [])
