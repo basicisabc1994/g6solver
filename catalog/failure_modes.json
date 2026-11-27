@@ -674,12 +674,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_physical_ai"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "hallucinated_failure",
@@ -800,12 +800,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_bayesian"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_bayesian"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "ignored_warning",
@@ -828,14 +828,14 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_sklearn"
+    ],
     "introduced_by": [],
     "planned": [
       "g6.ml.adapt_algo_selector"
     ],
-    "awaiting_review": [
-      "adapt_sklearn"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "illusion_of_competence",
@@ -984,12 +984,12 @@
     "severity": "high",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_physical_ai"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "insecure_code_shipped",
@@ -1351,12 +1351,12 @@
     "severity": "high",
     "requires_human_review": true,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "duty_of_care"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "duty_of_care"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "missed_service_level",
@@ -1848,7 +1848,7 @@
   },
   {
     "code": "risk_management_failure",
-    "title": "risk management failure",
+    "title": "a risky step taken without weighing what it could break",
     "description": "risk management failure",
     "severity": "medium",
     "requires_human_review": false,
@@ -1962,12 +1962,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_automl"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "single_sensor_decision",
@@ -2146,7 +2146,7 @@
   },
   {
     "code": "test_suite_missing_or_weak",
-    "title": "test suite missing or weak",
+    "title": "tests missing, or too weak to catch the change they are meant to check",
     "description": "test suite missing or weak",
     "severity": "medium",
     "requires_human_review": false,
@@ -2191,13 +2191,13 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
-    "introduced_by": [],
-    "planned": [],
-    "awaiting_review": [
+    "guarded_by": [
       "adapt_automl",
       "adapt_sklearn"
-    ]
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
   },
   {
     "code": "training_loop_bug",
@@ -3130,12 +3130,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_automl"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "untested_agent_design",
