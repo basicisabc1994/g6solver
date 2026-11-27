@@ -13,6 +13,12 @@ from g6.research.echa.ledger import CONTAMINATING
 H = runpy.run_path(str(Path(__file__).with_name("test_echa_kernel_claims.py")))
 DIRTY = "e" * 64
 ROLES = ("check", "check_control", "calibration", "calibration_control", "scope_mapping", "scope_control")
+#: Field-only cases: the receipt's own fixture field names the dirty fixture while its custody binding names the clean
+#: one. Since 8765975a custody refuses that disagreement (NO_ENVIRONMENT), so the clean claim is already inconclusive
+#: and these cases' first assertion cannot hold. Strict, so the day they pass again the mark must go.
+FIELD_ONLY_LIMIT = pytest.mark.xfail(strict=True, reason=(
+    "KNOWN_LIMITS limit-echa-field-fixture: a receipt whose fixture field disagrees with its custody binding is "
+    "refused, so a field-only fixture identity never supports the clean claim"))
 
 
 def _ledger(tainted_role, location, category):
@@ -53,7 +59,7 @@ def _ledger(tainted_role, location, category):
 
 
 @pytest.mark.parametrize("role", ROLES)
-@pytest.mark.parametrize("location", ["binding", "field"])
+@pytest.mark.parametrize("location", ["binding", pytest.param("field", marks=FIELD_ONLY_LIMIT)])
 @pytest.mark.parametrize("category", EXECUTABLE)
 @pytest.mark.parametrize("incident", CONTAMINATING)
 def test_contamination_voids_every_receipt_role(role, location, category, incident):
