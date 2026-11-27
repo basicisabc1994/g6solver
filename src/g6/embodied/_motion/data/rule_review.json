@@ -8,10 +8,10 @@
   "label_effect": "none: a review raises no label",
   "reviewed": {
     "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
-    "artifact_sha256": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+    "artifact_sha256": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
     "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
     "refusals": [],
-    "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+    "rules_sha256": "7ff83677e7c7ddb9a13ccfd36ee756ed6ce4c945c2cdabe639e07d11fc623381",
     "sources_sha256": {
       "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
       "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
@@ -772,6 +772,360 @@
       "validation": {
         "independently_run": "At b14dc13, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py, tests/core/test_consent_followup.py",
         "result": "29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped; 191 passed. The failures: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued: the same counts and failures the issuance-window review recorded at b75327a. No other test failed.",
+        "limits": "Static delta review and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The reader is a fresh Claude session, not a different model from the authors of the reviewed commits. Full held-source and quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-0.3.0-release-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; wrote none of the reviewed commits fa60483e..d177a651, which were written by other sessions)",
+      "date": "2026-11-28",
+      "base_commit": "fa60483eb38456c813180f439c0e0f7628bc328d",
+      "reviewed_commit": "d177a65153df0a0a681e5841edc8ae6c13f00e46",
+      "prior_review_sha256": "26a5c0139b35aab3c564bd2e173092da27ac8d09be435f586ee8516477660959",
+      "prior_reviewed": {
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "artifact_sha256": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "refusals": [],
+        "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+        "sources_sha256": {
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        }
+      },
+      "reviewed": {
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "artifact_sha256": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "refusals": [],
+        "rules_sha256": "7ff83677e7c7ddb9a13ccfd36ee756ed6ce4c945c2cdabe639e07d11fc623381",
+        "sources_sha256": {
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        }
+      },
+      "scope": "Supplement to prior independent delta attestations: the 0.3.0 release integration, fa60483e..d177a651, in bound shared code and this component's rules file. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or withheld quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Extracted src and tools at fa60483e and d177a651 (git archive) and computed tools/issue_certificate.py --reviewed and the full input manifest (input_files without this review, imported_code, harness_files and the input bases) in each. The record's top-level reviewed equals reviewed() at fa60483e, the PR #12 delta review commit, and the records are unchanged from fa60483e to d177a651; reviewed() at d177a651 equals --reviewed in the candidate worktree, which is d177a651 with no other change. Diffed the two manifests file by file (61 files at fa60483e, 103 at d177a651; harness_sha256 unchanged; the covered rule list, tiers, implementing functions, adapter and refusals the same at both commits). Read git diff fa60483e d177a651 for every changed bound file, traced by static import which bound file reaches each newly bound one, read each covered function's and the adapter's calls of the changed functions, and searched every bound Python file at d177a651 for guard(, _Consent, ConsentClaude, ConsentCodex, consent_callers, consent_registry, GuardedRegistry, .complete(, complete_with_images, __g6_model__, admission(, refuse_unshared(, cloud_consent and socket use.",
+      "finding": "artifact_sha256 and rules_sha256 differ; canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound inputs: 8 modified (g6/__init__.py, g6/core/ai_block.py, g6/core/cloud_consent.py, g6/core/consent_declarations.py, g6/core/model_calls.py, g6/core/promotion_evaluator.py, g6/core/storage.py, g6/embodied/_motion/sources.py) and 42 added; none removed. Rules file g6/embodied/_motion/sources.py: register, review, register_problems, stale_sources and cited now turn a RecursionError or MemoryError raised while the committed register is decoded or read into ValueError('a JSON record exceeds decoder limits'); its RULES table, tiers and implementing functions are byte-identical (the covered rule list is the same at both commits). The committed register is a bound input of fixed bytes that decodes without either error, so every covered rule reads the same entries and gives the same result. checks.py and grasp.py (unchanged) call stale_sources and cited, which give the same answer for the committed register. Shared core: g6/__init__.py changes only __version__ from 0.2.0 to 0.3.0, not a behaviour change. core/ai_block.py: AIBlock.verify's exception branch reports exception_text(exc) (str(exc), else repr, else the type's name) where it reported str(exc), importing core/external_data.py there; core/promotion_evaluator.py: replay_reproduces's exception detail reads 'Type: text' through exception_text instead of repr. Both are failure-branch text only, and neither is reached by a covered function or the adapter, which call the shared implementation directly. Those two function-level imports newly bind 42 modules (core/external_data.py, decoder_limits.py, agent_guidance.py, serialized_guidance.py, producer_contracts.py and http.py, and modules of _context_engine, context, grounding, knowledge and skills), statically reachable here only through external_data; exception_text runs none of them. core/storage.py: state_path, contained, confined_path and plain_file refuse more path forms in G6's words (PathRefused, a ValueError) and on Windows decide inside by file identity; open_db is unchanged; no covered function or the adapter calls storage. core/cloud_consent.py (the sharing-state lock becomes a per-send hold kept in a context variable; a reply to the request it came in on may carry an unnamed client's own exact input back), core/consent_declarations.py (MCP tool declarations) and core/model_calls.py (a context variable marks a context carried into a started thread) change model-call consent and observation only. consent_callers.py, consent_registry.py, door.py and registry.py are unchanged: guard() is still called only by consent_registry.GuardedRegistry.invoke and consent_callers.provider_from_env, the component declares no __g6_model__, so no _Consent method, admission or refuse_unshared is reached from its certified paths, and no newly bound file calls guard, a model or a socket on them (core/http.py opens sockets only for the knowledge fetcher, which nothing here calls). No covered implementing function, the adapter, the cases, the sources or the refusal set changed in behaviour. Every prior scoped finding still holds, including that g6.invoke puts a model it is given through the consent guard. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "previous_sha256": "a0ae343f3f84468adafc9f56057054a1e2559d3fdab3ebed839540b7e209dc9f",
+          "current_sha256": "5d3396b2e03b0db20497e04d6f5278ef25900c56b72bc28b528babd1103271ac",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/_context_engine/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "3520c58b9efcac7188b98ff6f310fca2c7a23861d29831727591ed0eac812231",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/_context_engine/_envelope.py",
+          "previous_sha256": null,
+          "current_sha256": "86cbbb5039e6d3cf20af260fcc47b433088162a83f37365125fa0e6947b21f36",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/_context_engine/_scope.py",
+          "previous_sha256": null,
+          "current_sha256": "c7c98b3ac987dd30d00bdbe3c9213928e173d5cf02ad55196367bb8b50c59959",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/_context_engine/_view.py",
+          "previous_sha256": null,
+          "current_sha256": "185e87f332bd564cd22cdf2af01feadd727ec41b805607e3066d3a1d3fd1b25a",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "8a7dea5cfdec919ce23452876ad4e6aecce80acfaca2bd34f479aad838f97f73",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/assemble.py",
+          "previous_sha256": null,
+          "current_sha256": "0128044ab7795320b894a47223e9e8db7ead3760012177bcecb2fc3b9b1a36f3",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/budget.py",
+          "previous_sha256": null,
+          "current_sha256": "2073ddeed8f22622cc9f1784db9eb3d94730e8423d12425c02e99048d27e9942",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/compress.py",
+          "previous_sha256": null,
+          "current_sha256": "8bb06d9da384b96df65cb941dbd85ee3046ba42e4ebd7c9078e6c6025a1dd7b8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/envelope.py",
+          "previous_sha256": null,
+          "current_sha256": "696ca2ab0112c44d27068a6d8d05a725fc703bd3e47ac692faf795d227d3e2b8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/fuse.py",
+          "previous_sha256": null,
+          "current_sha256": "3c26191d9300fa3f85af84ee5b70f32d45c13411172a5e9e6d23f33c1d2bfe26",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/packet.py",
+          "previous_sha256": null,
+          "current_sha256": "b63d88888e38df87f6248424aaedc47d205459d61f8b6f553ee1bb040b1f637b",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/redact.py",
+          "previous_sha256": null,
+          "current_sha256": "7711a886d136b708e423c6c9b6626a480dd609fd5b71b87598551610c48e3623",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/rerank.py",
+          "previous_sha256": null,
+          "current_sha256": "b6776e4d9d4be858a5c25e351e5af537ed3a393e390ec7c220afd149b5840709",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/retrieve.py",
+          "previous_sha256": null,
+          "current_sha256": "2b4638c1ead1c3318f81ff6c8874b6d2f42c2e83f184bf3e7b2a260a10b34299",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/window.py",
+          "previous_sha256": null,
+          "current_sha256": "39ff7ab93ee9c3050b32200391458f0d138275b05771fd5053a9b198147e5332",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/context/workspace.py",
+          "previous_sha256": null,
+          "current_sha256": "556baca5d059d358a916a100dd6c5d02cbe1fe225d39351e5d508d65026cb67e",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/agent_guidance.py",
+          "previous_sha256": null,
+          "current_sha256": "f64252e209d21dc6066edd46e67ee977d35f7a982b7b814d9d372af24b2b4961",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "previous_sha256": "923997cea762b6b8e54d96354fc8c43f994750ae9b531914c972651d05776a69",
+          "current_sha256": "ce8d864fa773c16947d6e96e26b52d6be24d4c6c639bced4dd2275d4a5e08fc6",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/cloud_consent.py",
+          "previous_sha256": "e4f49413baa1dcd76044f8201e70a6170121ff9a93416fc54df929d8df9d1ee4",
+          "current_sha256": "f58f1b6ddc19a7afe2adf6b00ae9657d4dd6d8f6e2cc123aca92bee4454afb89",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/consent_declarations.py",
+          "previous_sha256": "6a64867c7bafaa781d5f3a8c4c1e79134ec19110e21e45ebf7fb2e6a8493af99",
+          "current_sha256": "ac44bf7d6581e97ee8a6f1f4a8a64b65286c476771023a100386f4768f392e23",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/decoder_limits.py",
+          "previous_sha256": null,
+          "current_sha256": "b625d945b7becfe086611f5707a03b07e386a3e6011fb7915f020c29e48e8654",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/external_data.py",
+          "previous_sha256": null,
+          "current_sha256": "948fbbff5aa55577b05fc504dee67b8633bacac4a4a4435bb3d0356996b68ea3",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/http.py",
+          "previous_sha256": null,
+          "current_sha256": "9a5bc1acc739af2261267dbbe934ffe543dfc0b893f1ba8f8e048de81e321d43",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/model_calls.py",
+          "previous_sha256": "d9ac98bc11ce6abe1a26fc98f0881eb9db201c4e5d0cef777643b52d01b9fff7",
+          "current_sha256": "32ddc81eeaa1758b12f0db8202d7cdf8788adc3d56c52666840171ef5651ff45",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/producer_contracts.py",
+          "previous_sha256": null,
+          "current_sha256": "403f6e4d2eb70a8df7c3f291272fffb066f80ac87d072590d2832c569af0aab9",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/promotion_evaluator.py",
+          "previous_sha256": "be078564781808ccaae54c9f00b8bab27d5dd4873264e262560aadf9e30da933",
+          "current_sha256": "f46d5649890bc837c7da4ed0588acd4949812653c93c3a1572398a4389dbd0b2",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/serialized_guidance.py",
+          "previous_sha256": null,
+          "current_sha256": "fa9b8c3eb9dfa437a719eac96d56b51f4f7f5932f282df9044a9a19ec7243e10",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/storage.py",
+          "previous_sha256": "82a22ca356d66b6d834a711b16f83da7b804d83983ac64861c1c8cc191726faa",
+          "current_sha256": "8b539f65d2441994ecbea560ff09d936db142d09044c8b5202d65d6f65a8120e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/embodied/_motion/sources.py",
+          "previous_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+          "current_sha256": "7ff83677e7c7ddb9a13ccfd36ee756ed6ce4c945c2cdabe639e07d11fc623381",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/grounding/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "714bc5ff2af94bc2fbe1272891b0dcf0b3eaacc792bed4c30c25d59bd6a2a2f1",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/claims.py",
+          "previous_sha256": null,
+          "current_sha256": "0082f634a54cf253da3f8b181b9366a51f5d8dc2f7f6212982bb37514cf61c7c",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/coverage.py",
+          "previous_sha256": null,
+          "current_sha256": "0b509e0ff1ccbca39a5500584b6c59dc8ffdd2150d6bbeb2a2ce2c80c8d4e414",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/grounding_block.py",
+          "previous_sha256": null,
+          "current_sha256": "4a3901d0b918c1e9a7e9869e60a4149a5d3956e0ebde065d4791480de24609b2",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/lineage.py",
+          "previous_sha256": null,
+          "current_sha256": "4dda1b1ad3dc798f5cf79f667b722cfdfa9e2d65345bf0e727590edc21e54b6c",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/retrieval.py",
+          "previous_sha256": null,
+          "current_sha256": "0a6dd9977f2aab4d461979e05635543fb4930693d853ac775d8546c6111e06ec",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/staleness.py",
+          "previous_sha256": null,
+          "current_sha256": "a955694fe3095482bfec8481b330e444090479beb506a919a68d70393f7d532c",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/grounding/tripwire.py",
+          "previous_sha256": null,
+          "current_sha256": "d061998d542ef6e06fff6c4e88319f8ea27fc900e19633396027d344d3515397",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "113544a9f7c29b1267debe0b0fda48a978fd8afcad44abf76e7a5c35cb24e415",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/_html.py",
+          "previous_sha256": null,
+          "current_sha256": "51892161994631ae04d6f6b4c927ab9478c632d35679c8f890d57281dc49a44e",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/_index.py",
+          "previous_sha256": null,
+          "current_sha256": "f7ff9d02752bb72a26181639a35a44b066eddd05a9e03003da0cc7f9e99591a8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/_reply.py",
+          "previous_sha256": null,
+          "current_sha256": "b594d09a292b884f56bad5148ebaf8ae97d2c6e41b895decb3950a3762481061",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/_store.py",
+          "previous_sha256": null,
+          "current_sha256": "34b940e8c5c5add598efa3bb6afc856a78d72c42fa7001143b00041fa448e04b",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/_types.py",
+          "previous_sha256": null,
+          "current_sha256": "39010f732b2e50041da8f1bf5ae42c3660cf9ff209ab591ac64d533b19bba4e1",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/knowledge_fetcher/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "9a7b70ffae7a247d66a76cd348dcc7f90631b26e44822778af7af2b719e0ad48",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/knowledge_fetcher/adapters.py",
+          "previous_sha256": null,
+          "current_sha256": "70a95f068e3d2701e074bc72a6a6bb0b5e0efcf259a5569fc3116d7b38d0c6ec",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/knowledge_fetcher/block.py",
+          "previous_sha256": null,
+          "current_sha256": "e066827915d388e39c0df83f3c1c99c6fb58267426057afa0895c5f6f3b39f7b",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/knowledge/knowledge_fetcher/fetcher.py",
+          "previous_sha256": null,
+          "current_sha256": "eaa39e0569c99f0dad4f9b7c388d586185f25f9a5b80fa0b62b9ef31aba89433",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/skills/__init__.py",
+          "previous_sha256": null,
+          "current_sha256": "22daf329a33dfb731a33b3f49128c60cfc40ee81f61deb11e900f2768881af56",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/skills/corpus.py",
+          "previous_sha256": null,
+          "current_sha256": "b9eac002533f9fbd07066c2ed4baa1df3c69c9b6c75827a76a17e982e13fea06",
+          "binding_change": "added"
+        }
+      ],
+      "validation": {
+        "independently_run": "At d177a651, each file alone with G6_CLAUDE and G6_CODEX set to a missing program: tests/ml/test_sklearn.py, tests/ml/test_automl.py, tests/ml/test_bayesian.py, tests/embodied/test_adapt_physical_ai.py, tests/embodied/test_motion_grasp.py, tests/embodied/test_embodied_merges.py, tests/jobs/test_care_guards.py, tests/jobs/test_duty_of_care_block.py, tests/core/test_consent_followup.py",
+        "result": "29 passed, 11 skipped, 1 failed; 25 passed, 5 skipped, 1 failed; 45 passed, 1 failed; 23 passed; 26 passed; 11 passed; 33 passed; 119 passed, 1 skipped; 189 passed, 2 failed. The certificate-test failures are the ones the PR #12 review recorded at b14dc13: test_sklearn's g5 test refused G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. test_consent_followup's two failures are repository-wide inventory tests naming code none of these certificates binds: an unclassified handler in mcp/improve.py and metaharness/runner.py, and unlisted path-standing places in distill/acceptance_gate.py, distill/held_out/case_gate.py, distill/ledger.py, distill/missions.py, distill/rectify_gate.py and mcp/stdio.py. No other test failed.",
         "limits": "Static delta review and focused local tests on Windows only. scikit-learn, FLAML and PyMC are not installed (the skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The reader is a fresh Claude session, not a different model from the authors of the reviewed commits. Full held-source and quote issuance gates remain required."
       }
     }
