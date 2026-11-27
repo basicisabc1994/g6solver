@@ -258,6 +258,9 @@ def test_commit_marker_error_reverts_before_undoing_in_home_targets(home, monkey
     hit = []
 
     def fail_after_marker(source, destination):
+        if Path(destination).name != ledger._intent_path().name:
+            # 02c6606f: undo now publishes a target's raw bytes through os.replace too; only the intent is JSON
+            return replace(source, destination)
         committed = json.loads(source.read_text(encoding='utf-8'))['body']['committed']
         replace(source, destination)
         if committed and not hit:
@@ -373,7 +376,12 @@ def test_pending_undo_at_every_review_read_keeps_patch_review_going(tmp_path, mo
         monkeypatch.setattr(review, 'failure_writer', pending_before_lock)
     reasons, runs = [], []
     review.apply_review(runtime.BEFORE, runtime.AFTER, reasons, runs)
-    assert runs == []
+    if boundary == 'last':
+        # b341bc35 (lead ruling): the fire this review already committed is reported, at A0 and abstaining, beside
+        # library_unavailable; discarding it would disown a row the field ledger holds
+        assert [(run['library']['authority'], run['verdict']) for run in runs] == [('A0', 'abstain')], runs
+    else:
+        assert runs == []
     assert [reason['code'] for reason in reasons] == ['library_unavailable']
     assert 'authority_intent.json' in reasons[0]['detail']
     assert ledger._intent_path().exists()
@@ -422,7 +430,7 @@ def test_pending_recovery_at_field_read_stops_later_methods(tmp_path, monkeypatc
     runtime.admit(runtime.method(template='weakening.v1'), frozen)
     target = state_path('distill', 'retained.dat')
     target.write_bytes(b'half-published')
-    writer, opened, run = review.failure_writer, Path.open, gate._run
+    writer, replaced, run = review.failure_writer, os.replace, gate._run
     attempts, ran, pending = [], [], []
 
     def pending_before_lock(*, reading=False):
@@ -431,18 +439,19 @@ def test_pending_recovery_at_field_read_stops_later_methods(tmp_path, monkeypatc
             pending.append(ledger._intent_path().read_bytes())
         return writer(reading=reading)
 
-    def fail_once(path, mode='r', *args, **kwargs):
-        if path == target and mode == 'wb' and not attempts:
+    def fail_once(source, destination):
+        # 02c6606f: undo restores a target by replacing it atomically, so the transient failure is at that replace
+        if Path(destination) == target and not attempts:
             attempts.append(True)
             raise OSError('transient restore failure')
-        return opened(path, mode, *args, **kwargs)
+        return replaced(source, destination)
 
     def execute(*args, **kwargs):
         ran.append(args[0].candidate_id)
         return run(*args, **kwargs)
 
     monkeypatch.setattr(review, 'failure_writer', pending_before_lock)
-    monkeypatch.setattr(Path, 'open', fail_once)
+    monkeypatch.setattr(os, 'replace', fail_once)
     monkeypatch.setattr(gate, '_run', execute)
     reasons, runs = [], []
     review.apply_review(runtime.BEFORE, runtime.AFTER, reasons, runs)
@@ -569,7 +578,8 @@ def test_old_committed_cleanup_cannot_supply_a_new_decision(home, monkeypatch):
     reached = []
     reply = distill._call(distill._owner_decision, lambda: reached.append(True))
     assert not reached
-    assert reply['publication_committed'] is True
+    # b341bc35 (lead ruling): an earlier committed intent that blocks this call is the earlier publication's
+    assert reply['publication_committed'] is False and reply['earlier_publication_committed'] is True
     assert reply['warning_card']['code'] == ledger.PartialAuthorityWrite.code
     assert 'verdict' not in reply
     assert target.read_bytes() == b'committed'

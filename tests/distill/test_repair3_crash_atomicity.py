@@ -224,21 +224,22 @@ def test_pending_undo_blocks_later_reply_until_recovery_succeeds(tmp_path, monke
     frozen = runtime.disk.__wrapped__(monkeypatch, tmp_path)
     entry = runtime.admit(runtime.method(), frozen)
     hit = interrupt(monkeypatch, 'decision')
-    opened = Path.open
+    replaced = os.replace
 
-    def cannot_restore(path, mode='r', *args, **kwargs):
-        if hit and path.name == 'library.jsonl' and mode == 'wb':
+    def cannot_restore(source, destination):
+        # 02c6606f: undo restores library.jsonl by an atomic replace, so the restore fails there
+        if hit and Path(destination).name == 'library.jsonl':
             raise OSError('private restore diagnostic')
-        return opened(path, mode, *args, **kwargs)
+        return replaced(source, destination)
 
-    monkeypatch.setattr(Path, 'open', cannot_restore)
+    monkeypatch.setattr(os, 'replace', cannot_restore)
     refused = distill._call(gate.withdraw, entry.entry_id, Library(), reason='withdraw', person='Owner')
     assert refused['warning_card']['code'] == 'G6_E_DISTILL_PARTIAL_WRITE'
     later = distill._call(surface.library)
     assert later['warning_card']['code'] == 'G6_E_DISTILL_PARTIAL_WRITE'
     assert 'recovery incomplete' in str(later).lower()
     assert 'private restore diagnostic' not in str(later)
-    monkeypatch.setattr(Path, 'open', opened)
+    monkeypatch.setattr(os, 'replace', replaced)
     recovered = distill._call(surface.library)
     assert recovered['entries'][0]['entry_id'] == entry.entry_id
 
@@ -306,12 +307,17 @@ def test_commit_marker_error_reverts_before_undoing_targets(tmp_path, monkeypatc
     from g6.distill import ledger
 
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
-    target = tmp_path / 'retained.dat'
+    # fef7645e: an undo journal accepts only targets inside the state home
+    (tmp_path / 'home').mkdir()
+    target = tmp_path / 'home' / 'retained.dat'
     target.write_bytes(b'before')
     replace = os.replace
     hit = []
 
     def fail_after_marker(source, destination):
+        if os.path.basename(destination) != ledger._intent_path().name:
+            # 02c6606f: undo now publishes a target's raw bytes through os.replace too; only the intent is JSON
+            return replace(source, destination)
         committed = json.loads(source.read_text(encoding='utf-8'))['body']['committed']
         replace(source, destination)
         if committed and not hit:

@@ -1,6 +1,7 @@
 """Interrupted authority publications agree with fresh real-disk reads."""
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -190,14 +191,15 @@ def test_failed_rollback_names_remaining_durable_state(disk, monkeypatch, action
     Rectifier().reconcile()
     tools = handlers(monkeypatch)
     hit = interrupt(monkeypatch, 'decision')
-    opened = Path.open
+    replaced = os.replace
 
-    def cannot_restore(path, mode='r', *args, **kwargs):
-        if hit and path.name == 'library.jsonl' and mode == 'wb':
+    def cannot_restore(source, destination):
+        # 02c6606f: undo restores library.jsonl by an atomic replace, so the rollback fails there
+        if hit and Path(destination).name == 'library.jsonl':
             raise OSError('private rollback diagnostic')
-        return opened(path, mode, *args, **kwargs)
+        return replaced(source, destination)
 
-    monkeypatch.setattr(Path, 'open', cannot_restore)
+    monkeypatch.setattr(os, 'replace', cannot_restore)
     answer = asyncio.run(tools['g6_library_decide'](entry.entry_id, action, 'decision', object()))
     assert answer['ok'] is False
     assert answer['warning_card']['code'] == 'G6_E_DISTILL_PARTIAL_WRITE'

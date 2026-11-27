@@ -56,7 +56,9 @@ def test_fault_injector_preserves_original_write_exception(tmp_path, monkeypatch
 def test_memory_journal_does_not_enlist_a_disk_restore(tmp_path, monkeypatch, failing):
     monkeypatch.setenv('G6_HOME', str(tmp_path / 'home'))
     journal = ChainLedger()
-    path = tmp_path / 'retained.txt'
+    # fef7645e: an undo journal accepts only targets inside the state home
+    (tmp_path / 'home').mkdir()
+    path = tmp_path / 'home' / 'retained.txt'
     path.write_text('before', encoding='utf-8')
 
     def unexpected_recovery():
