@@ -38,7 +38,7 @@ OUTCOMES = {"supported_within_scope", "insufficient_evidence", "defect_detected"
 REGISTRATION = Path(__file__).with_name("REPLAY_RC.md")
 # Code-owned, independent of registration/image pins. Raise this whenever case
 # eligibility, labels, exclusions or review evidence interpretation changes.
-EVIDENCE_RULE_VERSION = 2
+EVIDENCE_RULE_VERSION = 3
 # Archive.start writers: run.py, loop.py, evolve.py and this module. None marks
 # replay content/labels; every other value is its index-row exclusion reason.
 # test_we_replay_writer_inventory walks all package writers to keep this closed.
@@ -1136,7 +1136,9 @@ def evaluate(records: list[dict], cases: list[Case] | list[dict], *, modes: list
             raise ValueError("agent record does not name planned archived arguments")
         seen.add(call)
         collected.setdefault(key, []).append(record)
-    for key, attempts in collected.items():
+    # In key order, not record order: a batch's records may be saved in any order, and each group's seconds list
+    # must read the same for the same records (a high-resolution clock makes every entry distinct).
+    for key, attempts in sorted(collected.items()):
         group = by_bug[key[0]][key[2]]
         good = [r for r in attempts if r.get("status") == "finished" and readable_review(r.get("review"))]
         group["failed_calls"] += len(attempts) - len(good)

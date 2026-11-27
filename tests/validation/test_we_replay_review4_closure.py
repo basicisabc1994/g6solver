@@ -370,6 +370,9 @@ RULE_DIGESTS = {
     1: "2bf04bb99b72dc1a6c18009fcf4c6950108889be7e3259c358d4d37dd113a2c2",
     # WR-5: one omission row per check without a final result.
     2: "c3acf3e0654be17117713abdf0fe4824f92d2a2982f22ed69e106fb25cb5ae55",
+    # rc-030 fix round (B8): a group's seconds list is built in record-key order, not saved record order, so an
+    # equivalent reordered batch reads the same under a high-resolution clock.
+    3: "7ee638c621ae8bd7fb67bdc13040d0c1be7a9b7286213904a4145dbf1afe8bf3",
 }
 
 
