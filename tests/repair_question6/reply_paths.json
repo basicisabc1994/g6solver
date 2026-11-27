@@ -210,6 +210,8 @@
       "found"
     ],
     "_record/branches": [
+      "if sources is not None",
+      "if sources is not None or report.phases",
       "if ran.get('loaded_complete') is False"
     ],
     "_record": [
@@ -572,6 +574,7 @@
       "if not passing or not change.files",
       "if any((r['stage'] in ('integrity', 'tier_1', 'tier_2') for r in reasons))",
       "if _left(deadline) < 1",
+      "if getattr(change, 'repo', None) is not None",
       "if 'isolation' in ran",
       "if elsewhere",
       "if ran.get('verdict') not in _READABLE_AT_BASE",
@@ -703,10 +706,11 @@
       "if found.get('code') == 'confirmed_expectation_failed'",
       "if found.get('code') == 'derived_test_regressed'",
       "if found.get('result') == 'counterexample'",
-      "if str(reproduction.get('at_base', 'not run')).startswith('not run')"
+      "if str(reproduction.get('at_base', 'not run')).startswith('not run')",
+      "if item"
     ],
     "_findings": [
-      "items"
+      "[[item[0] + ' Not labelled by you.', *item[1:]] if item else [] for item in items]"
     ],
     "_missing": [
       "[[f\"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: {code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}\" + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
@@ -853,6 +857,7 @@
       "if loop.get('left')",
       "if loop.get('no_clean')",
       "if reviews",
+      "if loop.get('reason') == 'a review failed'",
       "if error",
       "if len(reviews) != 1",
       "if reviews",
@@ -871,11 +876,108 @@
     "_review_lines": [
       "[*lines, '', '## What this loop does not show', *LOOP_LIMITS]"
     ],
-    "completion_report": [
-      "'\\n'.join([*(_loop_lines(loop) if loop.get('reviews') is None else _review_lines(loop)), '', review])"
-    ],
     "completion_report/branches": [
+      "if len(body) >= 6 and body[1].startswith('- **Checked:**')",
       "if loop.get('reviews') is None"
+    ],
+    "completion_report": [
+      "'\\n'.join([lines[0], *card_lines(card(assessment, loop)), *lines[1:], '', *body])"
+    ],
+    "with_card/branches": [
+      "if len(lines) >= 5 and all((lines[i].startswith(f'- **{label}:**') for i, label in enumerate(labels)))",
+      "if lines and lines[0].startswith('- **Checked:**')",
+      "if separator"
+    ],
+    "with_card": [
+      "headline + '\\n' + '\\n'.join(card_lines(value)) + (separator + body if separator else '')"
+    ],
+    "model_relation.family/branches": [
+      "if re.search('(?:^|[/:_-])(?:claude|opus|sonnet|haiku)(?:$|[\\\\d._:-])', name)",
+      "if re.search('(?:^|[/:_-])(?:codex|gpt|o[134])(?:$|[\\\\d._:-])', name)"
+    ],
+    "model_relation.family": [
+      "'anthropic'",
+      "'openai'",
+      "''"
+    ],
+    "model_relation": [
+      "'another model family' if left and right and (left != right) else 'a second model'"
+    ],
+    "model_relation/branches": [
+      "if left and right and (left != right)"
+    ],
+    "card/branches": [
+      "if loop and any((e['kind'] == 'loop_ended' for e in events))",
+      "if not unchecked_reason",
+      "if 'selected_run' in held",
+      "if 'selected_run' not in held and len({e['run'] for e in observed}) > 1",
+      "if selected",
+      "if not one",
+      "if kind == 'loop_ended'",
+      "if known",
+      "if not evidence.checked(rows if kind == 'loop_ended' else [Event.from_body(one)])",
+      "if kind == 'loop_ended'",
+      "if known and kind == 'loop_ended' and (not unchecked_reason)",
+      "if data.get('reviews')",
+      "if data.get('reviews')",
+      "if data.get('reviews')",
+      "if known and kind == 'review_finished'",
+      "if data.get(key)",
+      "if runs",
+      "if data.get('proposer')",
+      "if data.get('person_checks')",
+      "if raw_base and evidence.sha256(raw_base) == one.get('baseline_sha256')",
+      "if known",
+      "if known",
+      "if kind == 'loop_ended' and data.get('reviews') or (kind == 'review_finished' and len(observed) > 1)",
+      "if known",
+      "if known and kind == 'loop_ended' and data.get('reviews')",
+      "if known and kind == 'review_finished'",
+      "if known and any(((e.get('data') or {}).get('source_incomplete_sha256') for e in events))",
+      "if kind == 'loop_ended' and one.get('event_id') in labelled",
+      "if not known and (not reason)",
+      "if known",
+      "if known",
+      "if known",
+      "if known",
+      "if known and data.get('left_by_agent')",
+      "if known",
+      "if known",
+      "if known",
+      "if known",
+      "if reproduced",
+      "if known and runs"
+    ],
+    "card": [
+      "{'checked': {'runs': runs, 'by': by, 'artifact': one.get('artifact_sha256', ''), 'base': base, 'record_status': status, 'unchecked': bool(unchecked_reason), 'reason': reason, 'model_relation': model_relation(data.get('agent', ''), data.get('reviewer', '')), 'model_calls': data.get('model_calls') if known else None}, 'caught': {'reproduced': reproduced, 'integrity': data.get('integrity_reasons') if known else None, 'unconfirmed': data.get('unconfirmed') if known else None}, 'repaired': repaired, 'open': open_count, 'labels': labels, 'unlabelled_open': unlabelled, 'identities_incomplete': bool(known and check_counts['identities_incomplete']), 'left_by_agent': data.get('left_by_agent', 0) if known else None, 'agent_reason': loop.get('left', '') if known and data.get('left_by_agent') else '', 'not_checked': {'not_established': data.get('not_established') if known else None, 'skipped': data.get('checks_skipped') if known else None, 'standing': list(assessment.get('not_checked') or [])}, 'needs_you': {'merge': True, 'questions': data.get('questions') if known else None, 'unknowns': data.get('unknowns') if known else None, 'open_findings': open_count}, 'ending': data.get('ending') or ('open' if reproduced else 'clean' if known and runs else 'untested'), 'justification': [{'event_id': e['event_id'], 'kind': e['kind'], 'sha256': evidence.digest(e)} for e in events]}"
+    ],
+    "card_lines/branches": [
+      "if checked.get('unchecked')",
+      "if value.get('identities_incomplete')",
+      "if checked.get('reason')",
+      "if status == 'off'",
+      "if status == 'write_failed'",
+      "if value['justification']",
+      "if checked.get('unchecked')",
+      "if any((r['by'].startswith('reviewer:') for r in runs))",
+      "if checked.get('model_calls') == 0",
+      "if value['repaired'] is None",
+      "if any((r['what'] == 'model probes' or (r['what'] == 'reviews' and r['count'] > 1) for r in runs))",
+      "if value.get('identities_incomplete')",
+      "if value['agent_reason']",
+      "if value.get('labels')",
+      "if value.get('unlabelled_open', bool(value['open']))"
+    ],
+    "card_lines": [
+      "['- **Checked:** nothing this turn. ' + checked['reason'] + (' Check identities are incomplete; omitted findings remain unresolved.' if value.get('identities_incomplete') else '')]",
+      "['- **Checked:** ' + ('nothing this turn. ' if checked.get('unchecked') else 'not recorded. ') + checked['reason'], '- **Caught:** not recorded.', '- **Repaired:** not observed. Open: not recorded. Left by the agent: not recorded.', '- **Not checked:** no event counts available; the standing list below.', '- **Needs you:** merging. ' + note]",
+      "[f\"- **Checked:** {named or 'no test run recorded'}, on patch {code(checked['artifact'][:12])} against base {code(checked['base'][:12])}.{model}\", f\"- **Caught:** {count(caught['reproduced'])} reproduced findings (tests failed on the patch); {count(caught['integrity'])} signs of weakened tests; {count(caught['unconfirmed'])} unconfirmed.\", f\"- **Repaired:** {repaired}. Open: {count(value['open'])}. Left by the agent: {count(value['left_by_agent'])}.\" + (' Check identities are incomplete; open counts are lower bounds and omitted findings remain unresolved.' if value.get('identities_incomplete') else '') + (f\" Its reason: {code(value['agent_reason'])}.\" if value['agent_reason'] else '') + (' ' + ' '.join((f\"Person label by {code(label['by'])}: {code(label['note'])} (event {code(label['event_id'])}).\" for label in value.get('labels') or [])) if value.get('labels') else '') + (' Not labelled by you.' if value.get('unlabelled_open', bool(value['open'])) else ''), f\"- **Not checked:** {count(missing['not_established'])} requirements not established; {count(missing['skipped'])} runs skipped; the standing list below.\", f\"- **Needs you:** merging; {count(needs['questions'])} questions; {count(needs['unknowns'])} unknowns. Record events: {ids}.\"]"
+    ],
+    "card_lines.count": [
+      "'not recorded' if number is None else str(number)"
+    ],
+    "card_lines.count/branches": [
+      "if number is None"
     ],
     "safe_render": [
       "render(assessment)",
@@ -937,6 +1039,8 @@
     ],
     "compact/branches": [
       "if not isinstance(assessment, dict)",
+      "if 'card' in assessment",
+      "if 'card' in reply",
       "if saved",
       "if len(json.dumps(shown, ensure_ascii=False)) - kept <= BUDGET"
     ],

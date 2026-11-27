@@ -99,7 +99,11 @@ tells the agent to ask you. Set `G6_HINTS=off` in Claude Code's environment to t
 
 ## What the report says, and what it does not
 
-The report starts with how the run ended, in one word: `clean`, when no reviewer's case fails at the parent and on the
+The report opens with a short card: what was checked, the reproduced findings, the repairs G6 observed, what was not
+checked, and what needs you. Each number on it comes from an event in G6's local workflow record for this task, and the card
+names those events. With the record off, or nothing recorded for the task, the card says so and gives no numbers.
+
+Then the report says how the run ended, in one word: `clean`, when no reviewer's case fails at the parent and on the
 patch; `fixed`, when each such case now passes and a fresh review found no new one; `contested`, when such a case fails and
 the agent left the code as it was; `open`, when such a case has not been shown to pass; `untested`, when no reviewer loop
 came to a result on this patch, as when only the model-free review ran: its own outcome is in its report. A tool's reply

@@ -30,7 +30,7 @@ TOOLS = ("g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_
 #: The lifecycle tools act on the record itself, so their calls are not recorded in it.
 LIFECYCLE = TOOLS[:3]
 #: Said with a withheld reply. Fixed words: no path, no project id, nothing from the record.
-FILES = ("The workflow record stays on this computer. The person can open inspection.json, and write corrections.json, "
+FILES = ("The workflow record stays on this computer. The person can open inspection.json and RECORD.md, and write corrections.json, "
          "in this project's folder under workflow in G6's state folder. To share the record with this provider, the "
          "person grants the source named workflow: followed by this repository's identifier (g6_cloud_grant).")
 #: Added to what g6_help returns over MCP.
@@ -114,18 +114,111 @@ def finishing(finish: Any, repo: str, task: str, intent: Any = None) -> Any:
     """The compact step of a review job (``review_reply.finish``), followed by the record of that finished review and,
     after its whole report, the view of the task."""
     started_at, began = now(), time.monotonic()
+    notes = {}
+    contexts = {}
+    shapes = {}
+
+    def refresh(reply: Any, job_id: str, *, include_view: bool = True, detail: str | None = None) -> Any:
+        note = notes.get(job_id, "")
+        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+            shape = shapes.get(job_id)
+            if shape and shape["legacy"]:
+                # A rendered reply without a card predates this evidence surface (or is
+                # not G6's patch review): both its forms stay exactly as its producer made them.
+                return reply
+            keep_evidence = "workflow_evidence" in reply["assessment"]
+            from g6.harness import patch_report
+            from g6.harness.workflow import evidence
+
+            # Detach before adding fields, preserving task custody and the original
+            # sources. An earlier value receipt cannot bless mutated report bytes.
+            from g6.core.external_data import detached
+
+            copy, refs, metadata = detached(reply)
+            custody = getattr(reply, "custody", None)
+            reply = custody(copy) if callable(custody) else copy
+            assessment = reply["assessment"]
+            assessment["workflow_evidence"] = evidence.read(repo, task, note=note,
+                                                           origin_kind="review_job", origin_id=job_id)
+            assessment["card"] = patch_report.card({**contexts.get(job_id, {}), **assessment,
+                "scope": {**contexts.get(job_id, {}).get("scope", {}), **(assessment.get("scope") or {})}}, None)
+            old_report = assessment.get("report")
+            assessment["report"] = (patch_report.with_card(old_report, assessment["card"]) if old_report else
+                                    patch_report.safe_render(assessment))
+            reply["card"] = assessment["card"]
+            extra = ()
+            if assessment["card"]["justification"]:
+                project, _ = adapters.identities(repo, task)
+                extra = (cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+                    assessment["workflow_evidence"], sort_keys=True)),)
+            # Polling refreshes existing presentation fields. Source observations
+            # belong in the record, not in new keys on a rendered reply.
+            if detail is not None:
+                if detail == "full" and shape and shape["rendered"]:
+                    if "card" not in shape["reply"]:
+                        reply.pop("card", None)
+                    if "card" not in shape["assessment"]:
+                        reply["assessment"].pop("card", None)
+                    keep_evidence = "workflow_evidence" in shape["assessment"]
+                if not keep_evidence:
+                    reply["assessment"].pop("workflow_evidence", None)
+            if refs is not None or extra:
+                reply = cloud.bind_output(reply, (*(refs if refs is not None else (cloud.UNKNOWN,)), *extra), metadata=metadata)
+            if include_view and policy.enabled()[0]:
+                reply = _viewed(reply, repo, task, ("assessment", "report"), assessment=assessment, intent=intent,
+                                job_id=job_id)
+        return reply
+
+    def prepare(reply: Any, job_id: str) -> Any:
+        if job_id not in notes:
+            assessment = reply.get("assessment") if isinstance(reply, dict) else None
+            if isinstance(assessment, dict):
+                rendered = isinstance(assessment.get("report"), str)
+                shapes[job_id] = {"reply": frozenset(reply), "assessment": frozenset(assessment),
+                                  "rendered": rendered,
+                                  "legacy": rendered and "card" not in assessment and "card" not in reply
+                                            and "workflow_evidence" not in assessment}
+                contexts[job_id] = {"scope": {"base_commit": (assessment.get("scope") or {}).get("base_commit", "")},
+                                    "not_checked": list(assessment.get("not_checked") or [])}
+            notes[job_id] = (adapters.observe_review(repo, task, job_id, reply, started_at=started_at, finished_at=now(),
+                                                    seconds=time.monotonic() - began) if policy.enabled()[0] else "")
+        if shapes.get(job_id, {}).get("legacy"):
+            return reply
+        return refresh(reply, job_id, include_view=False)
+
+    def strip(reply: Any) -> Any:
+        """Frozen job snapshots hold decisions, never the card's record evidence."""
+        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+            reply.pop("card", None)
+            if isinstance(reply.get("workflow"), dict):
+                reply.pop("workflow", None)
+            assessment = reply["assessment"]
+            assessment.pop("card", None)
+            assessment.pop("workflow_evidence", None)
+            report = assessment.get("report")
+            if isinstance(report, str):
+                report = report.partition("\n\n" + view.HEADING)[0].partition("\n\n" + view.WITHHELD)[0]
+                lines = report.split("\n")
+                labels = ("Checked", "Caught", "Repaired", "Not checked", "Needs you")
+                if len(lines) >= 6 and all(lines[i + 1].startswith(f"- **{label}:**") for i, label in enumerate(labels)):
+                    del lines[1:6]
+                elif len(lines) > 1 and lines[1].startswith("- **Checked:**"):
+                    del lines[1]
+                assessment["report"] = "\n".join(lines)
+        return reply
 
     def done(reply: Any, job_id: str) -> Any:
+        reply = prepare(reply, job_id)
         shown = finish(reply, job_id)
-        if not policy.enabled()[0]:
-            return shown
-        where = (shown.get("full_assessment") or {}).get("file") if isinstance(shown, dict) else None
-        note = adapters.observe_review(repo, task, job_id, reply, started_at=started_at, finished_at=now(),
-                                       seconds=time.monotonic() - began, saved=where)
-        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict):
+        if isinstance(reply, dict) and isinstance(reply.get("assessment"), dict) and policy.enabled()[0]:
             shown = _viewed(shown, repo, task, ("assessment", "report"), assessment=reply["assessment"], intent=intent,
                             job_id=job_id)
-        return _noted(shown, note)
+        # A refused call has no assessment to justify. Enabling local collection
+        # cannot change that refusal's envelope because its repo was invalid.
+        return _noted(shown, notes.get(job_id, "")) if isinstance(reply, dict) and "assessment" in reply else shown
+    done.prepare = prepare
+    done.refresh = refresh
+    done.strip = strip
     return done
 
 
@@ -138,6 +231,8 @@ def stepped(step: Any, repo: str, task: str, session: str, base: str = "HEAD", r
 
     note = adapters.observe_step(repo, task, completion_hook.folder(f"mcp:{session}"), _Step(result))
     if result.get("action") == "stop":
+        # The producer recorded and rendered its card before saving the report.
+        # Replaying the adapter cannot replace it with a later, broader snapshot.
         result = _viewed(result, repo, task, ("report",), loop=result)
     return _noted(result, note)
 
@@ -221,13 +316,54 @@ def _unreadable(project: str, exc: RecordUnreadable) -> dict:
                   "Delete that part of the record (g6_workflow_delete), or leave it: the review is not affected.")
 
 
+def _self_changes(repo) -> list[str]:
+    """Read local sources only, without creating a loop or running it."""
+    from pathlib import Path
+
+    from g6.harness.workflow.record_md import self_changes
+
+    from g6.core.cloud_consent import sha256
+    from g6.core.repair_log import LOG, repair_stats
+    from g6.core.storage import state_path
+    from g6.metaharness import shadow
+    from g6.self_maintenance.envelope import CYCLE_LOG
+    from g6.self_maintenance.pacing import SETTINGS_FILE
+
+    root, lineage, source, stats = Path(repo), None, "", {}
+    try:
+        if (root / SETTINGS_FILE).is_file() and (root / CYCLE_LOG).is_file():
+            path = root / shadow.ADOPTIONS
+            before = path.read_bytes() if path.is_file() else b""
+            lineage = shadow.lineage(root)
+            after = path.read_bytes() if path.is_file() else b""
+            if before != after:
+                lineage = {"current": None}
+            source = shadow.ADOPTIONS + ":" + sha256(after)
+        log = state_path(*LOG)
+        if log.is_file():
+            before = log.read_bytes()
+            stats = repair_stats(log)
+            if before != log.read_bytes():
+                stats = {}
+            else:
+                source += "; repair log:" + sha256(before)
+    except Exception:  # noqa: BLE001 - no missing reading becomes a measured change
+        return self_changes({"current": None}, {})
+    lines = self_changes(lineage, stats, source=source)
+    if stats:
+        from g6.harness.patch_report import code
+
+        lines[1] += " Evidence " + code(source.split("; repair log:")[-1]) + "."
+    return lines
+
+
 def export(repo: str) -> dict:
     project = _project(repo)
     if project is None:
         return _refused("repo must be the full path of the repository's folder")
     try:
         lifecycle.expire(project)
-        path = lifecycle.export(project)
+        path = lifecycle.export(project, self_lines=_self_changes(repo))
         record = ProjectRecord(project)
         tasks = record.tasks()
         events = record.events()
@@ -235,12 +371,17 @@ def export(repo: str) -> dict:
         return _unreadable(project, exc)
     adapters.observe_project(repo, "inspection", cloud.sha256(str(path) + now()), at=now())
     on, why = policy.enabled()
+    from g6.harness.workflow import record_md
+
     return _reply(project, "export", {
         "status": "written", "file": str(path), "tasks": len(tasks), "runs": len({e.run for e in events}),
+        "record_file": str(path.with_name(policy.RECORD_MD)), "counts": record_md.counts(events) if on else {},
         "events": len(events), "recording": on, **({"recording_note": why} if why else {}),
         "policy_version": policy.POLICY_VERSION, "expires_after_days": policy.RETENTION_DAYS["exports"]},
-        "inspection.json was written for the person to open. It holds codes, counts, times and digests about G6's "
-        "own review work, and no task text or code.", "Tell the person where the file is. Do not read it back to them.")
+        "inspection.json and RECORD.md were written for the person to open. They describe G6's own review work. "
+        + ("No task text or code is in the event record." if on else
+           "No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on."),
+        "Tell the person where the files are. Do not read them back to them.")
 
 
 def correct(repo: str) -> dict:
@@ -480,10 +621,11 @@ def register(server: Any, context_type: Any) -> None:
     from g6.core.consent_declarations import TOOLS as DECLARED
 
     def g6_workflow_export(repo: str) -> dict:
-        """Write inspection.json, what G6 recorded about its own review work in this repository (codes, counts, times
-        and digests; no task text or code), into the project's folder under G6's state folder, for the person to open.
-        repo: the repository's folder, a full path. The reply says where the file is and how much it holds; it never
-        repeats the file. Without the person's grant for the workflow source the file is still written and the reply
+        """Write inspection.json and the readable RECORD.md beside it, from G6's recorded review events (codes,
+        counts, times and digests; no task text or code). Both stay in the project's local workflow folder and expire
+        after 30 days. With recording off, RECORD.md says no record is kept and how to turn it on. repo: the repository's
+        folder, a full path. The reply adds record_file and counts and never repeats either file.
+        Without the person's grant for the workflow source the files are still written and the reply
         is withheld. Runs no model and no code."""
         return export(repo)
 

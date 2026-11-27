@@ -944,6 +944,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     pack = _pack(change, shown, task, proof)
     sent, hidden = _masked_pack(change, shown, task, proof)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
+    returned = False
     try:
         refs = tuple(cloud.Source.text(cloud.repository_source(change.repo), rel, sent)
                      for rel in (*change.sources, "candidate.patch"))
@@ -952,8 +953,9 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         if told:
             refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
-            found = critic_report(consent.guard(caller).complete(
-                system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+            response = consent.guard(caller).complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told)
+            returned = True
+            found = critic_report(response, proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -961,7 +963,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
+    return {**found, "reviewer": _named(caller), "review_returned": returned, **({"masked": masked} if masked else {})}
 
 
 def _read_whole(patch: str, task: str) -> bool:
@@ -1030,6 +1032,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
+    sources = {}
     diagnostics, notes, observations = {}, {}, {}
     mark = _consent_mark()                  # the consent latch, read after this round's critic calls
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
@@ -1040,6 +1043,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
 
     def run(name: str) -> None:
+        from g6.harness.workflow.evidence import capture_sources
+
+        sources.update(capture_sources(where, [name]))
         got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
         before, origins = _snapshot_probe(_reviewer_base(change, where, deadline, name))
@@ -1078,7 +1084,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     if told is not None:
         raise told
     said.update(n=n, patch=digest(patch), file=mine, test_path=str(where / mine), results=results, failed=failed,
-                notes=notes, observations=observations)
+                notes=notes, observations=observations, check_sources=sources)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
@@ -1229,23 +1235,52 @@ def _scouts_chosen() -> bool:
     return (keys.get(MODE_LINE) or "").strip().lower() == "scouts"
 
 
+class _ReviewText(str):
+    """The report with its decided fields kept for the additive card; still a string to every existing caller."""
+
+    def __new__(cls, text: str, assessment: dict):
+        value = super().__new__(cls, text)
+        value.assessment = assessment
+        return value
+
+
 def _final_review(root: Path, task: str, base: str) -> str:
     """The patch review of what stopped the loop, on the task's text alone: what the loop ran is not given to it."""
     reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
                          timeout_s=REVIEW_S)
-    return (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
-        (reply.get("warning_card") or {}).get("message", ""), 300))
+    assessment = reply.get("assessment") or {}
+    return _ReviewText(assessment.get("report") or ("The patch review gave no report: " + patch_report.code(
+        (reply.get("warning_card") or {}).get("message", ""), 300)), assessment)
 
 
-def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
+def _record_report(root: Path, task: str, base: str, session: Path, state: dict, step: Step, review: str) -> None:
+    """Capture task observations before card rendering; no missing write can support a count."""
+    from g6.harness.workflow import adapters, evidence as workflow_evidence
+    from g6.harness.workflow.record import now as recorded_now, workflow_source
+
+    state["final_assessment"] = getattr(review, "assessment", {})
+    note = adapters.observe_loop(root, task, session, state, step, at=recorded_now(), base=base)
+    state["workflow_evidence"] = workflow_evidence.read(root, task, note=note,
+                                                       origin_kind="loop_session", origin_id=session.name)
+    if state["workflow_evidence"]["justification"]:
+        project, _ = adapters.identities(root, task)
+        cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+            state["workflow_evidence"], sort_keys=True)),))
+
+
+def _report(root: Path, task: str, base: str, state: dict, reason: str, session: Path | None = None) -> str:
     """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
     review = _final_review(root, task, base)
+    if session is not None:
+        _record_report(root, task, base, session, state, Step(STOP), review)
     rounds, ran = state.get("rounds") or [], state.get("ran") or {}
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
         "boundary": state.get("boundary"), "reviewer_notes": state.get("reviewer_notes") or {},
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": getattr(review, "assessment", {}),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -1406,6 +1441,9 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
         _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
+    # Record the observed ending before rendering its justification. The later
+    # hook/MCP adapter replays these same native ids and adds nothing.
+    _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), review)
     return _finish(session, state, _reviews_report(state, reason, code, ending, review), code, ending, patch=now)
 
 
@@ -1415,6 +1453,8 @@ def _reviews_report(state: dict, reason: str, code: str, ending: str, review: st
     return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": state.get("final_assessment") or getattr(review, "assessment", {}),
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
 
 
@@ -1589,6 +1629,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviews or untested:
             return _finish(session, state, text, code, "untested", patch=now)
         ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
+        _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), "")
         return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
 
     if not change.sources:
@@ -1673,7 +1714,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviewing:
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
-                return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                return _finish(session, state, _report(root, task, base, state, "no probe set could run", session),
                                patch=_patch_now(root, base))
         loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
@@ -1714,7 +1755,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
     reason = loop.why or STOPPED.get(got.status, got.reason)
     if not reviewing:
-        return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
+        return _finish(session, state, _report(root, task, base, state, reason, session), patch=_patch_now(root, base))
     if got.status == "no_counterexample_in_domain":
         reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":

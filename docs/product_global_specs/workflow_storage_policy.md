@@ -35,7 +35,7 @@ period; an older entry in a file still in use is not read once it is past its pe
 | `annotations`: your corrections | 180 days | `tasks/<task-id>/annotations.jsonl` |
 | `decisions`: suggestions you adopted, dismissed or reopened | 365 days | `decisions.jsonl`, `tasks/<task-id>/decisions.jsonl` |
 | `feedback`: opt-in, invitations and what you answered | 180 days | `feedback.jsonl` |
-| `exports`: the inspection file | 30 days | `inspection.json` |
+| `exports`: the inspection and readable files | 30 days | `inspection.json`, `RECORD.md` |
 | `receipts`: that something was deleted or expired | 365 days | `receipts.jsonl` |
 
 Beside a file G6 may keep a `.head` (the last entry's hash), a `.lock` and, for a moment while writing, a `.part`.

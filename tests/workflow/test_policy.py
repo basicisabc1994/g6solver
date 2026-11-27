@@ -15,7 +15,7 @@ from g6.harness.workflow import policy
 
 _PACKAGE = Path(g6.harness.workflow.__file__).parent
 _DOC = Path(__file__).resolve().parents[2] / "docs" / "product_global_specs" / "workflow_storage_policy.md"
-_FILE_NAME = re.compile(r"\.(jsonl|json|head|lock|part|tmp|new)\Z")
+_FILE_NAME = re.compile(r"(\.(jsonl|json|head|lock|part|tmp|new)|RECORD\.md)\Z")    # RECORD.md: the readable export (rc030-card)
 
 
 def _strings(path: Path) -> set[str]:

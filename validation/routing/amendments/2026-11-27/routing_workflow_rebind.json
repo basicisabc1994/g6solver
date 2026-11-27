@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-27",
+  "before_any_arm": true,
+  "reason": "the end-of-task card fold (claude/rc030-card) rewrites the workflow tools' own text that the workflow route binds; no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2f2a93b80275212d0824539160be44155376f34b2d04e652bf7d0de40e6e694f"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "794adf65b5ef2ac0dcfabc84b907358ebbfc556c9ebfdbc51540a544776c4ff4"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-2f2a93b80275.json",
+    "frozen.json": "frozen.retired-4c8196f57e25.json"
+  },
+  "routes": {
+    "workflow": {
+      "before": "9dd0b172f2747cc0690ee262858fee47b066b0135cec214a87b23aa2dbb0dcae",
+      "after": "6fe65cdf0804fbf6b4a6c0ee8e9fb5bce301c4de1f3056e6acc94ce69e8a7523"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "lead ruling, 2026-11-26 (standing rule): a fold that moves only a route's text is rebound by a dated amendment before any session runs, as the earlier review, question and workflow rebinds were; the routing trials have run no session and this changes no result",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

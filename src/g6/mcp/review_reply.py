@@ -175,10 +175,12 @@ def compact(reply: dict, job_id: str, saved: str | None) -> dict:
 
         shown = {
             "assessment": {"report": report, "outcome": assessment.get("outcome"),
+                           **({"card": assessment["card"]} if "card" in assessment else {}),
                            "reasons": [*integrity, *short(others, "assessment.reasons")],
                            "next_actions": short(assessment.get("next_actions") or [], "assessment.next_actions"),
                            "unknowns": short(assessment.get("unknowns") or [], "assessment.unknowns")},
             "merge": short(reply.get("merge"), "merge"),
+            **({"card": reply["card"]} if "card" in reply else {}),
             "job_id": job_id,
             "full_assessment": {
                 "file": saved, "detail": how, "holds": HOLDS,

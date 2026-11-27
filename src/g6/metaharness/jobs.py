@@ -62,6 +62,7 @@ class Jobs:
         self._jobs = {}
         self._compact = {}
         self._provenance = {}
+        self._refreshers = {}
         self._lock = Lock()
 
     def start(self, operation, *, compact=None):
@@ -77,6 +78,7 @@ class Jobs:
                     del self._jobs[oldest]
                     self._compact.pop(oldest, None)
                     self._provenance.pop(oldest, None)
+                    self._refreshers.pop(oldest, None)
             ident = uuid4().hex
             self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin)
         return cloud.bind_output({"ok": True, "job_id": ident, "status": "pending",
@@ -90,6 +92,13 @@ class Jobs:
             capture.client, capture.supplied = origin[0], set(origin[1])
             try:
                 result = operation()
+                prepare = getattr(compact, "prepare", None)
+                refresh = getattr(compact, "refresh", None)
+                strip = getattr(compact, "strip", None)
+                if callable(prepare) and callable(refresh) and callable(strip):
+                    result = prepare(result, ident)
+                    with self._lock:
+                        self._refreshers[ident] = refresh
                 body, known, metadata = freeze_output(result)
                 refs = cloud.boundary_sources(carried=(*(known if known is not None else
                     cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
@@ -98,7 +107,10 @@ class Jobs:
                 # Freeze before a compactor can mutate the producer's object.
                 # Default prose filtering has already run on the frozen bytes.
                 # Only exact external receipts can exempt data in either poll.
-                full = _FrozenResult.completed(ident, body, external=receipts(result))
+                # A card is refreshed on each poll, so the retained snapshot holds none.
+                retained_body = (json.dumps(strip(json.loads(body)), separators=(',', ':'), allow_nan=False)
+                                 if callable(strip) else body)
+                full = _FrozenResult.completed(ident, retained_body, external=receipts(result))
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
@@ -112,7 +124,9 @@ class Jobs:
                         body, known, shown_metadata = freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body, external=receipts(shown))
+                        retained_body = (json.dumps(strip(json.loads(body)), separators=(',', ':'), allow_nan=False)
+                                         if callable(strip) else body)
+                        shown = _FrozenResult.completed(ident, retained_body, external=receipts(shown))
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata
@@ -166,7 +180,8 @@ class Jobs:
         cloud.record_sources(stored.get("sources", ()))
         public = result.get("status") in ("pending", "running")
         refs = () if public else cloud.boundary_sources(
-            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ()), *self.origin_inputs(ident)))
+            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ()),
+                     *(cloud.output_sources(result.get("result")) or ()), *self.origin_inputs(ident)))
         cloud.bind_output(result, refs)
         try:
             metadata = stored['metadata'][detail].read()
@@ -205,6 +220,10 @@ class Jobs:
             shown = self._compact.get(ident, result) if detail == "compact" else result
         try:
             reply = shown.read()
+            with self._lock:
+                refresh = self._refreshers.get(ident)
+            if reply.get("status") == "completed" and callable(refresh):
+                reply["result"] = refresh(reply["result"], ident, detail=detail)
         except (AttributeError, TypeError, ValueError):
             reply = {**blocked_reply(cloud.WITHHELD), "job_id": ident, "status": "failed"}
             cloud.bind_output(reply, (cloud.UNKNOWN,))

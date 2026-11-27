@@ -99,6 +99,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     state = loop._load(folder)
     evidence = _evidence(state, asked["base"])
     text = done.text or loop.read_report(folder, state)
+    card_report = text
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
         reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
@@ -107,6 +108,29 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
+    if done.action == loop.STOP:
+        from g6.harness import patch_report
+        from g6.harness.workflow import evidence as workflow_evidence
+
+        loop_fields = {**state, "workflow_evidence": state.get("workflow_evidence")}
+        if done.note == loop.ALREADY_ENDED:
+            loop_fields["workflow_evidence"] = workflow_evidence.read(
+                asked["repo"], asked["task"], origin_kind="loop_session", origin_id=folder.name)
+        assessment = state.get("final_assessment") or {}
+        if "- **Checked:**" not in text:
+            loop_fields["unchecked_reason"] = text or note or why
+        said["card"] = patch_report.card(assessment, loop_fields)
+        if done.note == loop.ALREADY_ENDED and "- **Checked:**" in card_report:
+            refreshed = patch_report.with_card(card_report, said["card"])
+            said["report"] = f"{CHANGED}\n\n{refreshed}" if note == CHANGED else refreshed
+        if said["card"]["justification"]:
+            from g6.core import cloud_consent as cloud
+            from g6.harness.workflow.record import workflow_source
+
+            held = loop_fields["workflow_evidence"]
+            project = held["events"][0]["project"]
+            cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+                held, sort_keys=True)),))
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         result = {**refused, "run_id": folder.name, "evidence": evidence, **said}

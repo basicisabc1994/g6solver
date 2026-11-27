@@ -194,7 +194,7 @@ def test_every_writer_in_the_package_is_classified_and_the_admitted_ones_pass_th
             assert "admit(" not in source, name
     # a ledger is built in the store module only, so every entry is appended through Chain.open or Chain.keep
     assert {module for (module, name), calls in found.items() if "ChainLedger" in calls} == {"_store"}
-    assert set(policy.WRITTEN_WHEN_OFF) == {policy.INSPECTION, policy.RECEIPTS}
+    assert set(policy.WRITTEN_WHEN_OFF) == {policy.INSPECTION, policy.RECORD_MD, policy.RECEIPTS}
 
 
 def _function(module: str, name: str):
