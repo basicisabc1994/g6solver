@@ -1,4 +1,4 @@
- G6 0.3.0 known limits
+# G6 0.3.0 known limits
 
 Each line below is a finding reproduced on G6's own code. Most were found by an independent reviewer, who wrote a
 test that shows it; the `limit-` and `rc030-` lines were found in use, in G6's own tests, or in the release review.
@@ -259,7 +259,7 @@ All but the last are (repair landed, not re-checked).
 - `review-rfu4#1`: A saved context pack nested deeper than the JSON decoder allows is not used, but the reply gives
   a plain decoding error instead of G6's usual refusal code.
 
-## Workflow record, on by default (13)
+## Workflow record, on by default (14)
 
 The record is on by default; `G6_WORKFLOW_RECORD=off`, set where the server is registered, turns it off. Its view in
 review replies stays off unless the person names a level in `G6_WORKFLOW_VIEW` or sets `G6_WORKFLOW_RECORD=on`.
@@ -286,6 +286,8 @@ review replies stays off unless the person names a level in `G6_WORKFLOW_VIEW` o
 - `limit-card-withheld-over-mcp`: In an MCP reply, the card at done reads the workflow record only once the person
   has granted the `workflow:<project>` source to that client's provider. Until then it says the record is withheld
   and gives no counts. It fails closed: nothing is shared.
+- `limit-card-collection-repair`: A repair that changes a product value from which a test's own parameters are
+  built at collection counts as a new check, not a repair, so the card at done reports fewer repairs than were made.
 
 ## Tool routing, the skill and the routing instrument (27)
 
@@ -375,7 +377,7 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
 - `review-entfu4#3`: Output written below Python during `g6 invoke` (direct writes to the console, C extensions,
   child processes) is not captured.
 
-## Paths and storage (8)
+## Paths and storage (9)
 
 - `review-stid2#1`: A declared root's own name is not checked; it is taken as the person's declaration.
 - `review-stid2#4`: A path through an alias above the root is refused, never admitted.
@@ -388,6 +390,8 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
 - `review-sfu3#spelling`: A root declared through a junction, an 8.3 short name or another letter case is refused.
 - `review-iss2#r4-2`: The rule for folders pending deletion assumes other file systems behave like the one it was
   built on.
+- `review-hafx4#2`: A file whose name starts with `COM0` or `LPT0` (such as `COM0.py`) is refused as a Windows device
+  name, although Windows and Linux can both hold such a file (a false refusal). (fix needs a certificate-bound file)
 
 ## Component door, composition and the cognitive bridge (22)
 
@@ -498,8 +502,18 @@ These findings belong to features that are not in 0.3.0. They ship with those fe
 
 ## Appendix B: code left out of 0.3.0
 
-The study's execution and capture code and the intent-to-formal-property tool are not in 0.3.0; the first is tested
-unreachable, the second is not built. Their findings stay with that code:
-`review-hafx4#1`, `review-hafx4#2`, `review-ha1#23`, `review-k34#1` to `review-k34#6`, `review-hk34#9`,
-`review-replay4#1` to `review-replay4#4`, `review-rpf4#1`, `review-stfu3#2`, `review-stfu4#1` to `review-stfu4#4`,
-`review-v2#1`, `review-s15a#1` to `review-s15a#7`.
+These findings are on code the installed package does not hold (it holds `src/g6` only), so they stay with that
+code:
+
+- **The worked-examples study's execution, capture and replay code** (the host-session runner, its watchdog and
+  workspace packing, the container K loop, the replay cohort's capture, and the study's saved-row and change-identity
+  checks): research tooling under `validation/worked_examples`, or not in the tree at all. `review-hafx4#1`,
+  `review-ha1#23`, `review-hk34#9`, `review-k34#1`, `review-k34#2`, `review-k34#3`, `review-k34#4`, `review-k34#5`,
+  `review-k34#6`, `review-replay4#1`, `review-replay4#2`, `review-replay4#3`, `review-replay4#4`, `review-rpf4#1`,
+  `review-stfu3#2`, `review-stfu4#1`, `review-stfu4#2`, `review-stfu4#3`, `review-stfu4#4`, `review-v2#1`.
+- **The intent-to-formal-property tool** (section 15): not built into 0.3.0; its code is not in the tree.
+  `review-s15a#1`, `review-s15a#2`, `review-s15a#3`, `review-s15a#4`, `review-s15a#5`, `review-s15a#6`,
+  `review-s15a#7`.
+
+`review-hafx4#2` was found in the study's packing code, and the same device-name rule is in G6's shipped path check,
+so it has its own entry under "Paths and storage".
