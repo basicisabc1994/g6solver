@@ -436,7 +436,7 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
   ended `insufficient_evidence` or `not_run` in two test files, as they did before the line's changes; this has not
   been run on Linux.
 
-## Distillation and the learning library (9)
+## Distillation and the learning library (10)
 
 - `review-dfufu3r4#1`: After an interrupted restore, the reply can say recovery completed while G6's intent file is
   still on disk, so the next request is refused until it is cleared.
@@ -457,6 +457,9 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
   while no host runner is attached (`G6_E_RESEARCH_AUTHORITY`, `G6_E_RESEARCH_HOST_REQUIRED`).
 - `release-030#g6_simulate`: `g6_simulate` forecasts from G6's own import graph and recorded actions; with no
   earlier action of that kind, the forecast stays unknown.
+- `limit-layer-learning-library`: The learning library (g6.distill) imports the meta-harness, and
+  harness.library_review_gate reaches it lazily, so the import-layer contract names each of those edges as an
+  exception. Moving the gate pieces below the layer is planned for 0.3.1.
 
 ## Release copy checks, repository tooling (4)
 

@@ -187,7 +187,22 @@ source_modules = [
   "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
 ]
 forbidden_modules = ["g6.metaharness"]
-ignore_imports = ["g6.cli -> g6.metaharness.surface"]
+# g6.distill, the learning library, sits above this layer beside g6.mcp (deliberate since 64c4db67, 2026-11-18): it
+# imports the meta-harness's gate, evaluation and schema, each edge named below, and harness.library_review_gate
+# reaches its acceptance gate lazily. Moving those gate pieces below the layer is planned for 0.3.1 (KNOWN_LIMITS.md).
+ignore_imports = [
+  "g6.cli -> g6.metaharness.surface",
+  "g6.distill.acceptance_gate -> g6.metaharness.gate",
+  "g6.distill.acceptance_gate -> g6.metaharness.evaluate",
+  "g6.distill.acceptance_gate -> g6.metaharness.schema",
+  "g6.distill.meta.policy_gate -> g6.metaharness.api",
+  "g6.distill.meta.policy_gate -> g6.metaharness.evaluate",
+  "g6.distill.meta.policy_gate -> g6.metaharness.gate",
+  "g6.distill.meta.policy_gate -> g6.metaharness.schema",
+  "g6.distill.meta.policy_gate -> g6.metaharness.select",
+  "g6.distill.meta.policy_gate -> g6.metaharness.tick_rca",
+  "g6.harness.library_review_gate -> g6.distill.acceptance_gate",
+]
 
 [[tool.importlinter.contracts]]
 name = "the meta-harness imports no research code (founder decision A1)"
