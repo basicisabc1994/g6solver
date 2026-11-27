@@ -23,6 +23,18 @@ def real_collection_python(monkeypatch, request):
         monkeypatch.setenv("G6_REPO_PYTHON", request.getfixturevalue("confined_python"))
 
 
+#: Windows only: the AppContainer refuses the test's own tmp_path repository, which only the owner's one-time grant
+#: makes readable (KNOWN_LIMITS platform-windows-ci); owner ruling 2026-11-23: these are judged on Linux CI.
+REFUSED_ON_WINDOWS = "pytest collection refused (G6_E_ISOLATION_UNAVAILABLE)"
+
+
+def skip_if_windows_refused(found):
+    """Skip, on Windows only, when real collection was refused with G6_E_ISOLATION_UNAVAILABLE and nothing else."""
+    reasons = [found.get("reason")] if "status" in found else [s["reason"] for s in found.get("skipped", [])]
+    if os.name == "nt" and REFUSED_ON_WINDOWS in reasons:
+        pytest.skip(REFUSED_ON_WINDOWS)
+
+
 CASES = [
     pytest.param("class TestHidden:\n    __test__ = 0\n    def test_call(self):\n        neighbour()\n",
                  {}, False, id="false-class"),
@@ -74,6 +86,7 @@ def mapped_repository(tmp_path, source, extra, *, collector=None, monkeypatch=No
 def test_reviewer_cases_use_real_confined_collection(tmp_path, real_collection_python, source, extra, expected):
     # No replacement of the collector, its bootstrap, config, conftest or result.
     record = mapped_repository(tmp_path, source, extra)
+    skip_if_windows_refused(record)
     sibling = target(record, "neighbour")
     assert sibling["exercised"] == expected, record
     assert sibling["collection"] == ("uncertain" if expected == "uncertain" else "available"), record
@@ -129,6 +142,7 @@ def test_incomplete_or_malformed_collection_is_uncertain(tmp_path, raw):
 def test_collect_only_never_runs_test_bodies(tmp_path, real_collection_python):
     repository(tmp_path, {"test_api.py": "def test_call():\n    raise RuntimeError('body ran')\n"}, {})
     found = repo_tests.collect(tmp_path, ["test_api.py"], timeout_s=30)
+    skip_if_windows_refused(found)
     assert found["status"] == "available", found
     assert found["nodes"] == ["test_api.py::test_call"]
 
@@ -137,6 +151,7 @@ def test_deselected_nodes_are_not_entry_points(tmp_path, real_collection_python)
     repository(tmp_path, {"test_api.py": "def test_call():\n    pass\ndef test_keep():\n    pass\n",
                           "pytest.ini": "[pytest]\naddopts = -k keep\n"}, {})
     found = repo_tests.collect(tmp_path, ["test_api.py"], timeout_s=30)
+    skip_if_windows_refused(found)
     assert found["status"] == "available", found
     assert found["nodes"] == ["test_api.py::test_keep"]
 
@@ -150,6 +165,7 @@ def test_collection_hooks_see_the_whole_selection(tmp_path, real_collection_pyth
     delta = repository(tmp_path, before, {**before, "api.py": API.replace("return 1", "return 2")})
     record = patch_review._change_neighbourhood(delta, ("test_a.py", "test_b.py"), (), (),
                                                deadline=time.monotonic() + 60)
+    skip_if_windows_refused(record)
     assert target(record, "neighbour")["exercised"] is True, record
     assert target(record, "neighbour")["checks"] == ["test_a.py"]
 

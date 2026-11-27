@@ -1526,6 +1526,16 @@ def _exercised(targets: Sequence[dict], checks: Mapping[str, str], roots: Sequen
             if not bodies:
                 uncertain.add(check)
                 skipped.append(skip(check, answer.get("reason") or "pytest collection unavailable (not supplied)"))
+                # An uncertain answer still names a configuration in its context that cannot be read (as 12a7305a did).
+                for config in pytest_context_paths(texts, rel):
+                    if PurePosixPath(config).name == "conftest.py":
+                        continue
+                    try:
+                        _pytest_names({config: texts[config]}, rel)
+                    except _FileOmitted as exc:
+                        named = skip(f"change map: {shown_name(config)}", exc.args[0])
+                        if named not in skipped:
+                            skipped.append(named)
                 continue
             static.add(check)
             nodes = [check]
