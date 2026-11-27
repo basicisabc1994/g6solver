@@ -458,12 +458,15 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
 - `release-030#g6_simulate`: `g6_simulate` forecasts from G6's own import graph and recorded actions; with no
   earlier action of that kind, the forecast stays unknown.
 
-## Release copy checks, repository tooling (3)
+## Release copy checks, repository tooling (4)
 
 - `review-copy4#2`: An unquoted Mermaid state label is refused as a prose claim (false refusal).
 - `review-copy4#5`: A blank line hides later MkDocs extensions from the coverage guard.
 - `review-copyfur1#2`: Copy after a sentence that ends in a single capital letter is read as one sentence with it,
   so independent copy can be refused along with the claim before it.
+- `limit-ci-reviewer-evidence`: The reviewer-evidence folders (tests/_review_*) run in CI one folder per process and
+  do not block CI in 0.3.0. Some hold platform-only probes. Each fix they reproduce has its own regression test in the
+  main suite, which does block.
 
 ## Not yet measured
 

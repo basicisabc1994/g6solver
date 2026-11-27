@@ -17,7 +17,10 @@ if (-not $Python) {
     if (Test-Path $venv) { $Python = $venv } else { $Python = "python" }
 }
 Remove-Item $Log, "$Log.group*.txt" -ErrorAction SilentlyContinue
-$all = Get-ChildItem tests | Where-Object { $_.Name -ne "__pycache__" -and $_.Name -ne "conftest.py" } |
+# The reviewer-evidence folders (tests/_review_*) are left out: their conftests set the temporary folder and G6_HOME
+# for the whole process they load in. CI runs each in its own process instead, as a step that does not block (0.3.0).
+$all = Get-ChildItem tests | Where-Object { $_.Name -ne "__pycache__" -and $_.Name -ne "conftest.py" -and
+                                            $_.Name -notlike "_review_*" } |
     ForEach-Object { "tests/" + $_.Name }
 $big = @("tests/workforce", "tests/metaharness", "tests/research")
 $rest = @($all | Where-Object { $big -notcontains $_ })

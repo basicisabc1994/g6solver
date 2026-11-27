@@ -59,6 +59,21 @@ jobs:
       # The suite runs in groups, never as one process (tools/suite_split.ps1; pwsh is on every hosted runner).
       - name: Test suite, in groups
         run: pwsh -NoProfile -File tools/suite_split.ps1 -Python python -Log suite-split.log -Shard "${{ matrix.shard }}/4"
+      # The reviewer-evidence folders (tests/_review_*), which the groups leave out: each in its own pytest process,
+      # since their conftests set the temporary folder and G6_HOME for the process. They do not block CI in 0.3.0
+      # (KNOWN_LIMITS.md): some hold platform-only probes, and each fix they reproduce has a regression test in the suite.
+      - name: reviewer evidence, per folder, non-blocking
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($folder in Get-ChildItem tests -Directory -Filter "_review_*" | Sort-Object Name) {
+            python -m pytest -q -p no:cacheprovider -p tests.g6_shard --g6-shard "${{ matrix.shard }}/4" "tests/$($folder.Name)"
+            if ($LASTEXITCODE -notin 0, 5) { $failed += $folder.Name }   # 5: none of this shard's files is in it
+          }
+          "reviewer-evidence folders with a failure: $($failed.Count) $($failed -join ' ')"
+          if ($failed.Count) { exit 1 }
       - name: Group summaries
         if: always()
         shell: pwsh
