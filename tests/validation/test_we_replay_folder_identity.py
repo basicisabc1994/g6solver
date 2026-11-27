@@ -2,6 +2,7 @@
 """Folder identities with source access; ambiguous names without source access."""
 import importlib.util
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -124,7 +125,16 @@ def test_unreadable_folder_identity_is_unbound(tmp_path, monkeypatch):
         monkeypatch.setattr(rc._WindowsAPI, "file_identity", unreadable, raising=False)
         assert rc.Source(tmp_path, required=True).root == tmp_path
     else:
-        monkeypatch.setattr(rc.os, "fstat", unreadable)
+        # rc.os is the process's os module: fail only replay_rc's own identity read, so another caller in the
+        # process (outside the code under test) keeps the real fstat.
+        real = os.fstat
+
+        def fstat(*args, **kwargs):
+            if sys._getframe(1).f_globals.get("__name__") == rc.__name__:
+                return unreadable(*args, **kwargs)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(rc.os, "fstat", fstat)
     cases = [SimpleNamespace(origins=[{"run": "run/synthetic/folder"}], digest="a" * 64)]
     assert not rc._unique_origin_digests(cases, source=tmp_path)
 
