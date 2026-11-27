@@ -113,6 +113,9 @@ OWNED = {
     'snapshot.py:_has_record': '_taken receives only the detached snapshot/fresh root',
     'snapshot.py:view': '_bounded_view detaches the root; recursion shares its scope',
     'snapshot.py:_unique': 'native JSON parser over text bounded by json_reply',
+    # rc-030 fix round (B11): the characters of the reply text json_reply has already admitted (its cap and text());
+    # it counts brackets outside strings and holds no value
+    'snapshot.py:_nesting': 'characters of the reply text json_reply admitted, counted; no value is held',
     'snapshot.py:issue': 'set() creates an empty owned issuance index; digest walks the issued value',
     'adaptation.py:judged_files': 'fixed tuple of bridge/G6 judge functions',
     'adaptation.py:_declared': 'owned ADAPTABLE paths and judge identities',
