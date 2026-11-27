@@ -239,6 +239,17 @@ MAPPING: dict[str, Row] = {row.kind: row for row in (
         "classification only", "the caller or a model", "after tier 2", "a proposed check never passes a requirement"),
     Row("adopted_proposal", "patch_review", "", "none yet", "none yet", "none yet", "none yet", "none yet",
         "none yet", "none yet", "none yet", "kept for verification search's later phases; no check has it yet"),
+    # 64c4db67: an admitted library method run on the patch's test files (harness.library_review_gate.apply_review)
+    Row("library", "patch_review", "", "the patch's test files before and after, as the review's related texts",
+        "none: the method is admitted code run by the confined executor; no model reads the patch",
+        "none: it names no requirement", "the library entry's id and candidate id, at its authority (A1 or A2)",
+        "the confined executor the acceptance gate uses",
+        "the entry's held-out evaluation at admission: the lower 95% bound of its precision on its held-out units, "
+        "recorded in the library and not rerun in the review",
+        "an independently gated library method, admitted by the acceptance gate; never the patch's author",
+        "after the stated checks' run (tier 2); the library's authority snapshot is checked again before it reports",
+        "a concern from an admitted A2 entry is the review's defect, any other concern a lead; it never passes a "
+        "requirement (not a pass)"),
     Row("person_confirmed", "patch_review", "independent_executable",
         "the artefact the person's answer was asked about, and each later patch it is enforced on",
         "none: the person's answer, not a model, fixes the expected outcome",

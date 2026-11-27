@@ -159,6 +159,9 @@ def test_no_behaviour_change_uses_paired_monitor_noninferiority():
     change = change.model_copy(update={'claim': 'no_behaviour_change'})
     e['change_sha256'] = change.sha256
     e['evaluation'].update(split='monitor', gate='non_inferior', wins=0, losses=0, ties=100, p_value=1.)
+    # 79d0d350: the counts are read from bound bug-unit pairs; these pairs give 0 wins, 0 losses, 100 ties, .5 and .5
+    e['evaluation']['units'] = [dict(unit_id=f'bug-{i}', base_success=i >= 50, candidate_success=i >= 50)
+                                for i in range(100)]
     e['evaluation']['measures']['success'] = dict(before=.5, after=.5, before_interval=[.4, .6],
         after_interval=[.4, .6], delta_lower95=0., delta_upper95=0.)
     assert gate.assess(request(m, host, change, e), now=1100.).status == 'ready'

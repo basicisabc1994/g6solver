@@ -818,7 +818,7 @@ def card_lines(value: dict) -> list[str]:
             "not observed: this is one review, and G6 saw no earlier one of this task")
     else:
         repaired = str(value["repaired"]) + " (same-case passes on later patches observed)"
-    ids = ", ".join(code(r["event_id"]) for r in value["justification"])
+    cited = ", ".join(code(r["event_id"]) for r in value["justification"])   # display text, not an id
     return [f"- **Checked:** {named or 'no test run recorded'}, on patch {code(checked['artifact'][:12])} against base "
             f"{code(checked['base'][:12])}.{model}",
             f"- **Caught:** {count(caught['reproduced'])} reproduced findings (tests failed on the patch); "
@@ -834,7 +834,7 @@ def card_lines(value: dict) -> list[str]:
             f"- **Not checked:** {count(missing['not_established'])} requirements not established; "
             f"{count(missing['skipped'])} runs skipped; the standing list below.",
             f"- **Needs you:** merging; {count(needs['questions'])} questions; {count(needs['unknowns'])} unknowns. "
-            f"Record events: {ids}."]
+            f"Record events: {cited}."]
 
 
 def safe_render(assessment: dict) -> str:

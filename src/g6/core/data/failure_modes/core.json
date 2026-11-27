@@ -26,6 +26,10 @@
     {"code": "provenance_missing", "seed": true,
      "title": "a claim or citation that cannot be traced to the passage it came from"},
     {"code": "hidden_state_or_workspace_conflict", "seed": true, "title": "agents overwriting each other's work"},
+    {"code": "test_suite_missing_or_weak", "seed": true,
+     "title": "tests missing, or too weak to catch the change they are meant to check"},
+    {"code": "risk_management_failure", "seed": true,
+     "title": "a risky step taken without weighing what it could break"},
 
     {"code": "blind_trial_and_error", "title": "spending a budget on blind trial and error",
      "description": "Trying candidate after candidate with no model of the problem, so the budget runs out before the search learns anything."},

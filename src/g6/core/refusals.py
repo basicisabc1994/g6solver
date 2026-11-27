@@ -65,6 +65,12 @@ UNDECLARED = ("G6 has no declaration for this refusal, so it is not known to be 
 FAMILIES: dict[tuple[str, str], tuple[str, str]] = {
     ("algorithm_design/autonomous.py", "G6_E_ALGO_{}"): ("person", "component:algorithm_design"),
     ("agents/agent_nanoclaw/mailbox.py", "G6_E_MAILBOX_{}"): ("person", "layer:agents"),
+    # a candidate matching a held or withdrawn method (the status's name), before or during its run: only a hold
+    # release or a person-authorized restore lets it through (07e0ffe8, 5fbc2bc2)
+    ("distill/acceptance_gate.py", "G6_E_DISTILL_METHOD_{}"): ("person", "component:distill"),
+    ("distill/acceptance_gate.py", "G6_E_DISTILL_METHOD_{}_DURING_RUN"): ("person", "component:distill"),
+    ("distill/execution.py", "G6_E_DISTILL_METHOD_{}"): ("person", "component:distill"),
+    ("distill/runtime_state.py", "G6_E_DISTILL_METHOD_{}_DURING_RUN"): ("person", "component:distill"),
 }
 
 
@@ -793,4 +799,27 @@ LAYERS: dict[str, tuple[str, ...]] = {
     "G6_E_COMPOSITION_STOP_CONDITION": ("person", "core"),
     "G6_E_COMPOSITION_UNMET_INPUT": ("input", "core"),
     "G6_E_EVIDENCE_BINDING_UNREADABLE": ("person", "research"),
+    # The distill MCP tools (64c4db67, 9d9ff131, 1f13bd92, 82f858ac) and the stdin handoff (4af1c617, decd7a04)
+    "G6_E_DISTILL_DECISION": ("none", "mcp", "The acceptance gate refused this decision: tell the person what the "
+                                            "refusal says."),
+    "G6_E_DISTILL_DIALOG": ("person", "mcp", "ask"),
+    "G6_E_DISTILL_IDENTITY_UNKNOWN": ("none", "mcp"),
+    "G6_E_DISTILL_INPUT": ("input", "mcp"),
+    "G6_E_DISTILL_METHOD_HELD": ("person", "mcp", "wait"),
+    "G6_E_DISTILL_METHOD_HELD_DURING_RUN": ("person", "mcp", "wait"),
+    "G6_E_DISTILL_METHOD_WITHDRAWN": ("person", "mcp", "wait"),
+    "G6_E_DISTILL_METHOD_WITHDRAWN_DURING_RUN": ("person", "mcp", "wait"),
+    "G6_E_DISTILL_STALE": ("input", "mcp", "The library entry changed: read its current version, then make your call "
+                                           "on that version."),
+    "G6_E_DISTILL_STATUS_CHANGED_DURING_RUN": ("retry", "mcp"),
+    "G6_E_JOB_HOST_REQUIRED": ("person", "mcp"),
+    "G6_E_JOB_UNKNOWN": ("tool:g6_select", "mcp",
+                         "No job is kept under that id (the server may have restarted): start the step again."),
+    "G6_E_RESEARCH_AUTHORITY": ("person", "mcp", "wait"),
+    "G6_E_RESEARCH_HOST_REQUIRED": ("person", "mcp"),
+    "G6_E_RESEARCH_RUNNER_UNKNOWN": ("input", "mcp", "No runner is attached under that key: the refusal lists the "
+                                                     "attached keys; name one of them."),
+    "G6_E_RESEARCH_STOPPED": ("person", "mcp", "wait"),
+    "G6_E_STDIN_HANDOFF": ("none", "mcp"),
+    "G6_E_SYNTH_TRAINING_ONLY": ("input", "mcp"),
 }
