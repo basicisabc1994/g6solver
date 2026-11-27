@@ -451,6 +451,8 @@ CHOICES = {"adopt": ("adopted", "task"), "dismiss for this task": ("dismissed", 
 async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
     from datetime import UTC, datetime, timedelta
 
+    from g6.operator.store import utc
+
     from g6.harness.workflow import suggest
     from g6.harness.workflow.decisions import Decisions
     from g6.harness.workflow.record import TIME_FORMAT
@@ -500,7 +502,7 @@ async def decide(repo: str, task: str, intervention_id: str, ctx: Any) -> dict:
                       "Nothing was decided: the person did not answer in the client's dialog.",
                       "Do not ask again and do not decide for them.")
     decision, scope = CHOICES[choice]
-    expires = (datetime.now(UTC) + timedelta(days=days)).strftime(TIME_FORMAT) if days and decision == "dismissed" else None
+    expires = (utc(datetime.now(UTC)) + timedelta(days=days)).strftime(TIME_FORMAT) if days and decision == "dismissed" else None
     Decisions(project).record(intervention_id, decision, task=task_id, scope=scope, by=name.strip(), at=now(),
                               expires_at=expires, reopen_rule="outcome_superseded" if decision == "dismissed" else "never",
                               outcome_sha256=shown.data.get("outcome_sha256") or "")      # on disk before the reply
@@ -543,6 +545,8 @@ def _feedback_reply(project: str, result: dict, summary: str, next_step: str, *,
 async def feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
     from datetime import UTC, datetime
 
+    from g6.operator.store import utc
+
     from g6.harness import question_store as qs
     from g6.harness.workflow import feedback as fb
     from g6.mcp.consent import elicit
@@ -574,10 +578,10 @@ async def feedback(repo: str, task: str, ctx: Any, text: str = "") -> dict:
                                                                       budget_note=qs.default_budget()[1])
         reached = any(e.kind == "report_returned" for e in ProjectRecord(project).events(task=task_id))
         ok, why = fb.may_invite(project, task_id, questions=state, report_reached=reached, dialog=_has_dialog(ctx),
-                                now=datetime.now(UTC))
+                                now=utc(datetime.now(UTC)))
         if ok:                  # both written before the dialog opens. The week's invitation first: losing that race
             try:                # must not cost the task its one question (A's budget matters more than this one)
-                invitation = store.reserve_invitation(task_id, now=datetime.now(UTC))
+                invitation = store.reserve_invitation(task_id, now=utc(datetime.now(UTC)))
                 try:
                     questions.reserve("feedback")
                 except qs.BudgetSpent as spent:

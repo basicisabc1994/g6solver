@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import time
 
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
 from g6.core.ledger import digest
 from g6.core.storage import state_path
 from g6.distill.ledger import Stores, failure_writer

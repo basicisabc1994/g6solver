@@ -93,7 +93,8 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
 
     def g6_distill_start(family: str, failure_ids: str = "") -> dict:
         """Start bounded training-only concept synthesis and independent admission. Needs runs_code."""
-        from g6.core.door import allowed_sensitive, blocked_reply, is_allowed
+        from g6.core.door import allowed_sensitive, is_allowed
+        from g6.core.guidance_builders import blocked_reply
         if not is_allowed("metaharness", "distill_start", allowed_sensitive()):
             return blocked_reply("[G6_E_SENSITIVE_COMPONENT_DENIED] metaharness.distill_start runs code. "
                                  "Only the person who runs this server can allow it.")
@@ -110,7 +111,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
     async def g6_library_decide(entry_id: str, action: Literal["demote", "withdraw", "restore"], reason: str, ctx: Any) -> dict:
         """Ask the person to lower, restore or release a held method through their client dialog.
         Withdrawn/demoted methods need reacceptance. Declining, cancelling or a stale entry changes nothing."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         from g6.distill import acceptance_gate as gate
         from g6.distill.library import Library
         from g6.distill.library import public_decision
@@ -158,7 +159,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
     def g6_simulate(action_json: str) -> dict:
         """Simulate with host-measured context; predictions never become acceptance evidence.
         Components are G6 package names such as g6.distill; G6 reads its own import graph and protected set."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         try:
             action = _decode_json(action_json)
         except (ValueError, RecursionError):
@@ -174,7 +175,7 @@ def register(server: Any, context_type: Any, jobs: Any, *, backend=None) -> None
 
     async def g6_research_start(ctx: Any, folder: str = "") -> dict:
         """Start one bounded host research tick after authority checks and a client dialog."""
-        from g6.core.door import blocked_reply
+        from g6.core.guidance_builders import blocked_reply
         from g6.mcp.consent import elicit
         denied = _call(backend.research_admission, folder)
         if denied:
