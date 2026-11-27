@@ -62,13 +62,8 @@ def test_reader_preserves_nested_configuration_when_collection_is_unavailable(tm
     assert target(record, "neighbour")["exercised"] == "uncertain"
 
 
-def test_matching_collection_can_select_a_body_despite_static_suppression():
-    before = {"api.py": API, "suite/deep/test_api.py": SOURCE + "TestAPI.__test__ = False\n"}
-    after = {**before, "api.py": API.replace("return 1", "return 2")}
-    record = change_map.build(change(before, after), before, after, stated_checks=(NODE,), collection={
-        NODE: {"status": "available", "nodes": [NODE],
-               "bodies": {NODE: {"file": "suite/deep/test_api.py", "line": 3}}}})
-    assert target(record, "neighbour")["exercised"] is True
+# test_matching_collection_can_select_a_body_despite_static_suppression was superseded by review 2's content-identity
+# requirement (lead ruling, 794f766b): its collection answer named a body location with no code object.
 
 
 def test_reader_keeps_unreadable_configuration_as_a_static_admission_barrier(tmp_path, monkeypatch):

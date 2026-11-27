@@ -7,9 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from g6.harness import change_map, patch_review
+from g6.harness import change_map
 from g6.workforce import repo_tests
-from tests._review_changemap1.test_review import repository
 from tests.harness.test_change_map import change, target
 from tests.harness.test_change_map_repair2 import API
 
@@ -33,26 +32,10 @@ def test_collected_name_without_matching_body_is_uncertain(body):
     assert sibling["exercised"] == "uncertain" and sibling["checks"] == []
 
 
-@pytest.mark.parametrize("source,line", [(SOURCE, 2), (
-    "from api import neighbour\n@decorate\ndef test_call():\n    neighbour()\n", 2)])
-def test_matching_callable_location_admits_the_body(source, line):
-    answer = {"status": "available", "nodes": [NODE],
-              "bodies": {NODE: {"file": "test_api.py", "line": line}}}
-    assert change_map.exercised([{"binding": "api.neighbour"}], {"test_api.py": source},
-                                collection={"test_api.py": answer}) == {"api.neighbour": ["test_api.py"]}
-
-
-def test_inherited_callable_location_names_its_definition_file():
-    source = "from base import Parent\nclass TestAPI(Parent):\n    pass\n"
-    node = "test_api.py::TestAPI::test_call"
-    before = {"api.py": API, "test_api.py": source,
-              "base.py": "from api import neighbour\nclass Parent:\n    def test_call(self):\n        neighbour()\n"}
-    after = {**before, "api.py": API.replace("return 1", "return 2")}
-    answer = {"status": "available", "nodes": [node],
-              "bodies": {node: {"file": "base.py", "line": 3}}}
-    record = change_map.build(change(before, after), before, after, stated_checks=(node,),
-                              collection={node: answer})
-    assert target(record, "neighbour")["exercised"] is True
+# Superseded by review 2's content-identity requirement (lead ruling, 794f766b): a location with no code object, which
+# repository code can write, is no evidence of which body ran. Removed: test_matching_callable_location_admits_the_body
+# (2 cases), test_inherited_callable_location_names_its_definition_file and
+# test_reader_uses_collected_callable_locations_for_positive_leads; genuine on-disk controls hold their positive intent.
 
 
 def test_selection_filter_preserves_only_its_callable_locations():
@@ -120,15 +103,3 @@ def test_collection_reader_rejects_invalid_body_locations(tmp_path, file, line):
     report.write_text(json.dumps({"nodes": [NODE], "root": str(tmp_path), "exit": 0,
                                   "bodies": {NODE: {"file": file, "line": line}}}), encoding="utf-8")
     assert repo_tests._read_collection(report, 0, tmp_path)["status"] == "uncertain"
-
-
-def test_reader_uses_collected_callable_locations_for_positive_leads(tmp_path):
-    before = {"api.py": API, "test_api.py": SOURCE}
-    delta = repository(tmp_path, before, {**before, "api.py": API.replace("return 1", "return 2")})
-    answer = {"status": "available", "nodes": [NODE],
-              "bodies": {NODE: {"file": "test_api.py", "line": 2}}}
-    record = patch_review._change_neighbourhood(
-        delta, ("test_api.py",), (), (), deadline=time.monotonic() + 30,
-        collector=lambda *a, **k: answer)
-    sibling = target(record, "neighbour")
-    assert sibling["exercised"] is True and sibling["checks"] == ["test_api.py"]
