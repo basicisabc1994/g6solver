@@ -184,7 +184,8 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # one in the single column that says what it is for. A test fails when a registered core component is in no column, or
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis", "self_maintenance", "cognitive_bridge")),
+    ("Learn", ("metaharness", "learning", "distillation", "distill", "self_model", "abstraction", "cegis",
+               "self_maintenance", "cognitive_bridge")),
     ("Know", ("context", "grounding", "causal", "graph_reasoning", "complexity")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
                 "solver", "debate", "algorithm_design")),

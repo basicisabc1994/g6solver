@@ -64,9 +64,9 @@ authority ceiling is draft PR even if a caller changes its claimed privileges.
 
 Use `distill.merge_evidence_gate.host_merge_gate(...)` in the trusted bootstrap.
 It injects the unchanged default `EvidencePolicy` and the full protected union.
-The gate module never imports self-model predictions. The host verifier must
+The gate module never imports self-model predictions. The host's evidence checker must
 authenticate complete canonical `HostEvidence` from the independent evaluator;
-neither engineers nor the runner can select the verifier, signer, policy or manifest.
+neither engineers nor the runner can select the evidence checker, signer, policy or manifest.
 The host signer must use the protected SSH allowed-signers root through a service
 outside mission custody, replaying the evidence before signing. No production key
 or SSH subprocess implementation is supplied to the loop. Test HMAC keys are fixtures.

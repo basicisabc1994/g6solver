@@ -146,7 +146,7 @@ MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` wit
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
-a person, or block). Each works on its own and declares any other component it imports. There are 38 in the core
+a person, or block). Each works on its own and declares any other component it imports. There are 40 in the core
 harness, and 60 extensions are in the library, each in a family for one kind of work; the
 [catalogue](components.md) is generated from the code. The two tables below list every one.
 
@@ -168,6 +168,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `csf` | Works out an upper limit on how likely an agent you describe is to reach an unsafe state, and checks rules it must always keep | Python-only | — |
 | `datalog` | Works out everything that follows from your facts and rules, such as who reports to whom or what a change can reach, and shows how each answer was derived | MCP | `assert_facts`, `reset` |
 | `debate` | Has named roles, such as a proposer and a critic, argue a question in turn, and reports how far they agree | Python-only | — |
+| `distill` | Keeps failure records, proposes methods from training cases, and admits library methods through a separate acceptance gate | Python-only | — |
 | `distillation` | Checks a small function that stands in for repeated model calls: it runs it in a bounded child process and tests it on new cases before anyone relies on it | Python-only | — |
 | `epistemic_integrity` | Grades the evidence behind each claim and holds back a high-stakes conclusion the evidence cannot carry | MCP | none |
 | `evidence` | Gives the final verdict on a piece of work: verified, qualified-draft or blocked-escalated, with every gap named | Python-only | — |
@@ -189,6 +190,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `reliability_pipeline` | Takes a task in, checks it can be done, and names how it could fail before work starts | Python-only | — |
 | `safety_engine` | Hard limits for one run: a stop switch, allowed actions, and ceilings on steps, tool calls, files changed, time and cost; it also spots tests that were weakened | Python-only | — |
 | `self_maintenance` | Finds the stage of a measured workflow that limits it most and picks the next fix that raises it most within a token budget, without running anything | MCP | none |
+| `self_model` | Reads explicitly measured state with freshness limits and predicts action risks without executing actions or granting authority | Python-only | — |
 | `self_training` | Decides whether a proposed change to the harness may go live; safety rules and failed tests can only make that decision stricter | Python-only | — |
 | `solver` | Runs a goal through a fixed sequence of 15 problem-solving steps that you supply, and reports where it stopped | Python-only | — |
 | `workforce` | Fixes what done means before a coding task starts, has a person confirm it, then checks the agent's change against it | MCP | `mission` |
@@ -290,7 +292,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 21 of the 38 core components; the other 17 are
+Every extension in the library can be called over MCP, as can 21 of the 40 core components; the other 19 are
 Python-only for now. The tables above say which. `workforce` has tools of its own, `g6_mission_create` and the others,
 and no op for `g6_invoke`.
 

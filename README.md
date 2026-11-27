@@ -43,7 +43,7 @@ These replies carry `completion_state`; discovery replies such as `g6_components
 - **Results are published, misses included,** on the [Research](site/docs/research.md) page, as a worked example.
 - **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose, and to a
   cloud model only with your grant ([consent](#use-it)).
-- **Small parts.** 38 components in the core harness, each usable on its own, extensions that join the library one at
+- **Small parts.** 40 components in the core harness, each usable on its own, extensions that join the library one at
   a time, and 11 bundles that package them for one problem each.
 
 ## Install
@@ -219,7 +219,8 @@ scope for 0.3.0.
   - Reasoning and search: `reasoning`, `debate`, `abstraction`, `algorithm_design`, `cognitive_bridge`.
   - Formal methods, shown together on the Components page: `formal`, `algebra`, `lean`, `model_checking`,
     `datalog`, `prolog`, `cegis`, `csf`, `causal`, `optimisation`, `graph_reasoning`.
-  - Governed learning: `learning`, `self_training`, `distillation`, `metaharness`, `self_maintenance`.
+  - Governed learning: `learning`, `self_training`, `distillation`, `distill`, `self_model`, `metaharness`,
+    `self_maintenance`.
 - **The harness** (`g6.harness`): the one place components are composed. A standard (goal plus checks) runs through
   intake, plan, execute, adjudicate and remember.
 - **Extensions**: components outside the core, each with its tests, its skill and the
