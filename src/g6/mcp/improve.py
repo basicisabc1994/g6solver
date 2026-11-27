@@ -1131,15 +1131,16 @@ def stop(folder: str, reason: str = "") -> dict:
     stop's canonical record stands. Every statement runs inside its one handler, as in the dialog and the start, and a
     check that cannot be made never keeps the stop from being written: a folder whose check fails is taken for a loop's
     (``_looped``). A folder that cannot be found, or anything else that escapes the stop's own receipt, says so
-    (``STOP_FAILED``), with the denial still in force. A network or device folder is refused on its words first
-    (``_elsewhere_folder``): no runner can start on one (the start refuses it), so there is nothing there to stop, and
-    stopping would open the share and write there. A runner an earlier version enrolled on a share is stopped by
-    writing its STOP file locally (a stated limit)."""
-    if (away := _elsewhere_folder(folder)) is not None:
-        return away
+    (``STOP_FAILED``), with the denial still in force. A network or device folder is refused on its words right after
+    the denial and before any file system call (``_elsewhere_folder``): no runner can start on one (the start refuses
+    it), so there is nothing there to stop, and stopping would open the share and write there; its denial stays in
+    force, as for any stop that does not stand. A runner an earlier version enrolled on a share is stopped by writing
+    its STOP file locally (a stated limit)."""
     root, running = folder, None            # the folder as given, for a reply before it is found
     try:
         denial = _begin_stop(folder)
+        if (away := _elsewhere_folder(folder)) is not None:
+            return away
         root = _root(folder, stop_request=True)
         _STOP_PENDING[denial] = root
         if not _looped(root):

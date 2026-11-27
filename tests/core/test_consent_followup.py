@@ -1270,6 +1270,8 @@ AROUND.update({
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, {**_watch(root, _spawn(root, settings)'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'stop', 'except BaseException around record_stop(root, why, at=utc(datetime.n'): ("after", "_stop_read_back"),
     ('mcp/improve.py', 'stop', 'except Exception around denial = _begin_stop(folder)'): ("after", NOT_KNOWN),
+    # 333bb3a4: a network or device folder is refused on its words, after the denial, before the stop is asked
+    ('mcp/improve.py', 'stop', 'return away'): ("before", ""),
     ('mcp/improve.py', 'stop', "return _blocked(STOP_FAILED, f'the stop could not be written: {type(exc).__na"): ("after", NOT_KNOWN),
 })
 # (end of the merged rows)
