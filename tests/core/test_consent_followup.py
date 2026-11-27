@@ -1200,7 +1200,7 @@ AROUND = {
      "return _blocked(TERMS_CHANGED, f\"what the person read is no longer what stand"): ("after", HANDED),
     # the same handler, which f702f18e widened to the decoder's limits (RecursionError, MemoryError)
     ("metaharness/runner.py", "act_main",
-     "except (ValueError, KeyError, TypeError, RecursionError, MemoryError) around request = json.loads(sys.stdin.read())"):
+     "except (ValueError, KeyError, TypeError, RecursionError, MemoryError) around request = _decode_json(sys.stdin.read())"):
         ("after", NOT_KNOWN),
     ("metaharness/runner.py", "act_main",
      "return 1 if reply['completion_state'] == 'blocked-escalated' else 0"): ("after", HANDED),
@@ -1918,6 +1918,18 @@ THE_RULE, BY_RULE, FROM_RULE, MADE_WHOLE, RUN_FOLDER, BOUND, PRINTED, WORDS, NOT
 #: Each place under ``src/g6`` that names one of the four, by module and innermost function or class, with how many
 #: times it names them, what it is, and why. Any other, or a count that moves, fails the inventory.
 PATH_PLACES = {
+    # the distill merges and the stdin placeholder (cf654f3b, 5fbc2bc2, c9d212f2, fef7645e, de9ce646, 61e71811, decd7a04):
+    # each refuses or checks a path a record, a configuration or the environment names; none builds an import path
+    ("distill/acceptance_gate.py", "_chronology"): (NOT_IMPORT, 1, "a registration and concept path in git history, refused "
+                                                                    "when absolute"),
+    ("distill/acceptance_gate.py", "_registration"): (NOT_IMPORT, 1, "the owner registration anchor path, refused when absolute"),
+    ("distill/held_out/case_gate.py", "python_path"): (NOT_IMPORT, 1, "a held-out case's relative Python source path"),
+    ("distill/ledger.py", "_intent_target"): (NOT_IMPORT, 1, "an intent target, read only under the state home"),
+    ("distill/missions.py", "build_mission"): (NOT_IMPORT, 2, "a mission's worktree, home and sign-in mount paths, checked "
+                                                               "by their words"),
+    ("distill/rectify_gate.py", "_pinning"): (NOT_IMPORT, 1, "a pinning test's repository path, refused when absolute"),
+    ("mcp/stdio.py", "_placeholder_path"): (NOT_IMPORT, 1, "the stdin placeholder's temporary folder, which must be "
+                                                              "absolute"),
     ("mcp/improve.py", "_stands_alone"): (THE_RULE, 2, "names the two predicates it does not use, and why"),
     ("mcp/improve.py", "_import_path"): (BY_RULE, 1, "the server's one root as an absolute argument"),
     ("mcp/improve.py", "<module>"): (FROM_RULE, 3, "the bootstrap inserts the exact roots from its list argument"),
