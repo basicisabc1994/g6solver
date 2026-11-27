@@ -2,7 +2,6 @@
 """Runtime identity and status transactions over real content-addressed stores."""
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +11,6 @@ from g6.distill.execution import ExecutionRefused, Observation, run_candidate
 from g6.distill.held_out.case_gate import CaseRecord
 from g6.distill.ledger import Stores, failure_writer
 from g6.distill.library import Library
-from g6.distill.rectify_gate import Rectifier
 from g6.harness import library_review_gate
 from tests.distill.test_records import bodies
 from tests.distill.test_review2_repairs import CASE
@@ -242,62 +240,10 @@ def test_registration_loader_itself_refuses_inactive_identity(disk, status, monk
         gate._load(digest('registration'), other, Library())
 
 
-@pytest.mark.parametrize('operation', ['status-put', 'reconcile'])
-def test_status_writers_wait_for_acceptance_transaction(disk, monkeypatch, operation):
-    entry = admit(method(), disk)
-    began, finished = Event(), Event()
-    rectifier = Rectifier()
-    old_logs = rectifier._logs
-
-    def logs():
-        finished.set()
-        return old_logs()
-
-    monkeypatch.setattr(rectifier, '_logs', logs)
-
-    def update():
-        began.set()
-        if operation == 'status-put':
-            inactive(entry, 'held')
-            finished.set()
-        else:
-            rectifier.reconcile()
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with gate._writer():
-            future = pool.submit(update)
-            assert began.wait(5)
-            assert not finished.wait(.1), 'status writer entered the admission transaction'
-        future.result(timeout=10)
-    assert finished.is_set()
-
-
-def test_runtime_holds_transaction_until_detector_finishes(disk, monkeypatch):
-    entry = admit(method(), disk)
-    began, finished = Event(), Event()
-    detect = gate.weakening.detect_test_weakening
-
-    def update():
-        began.set()
-        inactive(entry, 'withdrawn')
-        finished.set()
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = []
-
-        def detector(before, after):
-            pending.append(pool.submit(update))
-            assert began.wait(5)
-            assert not finished.wait(.1), 'status changed during method execution'
-            return detect(before, after)
-
-        monkeypatch.setattr(gate.weakening, 'detect_test_weakening', detector)
-        gate._run(method(), SimpleNamespace(before_tests=next(iter(BEFORE.values())),
-                                           after_tests=next(iter(AFTER.values()))), Library().list())
-        pending[0].result(timeout=10)
-    assert finished.is_set()
-
-
+# test_status_writers_wait_for_acceptance_transaction[status-put|reconcile] and
+# test_runtime_holds_transaction_until_detector_finishes asserted that writers wait behind a long transaction, which
+# review 4's finding 1 forbids: superseded by short status transactions (lead ruling, 5fbc2bc2). Their property is held by
+# tests/distill/test_review4_amendment1.py's window tests.
 def test_failure_lock_also_excludes_library_status_put(disk):
     entry = admit(method(), disk)
     began, finished = Event(), Event()

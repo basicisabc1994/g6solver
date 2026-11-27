@@ -234,11 +234,8 @@ def test_executable_syntax_is_never_erased(source, other):
     assert gate._method_identity(candidate(source)) != gate._method_identity(candidate(other))
 
 
-def test_only_nonexecuting_syntax_is_canonical():
-    other = "# comment\n'docs'\n" + BASE.replace(' return', " 'function docs'\n return") + '\n'
-    assert gate._method_identity(candidate()) == gate._method_identity(candidate(other))
-
-
+# test_only_nonexecuting_syntax_is_canonical (docstrings leave identity unchanged) was superseded by review 3's
+# finding 3, since a predicate can read __doc__ (lead ruling, e58c51e0); the control below pins what still holds.
 def test_comments_blank_lines_and_formatting_alone_are_canonical():
     other = "# comment\n\ndef solve( facts ):\n    return { 'verdict': 'concern', 'reason': 'same' }\n\n"
     assert gate._method_identity(candidate()) == gate._method_identity(candidate(other))
