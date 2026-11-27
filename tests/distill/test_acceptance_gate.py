@@ -9,6 +9,7 @@ from g6.core.ledger import digest
 from g6.distill import records as r
 from g6.distill.ledger import Stores
 from g6.distill.library import Library
+from .steady_clock import steady_clock
 from .test_records import bodies
 
 
@@ -19,6 +20,7 @@ def rig(monkeypatch, tmp_path):
 
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("G6_REQUIRE_ISOLATION", "1")
+    steady_clock(monkeypatch)       # the cost bound is judged on a deterministic clock, not a shared runner's
     stores = Stores()
     for cls, body in bodies()[:3]:
         stores.for_model(cls).put(cls(**body))

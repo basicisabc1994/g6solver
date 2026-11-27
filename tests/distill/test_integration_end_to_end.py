@@ -26,7 +26,9 @@ def test_failure_to_review_prediction_and_draft_rehearsal(home, monkeypatch):
     from g6.distill.synthesis import Synthesizer
     from tests.distill.test_records import bodies
     from tests.distill.test_acceptance_measurements import sample
+    from tests.distill.steady_clock import steady_clock
     gate, _, frozen, _ = sample.__wrapped__()
+    steady_clock(monkeypatch)       # the cost bound is judged on a deterministic clock, not a shared runner's
     # A fake host custody port supplies sealed, independently labelled fixture
     # cases. Neither the proposer nor synthesis receives these cases/labels.
     registration = digest([o.case.case_id for o in frozen.acceptance])
