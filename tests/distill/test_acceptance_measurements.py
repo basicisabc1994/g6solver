@@ -185,14 +185,25 @@ def test_health_withdrawal_requires_independent_observation_and_prior_condition(
 
 
 def test_registration_digest_is_independent_of_validation_import_spelling():
-    import importlib.util
-    from validation.distill.held_out import registration_gate as source
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
     # The cases slice's CLI/tests import distill from the validation path; the
-    # product gate imports validation.distill from the checkout root.
-    if importlib.util.find_spec("distill") is None:
-        pytest.skip("validation package alias is installed by tests/validation/conftest.py")
-    from distill.held_out import registration_gate as study
-    assert source.oracle_digest() == study.oracle_digest()
+    # product gate imports validation.distill from the checkout root. Both are read in a fresh interpreter whose
+    # path holds only those two roots ahead of the installed packages: in a shared test process the top-level name
+    # distill can already be validation/worked_examples/distill.py, another module.
+    root = Path(__file__).resolve().parents[2]
+    code = ("import json, sys\n"
+            "sys.path[:] = [p for p in sys.path if p not in ('', '.')]\n"
+            f"sys.path[:0] = [{str(root / 'validation')!r}, {str(root)!r}]\n"
+            "from validation.distill.held_out import registration_gate as source\n"
+            "from distill.held_out import registration_gate as study\n"
+            "print(json.dumps([source.oracle_digest(), study.oracle_digest()]))\n")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, cwd=root)
+    assert done.returncode == 0, done.stderr
+    source_digest, study_digest = json.loads(done.stdout.strip().splitlines()[-1])
+    assert source_digest == study_digest
 
 
 def test_existing_entry_interference_changes_a_frozen_negative_verdict(sample, monkeypatch):
