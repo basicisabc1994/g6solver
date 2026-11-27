@@ -12,6 +12,8 @@ autonomy gates. Reported failures and predictions grant no admission authority.
 __g6_component__ = True
 __g6_mitigates__: tuple[str, ...] = ("test_suite_missing_or_weak", "unhelpful_lesson")
 __g6_introduces__: tuple[str, ...] = ("overfit_to_examples",)
+__g6_requires__: tuple[str, ...] = ("cognitive_bridge", "distillation", "harness", "metaharness", "reasoning",
+                                    "safety_engine", "self_maintenance", "self_model", "self_training", "workforce")
 
 # Synthesis refusals are local to this component; core bound registries are unchanged.
 __g6_refusals__ = {

@@ -101,7 +101,7 @@ from g6.self_training.schema import (
 
 __g6_component__ = True
 __g6_maturity__ = "beta"  # no block: Python API only
-__g6_requires__: tuple[str, ...] = ()
+__g6_requires__: tuple[str, ...] = ("_agentic", "safety_engine")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("unchecked_self_change", "broke_existing_functionality")
 __g6_introduces__: tuple[str, ...] = ("runner_in_process",)

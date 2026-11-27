@@ -43,6 +43,12 @@ class PartialAuthorityWrite(OSError):
     """Recovery failed; expose only freshly read state names, never diagnostics."""
     code = 'G6_E_DISTILL_PARTIAL_WRITE'
 
+    def g6_refusal(self):
+        """This refusal's reply (`g6.distill.refusal`); a job renders it through this name, so the meta-harness
+        imports nothing from the library."""
+        from g6.distill.refusal import refusal
+        return refusal(self)
+
     def __init__(self, paths, *, committed=False, recovering=False):
         self.paths = tuple(dict.fromkeys((*paths, _intent_path())))
         self.committed = committed
@@ -63,6 +69,12 @@ class PartialAuthorityWrite(OSError):
 class CommittedStepsRefusal(OSError):
     """A request failed after earlier rows committed and its undo completed."""
     code = 'G6_E_DISTILL_INPUT'
+
+    def g6_refusal(self):
+        """This refusal's reply (`g6.distill.refusal`); a job renders it through this name, so the meta-harness
+        imports nothing from the library."""
+        from g6.distill.refusal import refusal
+        return refusal(self)
 
     def __init__(self):
         self.paths = (state_path('distill', 'acceptance_gate.jsonl'), _intent_path())

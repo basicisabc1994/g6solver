@@ -269,6 +269,8 @@ def test_external_marks_are_confined_to_ingress_registry():
         ("mcp/mission.py", "reply"), ("mcp/review_loop.py", "step"),
         ("mcp/review_reply.py", "_shorten"), ("mcp/review_reply.py", "finish"),
         ("mcp/workflow.py", "_noted"), ("mcp/workflow.py", "attach"),
+        # f7639fc9: the end-of-task card's poll refresh detaches the finished reply, as _noted and attach do
+        ("mcp/workflow.py", "refresh"),
         ("metaharness/jobs.py", "completed"), ("metaharness/jobs.py", "read"),
         ("metaharness/jobs.py", "_run"),
         ("core/agent_guidance.py", "reply_for_agent"),

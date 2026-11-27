@@ -32,6 +32,9 @@ def test_all_receipt_consumers_render_snapshots_and_no_live_receipt_checks_remai
     assert {site for site, calls in found.items() if 'freeze_output' in calls} == {
         'cloud_consent.py:prompt_state', 'completion_loop.py:_read', 'completion_loop.py:_snapshot_probe',
         'jobs.py:Jobs._run',
+        # the end-of-task card (f7639fc9) is refreshed on each poll: status freezes the refreshed result once and takes
+        # its sources from that checked snapshot, never from a live receipt read
+        'jobs.py:Jobs.status',
         # 0b400900 (rc-030): the one guarded freeze of a reply is core's (external_data.freeze_output, which detached
         # calls); the MCP consumers below take their checked snapshot through detached, so they are listed there
         'external_data.py:freeze_output', 'external_data.py:detached'}
@@ -40,7 +43,9 @@ def test_all_receipt_consumers_render_snapshots_and_no_live_receipt_checks_remai
         'consent_controls.py:host_controls', 'mission.py:reply', 'review_loop.py:step', 'review_reply.py:finish',
         # the workflow record's note and view (mcp/workflow.py), converted from live receipt checks to a checked
         # snapshot as 54ddcb9 converted consent_controls.host_controls: each freezes the reply once and edits a detached copy
-        'workflow.py:_noted', 'workflow.py:attach'}
+        'workflow.py:_noted', 'workflow.py:attach',
+        # the end-of-task card's poll refresh (f7639fc9): it detaches the finished reply, then adds the card's fields
+        'workflow.py:finishing.refresh'}
     assert {site for site, calls in found.items() if 'read_retained' in calls} == {
         'completion_loop.py:_load', 'completion_loop.py:read_report', 'review_loop.py:_asked', 'digest.py:read',
         'completion_hook.py:_task'}
@@ -59,7 +64,8 @@ def test_retained_producers_and_handoffs_are_inventoried():
     stores = {target.attr for node in ast.walk(tree) if isinstance(node, ast.Assign)
               and isinstance(node.value, ast.Dict) for target in node.targets
               if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == 'self'}
-    assert stores == {'_jobs', '_compact', '_provenance'}
+    # _refreshers (f7639fc9): each finished review job's card refresher, called by status, never a result store
+    assert stores == {'_jobs', '_compact', '_provenance', '_refreshers'}
     # All direct disk reads on the MCP surface are either checked retained
     # readers or the repository input in submit; delegated readers are above.
     readers = {}
@@ -96,4 +102,9 @@ def test_retained_producers_and_handoffs_are_inventoried():
                        # its imports (_confines), and the checked-in corpus.json its --check compares (main). Run by a
                        # maintainer when G6 is built, never by a tool; G6's installed program text, as above.
                        'corpus_build.py:_routes': {'read_text'}, 'corpus_build.py:_confines': {'read_text'},
-                       'corpus_build.py:main': {'read_text'}}
+                       'corpus_build.py:main': {'read_text'},
+                       # f7639fc9: the end-of-task card hashes G6's own adoption lineage (the loop folder's file G6
+                       # writes) and G6's repair log, read twice to see they held still; only their digests are kept.
+                       'workflow.py:_self_changes': {'read_bytes'},
+                       # 1f13bd92: the import graph between G6's own packages, read from G6's installed program text.
+                       'distill_backend.py:_relationships': {'read_text'}}

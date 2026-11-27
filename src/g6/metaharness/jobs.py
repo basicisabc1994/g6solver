@@ -108,7 +108,7 @@ class Jobs:
                 # Default prose filtering has already run on the frozen bytes.
                 # Only exact external receipts can exempt data in either poll.
                 # A card is refreshed on each poll, so the retained snapshot holds none.
-                retained_body = (json.dumps(strip(json.loads(body)), separators=(',', ':'), allow_nan=False)
+                retained_body = (json.dumps(strip(_decode_json(body)), separators=(',', ':'), allow_nan=False)
                                  if callable(strip) else body)
                 full = _FrozenResult.completed(ident, retained_body, external=receipts(result))
                 if compact:
@@ -124,7 +124,7 @@ class Jobs:
                         body, known, shown_metadata = freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        retained_body = (json.dumps(strip(json.loads(body)), separators=(',', ':'), allow_nan=False)
+                        retained_body = (json.dumps(strip(_decode_json(body)), separators=(',', ':'), allow_nan=False)
                                          if callable(strip) else body)
                         shown = _FrozenResult.completed(ident, retained_body, external=receipts(shown))
                     except Exception:
@@ -136,11 +136,12 @@ class Jobs:
             except Exception as exc:
                 # Exception objects can mutate too. Polling never formats them.
                 refs = shown_refs = cloud.boundary_sources(carried=(cloud.UNKNOWN, *capture.sources))
-                from g6.distill.ledger import CommittedStepsRefusal, PartialAuthorityWrite
-                from g6.distill.refusal import refusal
-                if isinstance(exc, (PartialAuthorityWrite, CommittedStepsRefusal)):
+                # A refusal that renders itself (a learning library's partial or committed write) keeps its own reply;
+                # duck-typed, so the meta-harness imports nothing from the library above it (DECISIONS #21).
+                render = getattr(exc, 'g6_refusal', None)
+                if callable(render):
                     metadata = shown_metadata = _FrozenResult.of({'error_code': exc.code})
-                    return _FrozenResult.of({**refusal(exc), 'job_id': ident, 'status': 'failed'})
+                    return _FrozenResult.of({**render(), 'job_id': ident, 'status': 'failed'})
                 metadata = shown_metadata = _FrozenResult.of({'error_code': 'G6_E_JOB_FAILED'})
                 try:
                     message = f"[G6_E_JOB_FAILED] {type(exc).__name__}: {exc}"
@@ -171,7 +172,7 @@ class Jobs:
         return tuple(cloud.Source(source, cloud.sha256("submitting-call-input"), source.removeprefix("input:"))
                      for source in inputs)
 
-    def _status_reply(self, ident, result, detail):
+    def _status_reply(self, ident, result, detail, fresh=()):
         capture = cloud.current_capture()
         if capture is None:
             return result
@@ -181,7 +182,7 @@ class Jobs:
         public = result.get("status") in ("pending", "running")
         refs = () if public else cloud.boundary_sources(
             carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ()),
-                     *(cloud.output_sources(result.get("result")) or ()), *self.origin_inputs(ident)))
+                     *fresh, *self.origin_inputs(ident)))
         cloud.bind_output(result, refs)
         try:
             metadata = stored['metadata'][detail].read()
@@ -222,12 +223,17 @@ class Jobs:
             reply = shown.read()
             with self._lock:
                 refresh = self._refreshers.get(ident)
+            fresh = ()
             if reply.get("status") == "completed" and callable(refresh):
                 reply["result"] = refresh(reply["result"], ident, detail=detail)
+                # The refreshed card's sources come from one checked snapshot of it, never a later live receipt read.
+                _body, known, _metadata = freeze_output(reply["result"])
+                fresh = tuple(known or ())
         except (AttributeError, TypeError, ValueError):
             reply = {**blocked_reply(cloud.WITHHELD), "job_id": ident, "status": "failed"}
             cloud.bind_output(reply, (cloud.UNKNOWN,))
-        return self._status_reply(ident, reply, detail)
+            fresh = ()
+        return self._status_reply(ident, reply, detail, fresh)
 
     def close(self):
         self._pool.shutdown(wait=True)

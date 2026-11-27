@@ -8,3 +8,4 @@ the runner's cycle log; predictions confer no gate authority.
 __g6_component__ = True
 __g6_mitigates__: tuple[str, ...] = ("stale_context_used", "risk_management_failure")
 __g6_introduces__: tuple[str, ...] = ("overstated_certainty",)
+__g6_requires__: tuple[str, ...] = ("reliability_pipeline",)
