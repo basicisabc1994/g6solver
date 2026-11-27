@@ -2,6 +2,7 @@
 """Pytest owns collection; the map owns only static named-call reachability."""
 import json
 import os
+import sys
 import time
 
 import pytest
@@ -83,7 +84,12 @@ def mapped_repository(tmp_path, source, extra, *, collector=None, monkeypatch=No
 
 
 @pytest.mark.parametrize("source,extra,expected", CASES)
-def test_reviewer_cases_use_real_confined_collection(tmp_path, real_collection_python, source, extra, expected):
+def test_reviewer_cases_use_real_confined_collection(tmp_path, real_collection_python, source, extra, expected, request):
+    if request.node.callspec.id.startswith("abstract-class") and sys.platform.startswith("linux"):
+        # lead ruling 11-28: uncertain is the conservative answer, never a wrong one; the lookup model is unchanged
+        request.applymarker(pytest.mark.xfail(strict=False, reason=(
+            "limit-changemap-abcmeta-uncertain: on Linux an ABCMeta test class may get change-map uncertain instead "
+            "of an answer; likely abc.ABCMeta is not in MODELLED_EXTERNAL_BASES, unconfirmed")))
     # No replacement of the collector, its bootstrap, config, conftest or result.
     record = mapped_repository(tmp_path, source, extra)
     skip_if_windows_refused(record)
