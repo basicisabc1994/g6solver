@@ -70,7 +70,7 @@
       "rule": "friction"
     }
   ],
-  "digest": "ab7a97e888f70fc7f83b0fad12758d69b78dfbf4797983973bff126bfc852533",
+  "digest": "a0ddf55e9ac1cf35ce16e0db0cb3e8fd296fdef13471de0faa1116bf65ed6b33",
   "falsification": {
     "a_star": {
       "bounds": "2D/3D coordinates and lengths up to 1e6; stationary and tangent segments, small obstacles and support endpoints; 1..12 links, straight/folded chains; non-increasing times; finite Euler and constant acceleration; bounded grids and seeded RRT obstacles, direct paths and iteration/seed endpoints. Near-tangent point segments up to 1e6 m long; arm segments that sweep through an obstacle or keep clear by the source's sufficient condition, 1..12 links.",
@@ -3607,7 +3607,24 @@
   },
   "imported_code": [
     "g6/__init__.py",
+    "g6/_context_engine/__init__.py",
+    "g6/_context_engine/_envelope.py",
+    "g6/_context_engine/_scope.py",
+    "g6/_context_engine/_view.py",
+    "g6/context/__init__.py",
+    "g6/context/assemble.py",
+    "g6/context/budget.py",
+    "g6/context/compress.py",
+    "g6/context/envelope.py",
+    "g6/context/fuse.py",
+    "g6/context/packet.py",
+    "g6/context/redact.py",
+    "g6/context/rerank.py",
+    "g6/context/retrieve.py",
+    "g6/context/window.py",
+    "g6/context/workspace.py",
     "g6/core/__init__.py",
+    "g6/core/agent_guidance.py",
     "g6/core/ai_block.py",
     "g6/core/approval_authority.py",
     "g6/core/approval_store.py",
@@ -3620,13 +3637,16 @@
     "g6/core/consent_declarations.py",
     "g6/core/consent_registry.py",
     "g6/core/contract_decorator.py",
+    "g6/core/decoder_limits.py",
     "g6/core/door.py",
     "g6/core/env.py",
     "g6/core/errors.py",
     "g6/core/evidence.py",
     "g6/core/extension_points.py",
+    "g6/core/external_data.py",
     "g6/core/failure_modes.py",
     "g6/core/host_models.py",
+    "g6/core/http.py",
     "g6/core/keys.py",
     "g6/core/ledger.py",
     "g6/core/llm.py",
@@ -3634,6 +3654,7 @@
     "g6/core/model_calls.py",
     "g6/core/outside.py",
     "g6/core/process_tree.py",
+    "g6/core/producer_contracts.py",
     "g6/core/promotion_custody.py",
     "g6/core/promotion_evaluator.py",
     "g6/core/protocols.py",
@@ -3641,13 +3662,34 @@
     "g6/core/reliability_envelope.py",
     "g6/core/resources.py",
     "g6/core/result.py",
+    "g6/core/serialized_guidance.py",
     "g6/core/state_surface.py",
     "g6/core/stop.py",
     "g6/core/storage.py",
     "g6/core/validation_gates.py",
     "g6/core/verification/__init__.py",
+    "g6/grounding/__init__.py",
+    "g6/grounding/claims.py",
+    "g6/grounding/coverage.py",
+    "g6/grounding/grounding_block.py",
+    "g6/grounding/lineage.py",
+    "g6/grounding/retrieval.py",
+    "g6/grounding/staleness.py",
+    "g6/grounding/tripwire.py",
     "g6/invariants/__init__.py",
-    "g6/invariants/envelope.py"
+    "g6/invariants/envelope.py",
+    "g6/knowledge/__init__.py",
+    "g6/knowledge/_html.py",
+    "g6/knowledge/_index.py",
+    "g6/knowledge/_reply.py",
+    "g6/knowledge/_store.py",
+    "g6/knowledge/_types.py",
+    "g6/knowledge/knowledge_fetcher/__init__.py",
+    "g6/knowledge/knowledge_fetcher/adapters.py",
+    "g6/knowledge/knowledge_fetcher/block.py",
+    "g6/knowledge/knowledge_fetcher/fetcher.py",
+    "g6/skills/__init__.py",
+    "g6/skills/corpus.py"
   ],
   "independent_pass": {
     "cases_author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
@@ -3670,10 +3712,10 @@
     ],
     "reviewed": {
       "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
-      "artifact_sha256": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+      "artifact_sha256": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
       "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
       "refusals": [],
-      "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+      "rules_sha256": "7ff83677e7c7ddb9a13ccfd36ee756ed6ce4c945c2cdabe639e07d11fc623381",
       "sources_sha256": {
         "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
         "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
@@ -3687,10 +3729,10 @@
       }
     },
     "reviewer": "Claude Sonnet 5.5, an independent reader (certificate v2a, pass after withheld quotes), not the code's author or the case author",
-    "sha256": "26a5c0139b35aab3c564bd2e173092da27ac8d09be435f586ee8516477660959"
+    "sha256": "7948c09e2a339f60a275ea8545f15dadde1aefc8f40602776169b0262d412745"
   },
   "inherits": null,
-  "inputs_sha256": "0b5df43f8d0561740f4f30ef44aca7bb7c2345d43bc3bae35f9f73ee1a250057",
+  "inputs_sha256": "0eddace83091948b539d268e5f5662f59a69ab895b3f4dc2d7e3fc3bfa98f6e7",
   "isolation": {
     "backend": "bubblewrap",
     "network": false,
@@ -3698,115 +3740,115 @@
   },
   "issuer": {
     "artifact_seq": 1,
-    "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+    "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
     "catalogue_sha": "",
     "checks": [
       {
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "a_star:known",
-        "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+        "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
         "controls": [
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:0:e25ab7e6406d39ee4d1655bb7b42beee9c9cbc80352605151f2d61186da6f50c",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:1:e15ad913a38a221a11ef3e35940ddaca902394480905f988d5038e1e12419072",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:2:da37d1f90a5d87f97a118350e162cabdbbf5cfad278e2468e6d4141465dc2469",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:3:30c670e4591ae4714b0b312355f714f8492606d418695586c6dba677d306427c",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:4:79913b4e6cc9acc837d42ced296ea3392a7ecf386d8b0ce993a432091f21b2d0",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:5:4bff5c25c8e792626c194c868cc61dbde9bbdea886a56d7b18f66894857d500f",
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:6:2a677d64867495b32c02eac7f6bb1aa8e6a78813477405fc5d384389f1b4d743",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:7:158f4a8ff647d5513dc5fd59c98d721a506828afac7db4e178385a1d4c2152d2",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:8:63fc32860a1474717d7ca7fbf33cfd4da1128bb793632f0994c86424b74f035a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:9:41aa10656927e2cc7ea7eb380ccacbef1236e9861b7810ef544148346631518d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:10:4f94164fc26ffb95fae87f5a3b255c5e7c7d11bd92eaec886b2881aa14381ea6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+            "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
             "control_id": "a_star:known:mutant:11:a2f81f0128048a648daa98baac03891068e9caa80cd8d81c1130ec244ce7e312",
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 3,
+        "positive_seq": 34,
         "predicates": [
           "a_star"
         ]
@@ -3815,108 +3857,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "a_star:second_route",
-        "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+        "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
         "controls": [
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:0:e25ab7e6406d39ee4d1655bb7b42beee9c9cbc80352605151f2d61186da6f50c",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:1:e15ad913a38a221a11ef3e35940ddaca902394480905f988d5038e1e12419072",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:2:da37d1f90a5d87f97a118350e162cabdbbf5cfad278e2468e6d4141465dc2469",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:3:30c670e4591ae4714b0b312355f714f8492606d418695586c6dba677d306427c",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:4:79913b4e6cc9acc837d42ced296ea3392a7ecf386d8b0ce993a432091f21b2d0",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:5:4bff5c25c8e792626c194c868cc61dbde9bbdea886a56d7b18f66894857d500f",
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:6:2a677d64867495b32c02eac7f6bb1aa8e6a78813477405fc5d384389f1b4d743",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:7:158f4a8ff647d5513dc5fd59c98d721a506828afac7db4e178385a1d4c2152d2",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:8:63fc32860a1474717d7ca7fbf33cfd4da1128bb793632f0994c86424b74f035a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:9:41aa10656927e2cc7ea7eb380ccacbef1236e9861b7810ef544148346631518d",
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:10:4f94164fc26ffb95fae87f5a3b255c5e7c7d11bd92eaec886b2881aa14381ea6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           },
           {
-            "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+            "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
             "control_id": "a_star:second_route:mutant:11:a2f81f0128048a648daa98baac03891068e9caa80cd8d81c1130ec244ce7e312",
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 2
+            "seq": 33
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 3,
+        "positive_seq": 34,
         "predicates": [
           "a_star"
         ]
@@ -3925,108 +3967,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "average_speed:known",
-        "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+        "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
         "controls": [
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:0:132511eb1146c362deb8b11dd4eea999630655ead561cc5790959849b1f97c3e",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:1:68c33658e71b03a619769974faba455ba114ab7ebcb42bb5bf0d45c9240231fa",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:2:6c0441fb90ab6554de8c17feaed7014e9171cdf1e6eab703f83817e5888add6b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:3:f2fd2ef438d891f599320f2232dc6f7e0ef15ff3d3d8314b16998c4dc4b65628",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:4:b4b7a3cd0161759c9c622d07ba636c07bea317cd316e0a9b732afbe884f4f8e6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:5:fd562c7d77f4cb8e6c7d33c549fe92318d25fddf22b38d0f8c5ca1c7640b0f1b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:6:a3fd1d4fab339b7335ad9d281772ac1296539a3e4aa9075c5d69ca56306af427",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:7:fd5d35635139ade25512d2abda3e6154cdd87044475e80e21cb87b9b477bc88c",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:8:6d64e89577bacb2ad6d2baa7fa0242a42cb14af9f0b14b37c723d3dce9b8104e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:9:f3c04ec24a8eae3025ea217e8caf7e81a8f10cf04ec1fdf779beda39996bf816",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:10:9fee9cd253c099b4c44dbca118cc46b9a2aeaa51a0023513f8fdee41bda80fea",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+            "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
             "control_id": "average_speed:known:mutant:11:6c0d4396c05cf33597dd8524184c8cc9f0190a65ab261d4ddf1202c45792cb67",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 6,
+        "positive_seq": 37,
         "predicates": [
           "average_speed"
         ]
@@ -4035,108 +4077,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "average_speed:second_route",
-        "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+        "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
         "controls": [
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:0:132511eb1146c362deb8b11dd4eea999630655ead561cc5790959849b1f97c3e",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:1:68c33658e71b03a619769974faba455ba114ab7ebcb42bb5bf0d45c9240231fa",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:2:6c0441fb90ab6554de8c17feaed7014e9171cdf1e6eab703f83817e5888add6b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:3:f2fd2ef438d891f599320f2232dc6f7e0ef15ff3d3d8314b16998c4dc4b65628",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:4:b4b7a3cd0161759c9c622d07ba636c07bea317cd316e0a9b732afbe884f4f8e6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:5:fd562c7d77f4cb8e6c7d33c549fe92318d25fddf22b38d0f8c5ca1c7640b0f1b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:6:a3fd1d4fab339b7335ad9d281772ac1296539a3e4aa9075c5d69ca56306af427",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:7:fd5d35635139ade25512d2abda3e6154cdd87044475e80e21cb87b9b477bc88c",
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:8:6d64e89577bacb2ad6d2baa7fa0242a42cb14af9f0b14b37c723d3dce9b8104e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:9:f3c04ec24a8eae3025ea217e8caf7e81a8f10cf04ec1fdf779beda39996bf816",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:10:9fee9cd253c099b4c44dbca118cc46b9a2aeaa51a0023513f8fdee41bda80fea",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           },
           {
-            "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+            "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
             "control_id": "average_speed:second_route:mutant:11:6c0d4396c05cf33597dd8524184c8cc9f0190a65ab261d4ddf1202c45792cb67",
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 5
+            "seq": 36
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 6,
+        "positive_seq": 37,
         "predicates": [
           "average_speed"
         ]
@@ -4145,130 +4187,130 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "bounds:known",
-        "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+        "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
         "controls": [
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:removal:0:a9db9d1898f1c9f6c3f21da971b7c2b93d0175bf221a896161b228a7fd7ac3ba",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:boundary:1:114eecb71daa6a7231da4596e798aa2af5f295b46308e5336a039d4e4c4f7c9d",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:boundary:2:53505777d5b96597bbdd974b196ac67759cbe55c6e70077cdec6bc087ea66ee6",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:boundary:3:5254ba79fcaa609a5e4ca93cabcfd33e42122181aecac80d361e990190f3d22b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:4:5daf90c7a9f820cb33239ef1af842903391ae58a1e093ee15eea071e1871f32d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:5:874bf6ff65efe46a4290c10932ba48748e8901c47e566c63724153fe0628a871",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:6:64b035a5c75d735a1aae2bf117d192ff10f4430307d2a945de54638c575efa2f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:7:29158afceab8983c9189f6f49e1fd579b2e7e20e711929f4734d55b0b89bee42",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:8:53417e34379614be909f4a9d9aefac1cb12b56ef0291a69816e023324fc29e1a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:9:0c79ae79b38e64d6a69f513411e5c0e37231f94c7a0291b3c832809b2d7e396e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:10:8328a4c198f5b3ad977409d97cee53d8f7f3d1306a4b41fdcef42512921a494e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:11:45d2798b470421be7e92280dd19eb050fbd9fa44a437703da296fe50313ac967",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:12:be427e813a539d23b22b504994018eb35a53394f7054f7b5c97b0054348149d8",
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:13:2f08f2d6144236fc2e2ed07a9dfc104a4d4c5d468534f8c3a94738ca897f5155",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           },
           {
-            "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+            "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
             "control_id": "bounds:known:mutant:14:5fe3b4a83a9f2e1809909936dcce474379ae8f95efeef9f2feabd125579fd227",
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 8
+            "seq": 39
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4279,92 +4321,92 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "chain:known",
-        "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+        "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
         "controls": [
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:0:e8f1516a5d880398b232d2edb850e084318b6366d9085daa4d8b0b13da935f27",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:1:59e45ec004251436796d746b004b822de90d0714335ca5be02ce0341cff5f4f9",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:2:925c0cd50f442d113055934164cca55fbaeec0e7c6f4bfa675a04c7f71cafa79",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:3:17ddb8d8e307186b937238cc1f900f6beb8465e76015da274567667e869208b3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:4:fd0535fcddadbe644fe71bd4da86eaf52407024b045f348582fe322462c37d72",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:5:7f616d4fa14f630f8760481e7dfb09a47b18d76551a0b2b6da038b88b6c65b4a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:6:af8fd23707ad5087e05d154e79a7123cdb308aa43cae2ed1dff8acce2bd48200",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:7:49b85a3e7ffe7ed6771794229fb26907f9cef73494b30139a8cf36b4688b4876",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:8:e5b730cb778377d380cc4d6d781200b552ff56facd66df5788d70baab5c7b8a6",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+            "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
             "control_id": "chain:known:mutant:9:e5d8a282d8d41de8e2afa9627013626d10374706c567f5db8de71d215d1593cf",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 12,
+        "positive_seq": 43,
         "predicates": [
           "chain"
         ]
@@ -4373,92 +4415,92 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "chain:second_route",
-        "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+        "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
         "controls": [
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:0:e8f1516a5d880398b232d2edb850e084318b6366d9085daa4d8b0b13da935f27",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:1:59e45ec004251436796d746b004b822de90d0714335ca5be02ce0341cff5f4f9",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:2:925c0cd50f442d113055934164cca55fbaeec0e7c6f4bfa675a04c7f71cafa79",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:3:17ddb8d8e307186b937238cc1f900f6beb8465e76015da274567667e869208b3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:4:fd0535fcddadbe644fe71bd4da86eaf52407024b045f348582fe322462c37d72",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:5:7f616d4fa14f630f8760481e7dfb09a47b18d76551a0b2b6da038b88b6c65b4a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:6:af8fd23707ad5087e05d154e79a7123cdb308aa43cae2ed1dff8acce2bd48200",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:7:49b85a3e7ffe7ed6771794229fb26907f9cef73494b30139a8cf36b4688b4876",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:8:e5b730cb778377d380cc4d6d781200b552ff56facd66df5788d70baab5c7b8a6",
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           },
           {
-            "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+            "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
             "control_id": "chain:second_route:mutant:9:e5d8a282d8d41de8e2afa9627013626d10374706c567f5db8de71d215d1593cf",
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 11
+            "seq": 42
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 12,
+        "positive_seq": 43,
         "predicates": [
           "chain"
         ]
@@ -4467,84 +4509,84 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "closed_form:known",
-        "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+        "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
         "controls": [
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:0:b94d0d075632070657650da31566dff9fa5b541e1b53f42f48aa3371d3204efe",
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:1:02d77a66947ec300d3369d35417238a65af837959deab939393c673fe00250a8",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:2:4b4433f5cde049001db377a52d482edf5083c2ef71dac42564263e288244d65f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:3:64477ec96a8d15c5cf529f1a7f40dfd7c71d5a1cd0307786c0d783333e07fdfd",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:4:daa97a84e771f574173989ccc21040f70899d7a0d1ca4c57bf7d60abadb07c11",
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:5:23906dd5d9988b81d96d239958a123d0fcc8ae0ce3aa488e4c174028601002b8",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:6:fe540860be69e75ca2a98b845fb514e3964565c3e89771c68048f782a52435f2",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:7:be6e054ead3584a8f78f8b7a21687d5f5ecf8ee963ed4dd48ed4d0c0fa27259b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+            "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
             "control_id": "closed_form:known:mutant:8:b60f5869068b766164b6196974e438dc9e2afe9bf55d6f1afbd305fccfd90c45",
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 15,
+        "positive_seq": 46,
         "predicates": [
           "closed_form"
         ]
@@ -4553,84 +4595,84 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "closed_form:second_route",
-        "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+        "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
         "controls": [
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:0:b94d0d075632070657650da31566dff9fa5b541e1b53f42f48aa3371d3204efe",
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:1:02d77a66947ec300d3369d35417238a65af837959deab939393c673fe00250a8",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:2:4b4433f5cde049001db377a52d482edf5083c2ef71dac42564263e288244d65f",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:3:64477ec96a8d15c5cf529f1a7f40dfd7c71d5a1cd0307786c0d783333e07fdfd",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:4:daa97a84e771f574173989ccc21040f70899d7a0d1ca4c57bf7d60abadb07c11",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:5:23906dd5d9988b81d96d239958a123d0fcc8ae0ce3aa488e4c174028601002b8",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:6:fe540860be69e75ca2a98b845fb514e3964565c3e89771c68048f782a52435f2",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:7:be6e054ead3584a8f78f8b7a21687d5f5ecf8ee963ed4dd48ed4d0c0fa27259b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           },
           {
-            "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+            "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
             "control_id": "closed_form:second_route:mutant:8:b60f5869068b766164b6196974e438dc9e2afe9bf55d6f1afbd305fccfd90c45",
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 14
+            "seq": 45
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 15,
+        "positive_seq": 46,
         "predicates": [
           "closed_form"
         ]
@@ -4639,36 +4681,36 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "distance:known",
-        "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
+        "check_sha": "343df38c5f2673a503c5eb2dccd985a939706b0b8ce1576990d7301732eb286b",
         "controls": [
           {
-            "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
+            "check_sha": "343df38c5f2673a503c5eb2dccd985a939706b0b8ce1576990d7301732eb286b",
             "control_id": "distance:known:mutant:0:d05d63a8908131ec820bbb75e38f404d13dc73934bfcaf3c9e593cf110295070",
             "generated_by": "g6",
             "killed": true,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           },
           {
-            "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
+            "check_sha": "343df38c5f2673a503c5eb2dccd985a939706b0b8ce1576990d7301732eb286b",
             "control_id": "distance:known:mutant:1:d058a37589abb60b48e0f1cd953a64b5cd9a99fce402daf44c685f2000e06f7a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           },
           {
-            "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
+            "check_sha": "343df38c5f2673a503c5eb2dccd985a939706b0b8ce1576990d7301732eb286b",
             "control_id": "distance:known:mutant:2:0fe3ff731ca76c5b71632e333f0ee141681ca23aa52aa5adfcd35d7e03d33c1e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 18,
+        "positive_seq": 49,
         "predicates": [
           "distance"
         ]
@@ -4677,36 +4719,36 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "distance:second_route",
-        "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
+        "check_sha": "703973a6ac4e602cd351494b5773f52104082374da7300474a3999af1dd74e97",
         "controls": [
           {
-            "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
+            "check_sha": "703973a6ac4e602cd351494b5773f52104082374da7300474a3999af1dd74e97",
             "control_id": "distance:second_route:mutant:0:d05d63a8908131ec820bbb75e38f404d13dc73934bfcaf3c9e593cf110295070",
             "generated_by": "g6",
             "killed": true,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           },
           {
-            "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
+            "check_sha": "703973a6ac4e602cd351494b5773f52104082374da7300474a3999af1dd74e97",
             "control_id": "distance:second_route:mutant:1:d058a37589abb60b48e0f1cd953a64b5cd9a99fce402daf44c685f2000e06f7a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           },
           {
-            "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
+            "check_sha": "703973a6ac4e602cd351494b5773f52104082374da7300474a3999af1dd74e97",
             "control_id": "distance:second_route:mutant:2:0fe3ff731ca76c5b71632e333f0ee141681ca23aa52aa5adfcd35d7e03d33c1e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 17
+            "seq": 48
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 18,
+        "positive_seq": 49,
         "predicates": [
           "distance"
         ]
@@ -4715,52 +4757,52 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "euler:known",
-        "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+        "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
         "controls": [
           {
-            "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+            "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
             "control_id": "euler:known:mutant:0:cb4087ad112ae1c27d3f7165b219454f42ac353ffd179b315cf010de015355d4",
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+            "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
             "control_id": "euler:known:mutant:1:dda95a4e9911fdec4ceed2b6b3eaa28d5ab5a7c42af5b7104bf7f8f9d56c6a17",
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+            "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
             "control_id": "euler:known:mutant:2:144574eff93630570d4794ce620fd73334b75e5f289002683b43e896b462ad17",
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+            "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
             "control_id": "euler:known:mutant:3:3c9807e7408bcee58ed3489f9bc1dc8b873093f3358f3bdd1e584ab2dfac0b83",
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+            "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
             "control_id": "euler:known:mutant:4:d8005b9a5eba627b5e5186aba5938abe0f583559a3a95a415af27484546bc9e1",
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 21,
+        "positive_seq": 52,
         "predicates": [
           "euler"
         ]
@@ -4769,52 +4811,52 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "euler:second_route",
-        "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+        "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
         "controls": [
           {
-            "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+            "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
             "control_id": "euler:second_route:mutant:0:cb4087ad112ae1c27d3f7165b219454f42ac353ffd179b315cf010de015355d4",
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+            "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
             "control_id": "euler:second_route:mutant:1:dda95a4e9911fdec4ceed2b6b3eaa28d5ab5a7c42af5b7104bf7f8f9d56c6a17",
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+            "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
             "control_id": "euler:second_route:mutant:2:144574eff93630570d4794ce620fd73334b75e5f289002683b43e896b462ad17",
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+            "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
             "control_id": "euler:second_route:mutant:3:3c9807e7408bcee58ed3489f9bc1dc8b873093f3358f3bdd1e584ab2dfac0b83",
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           },
           {
-            "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+            "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
             "control_id": "euler:second_route:mutant:4:d8005b9a5eba627b5e5186aba5938abe0f583559a3a95a415af27484546bc9e1",
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 20
+            "seq": 51
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 21,
+        "positive_seq": 52,
         "predicates": [
           "euler"
         ]
@@ -4823,186 +4865,186 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "force_tolerance:known",
-        "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+        "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
         "controls": [
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:removal:0:3361848397eeed48a7a98654df2eed14afb9c5549bb6cfbd438fc2097843b4bf",
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:1:96444fd63386cf6d4abc15c5011b92352a8c32dfb5a4c4a96e90f73e3b5ce9a3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:2:0a168ed61775d5c9e3c6798ae136d0abaf7786af364bcb86dfe01b71bb5dd605",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:3:e39711f507a5a98df3330d39c828356225c6fe502f632f54c67500d31a58b29d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:4:62389f8a7f781790b9427f279177e7bd9eae52e517015e450233744b3fe6ba9b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:5:e72cff5595eacc469336b0b2b01939124daf0fb386b7492c2ba4a977f443edc7",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:6:17aa23a7e614ea8f8a210b08ade76693cf523c703eaacdf7dcad3e0920dbfccc",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:7:5b2cb49e48e67e60e203578c1c55edfebcd3efd4712636d8c2d8b9d3a8c62cc6",
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:8:03ee33d0d6ce6c39e31803e38a5c1000a3e9fdabf11c03829f9b348b48d8b807",
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:9:484ea3b8dd356dc6a51e574078600d6f733a656c3595eb77ddf905a773848d8d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:10:9eec894f3ff2000d8d07ec4c3426c3ea1f6a4d0823a5a17d55d32385cc41bb81",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:11:849be4a179a552b5f41751ff59799b9354d05ad11289d8cf568078284884e6a5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:boundary:12:3e8745edde66f434394bf345413956bc97dac7e0af4e86d936e5cf749a630f48",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:13:66c2e970791e2b339e29c76f38ae1e581d36d70e139932aab92b84bfb195d468",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:14:cc29d1b14fb5408b09a09cc977d9ae4dfa9247f26214d12a748d35b1584bc611",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:15:04bcdbbf3b8372a0e5b5ed0a1ab0c6e8a1a44939705d1901f6f88946b8e0188f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:16:03a75ea23ac82de3f39471b11ee0f9a6abebeabc1b0457401b6ef2d8ef9612bd",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:17:7989fcf2b23315186a4b7968dc4b341b121f55240ae11b201f804a98e3cb942e",
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:18:8cf808a4795ade7d1caef1b2fdf4ddbb6b659fab977ce27786f0433268c7c4bf",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:19:9d6c7dc1b68bfdaf998c4a8d09c88703133954a1a099459eeca93a3dbd5f5192",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:20:a4a8b9df33cda9a89b66edf8aff00b9ac7d9f85b7e769ddb75fc7e75c3748489",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           },
           {
-            "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+            "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
             "control_id": "force_tolerance:known:mutant:21:d4cba59c78265c877422315b9fa8a3947ac4e660a83af3164b903a0915cff20d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 23
+            "seq": 54
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5013,60 +5055,60 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "friction:known",
-        "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+        "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
         "controls": [
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:0:f896ef4acb6ea2a93ffa96498c5b87b78b77b815d5bb0a57c1810e35c5e15eb3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:1:f91787c1637a20ac9c5911c24c556e2c14f2e41b5ead4affcaec6749d61405e1",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:2:95343a7390fde0e7f0d32bd1b3ad0d9ed0f3d323e4fdcf1d066c4bdc8db1951b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:3:c0dae9e434e05619e6ecd59a4478c9f0cd09a46a82cd82b22b3650715e6c5d9a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:4:51c81353c97ee5ad051a464b8ba45ac51bb47c1979b50ec390f4e5d0ca096b65",
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+            "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
             "control_id": "friction:known:mutant:5:2e23c8b1a2184da2cc25e0db09b865b88b4e185285927d98591f73c31c03c6b3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 27,
+        "positive_seq": 58,
         "predicates": [
           "friction"
         ]
@@ -5075,60 +5117,60 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "friction:second_route",
-        "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+        "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
         "controls": [
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:0:f896ef4acb6ea2a93ffa96498c5b87b78b77b815d5bb0a57c1810e35c5e15eb3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:1:f91787c1637a20ac9c5911c24c556e2c14f2e41b5ead4affcaec6749d61405e1",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:2:95343a7390fde0e7f0d32bd1b3ad0d9ed0f3d323e4fdcf1d066c4bdc8db1951b",
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:3:c0dae9e434e05619e6ecd59a4478c9f0cd09a46a82cd82b22b3650715e6c5d9a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:4:51c81353c97ee5ad051a464b8ba45ac51bb47c1979b50ec390f4e5d0ca096b65",
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           },
           {
-            "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+            "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
             "control_id": "friction:second_route:mutant:5:2e23c8b1a2184da2cc25e0db09b865b88b4e185285927d98591f73c31c03c6b3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 26
+            "seq": 57
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 27,
+        "positive_seq": 58,
         "predicates": [
           "friction"
         ]
@@ -5137,108 +5179,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "rrt:known",
-        "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+        "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
         "controls": [
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:0:2b487accf626edd6c27718a0a2073a6be091eb2acc02a9bacf7c1d31fc54d74b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:1:2dee8accf8e23a8257fd44e00211ccc3414c5c5f0f93866a712873e4eeb3fe2c",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:2:14135f96c9b9cb3f00397c40edf5ebfc64a1f3425c9ec1ded9f9ba63daa0c0e5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:3:957db8a7af850a7b98556792084fb67180ba9efd3ec4b8b8310ac2ccd7a471f3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:4:3d10b208c0b8d250a1ea5aaea9e2971c00130986d749f26a7dc0b30809cc6f09",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:5:b5aa6a6343213d355a675072a8030ef3c847e83703c60f3615b339e973b1a6ac",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:6:8ad5fff96b5eefcc38712b3bb5452cf1fbf75ff42a56c021ad03615fa7989bb3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:7:ae1252f5491558c61139247e33895aa89f8b7f529681f50e9ef3ef0e3c68c9f6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:8:566206e6641a16539ba35b6b8fcd9740e51181ef72967124be6f62c9e84b13af",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:9:0f48a73b14195e5d0f3f92f4108f73ee737a7a7e98c82dc1b32f6ae5806e6e07",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:10:abccf07700e046c2b3c98947e40f42dce1178a7382c648f551e638ccc8327b34",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+            "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
             "control_id": "rrt:known:mutant:11:91efccc07ca92d9858cf24e1ca1fb6e2e83b7458ce584a2bbfd3ff828acdfcd4",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 30,
+        "positive_seq": 61,
         "predicates": [
           "rrt"
         ]
@@ -5247,108 +5289,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "rrt:second_route",
-        "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+        "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
         "controls": [
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:0:2b487accf626edd6c27718a0a2073a6be091eb2acc02a9bacf7c1d31fc54d74b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:1:2dee8accf8e23a8257fd44e00211ccc3414c5c5f0f93866a712873e4eeb3fe2c",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:2:14135f96c9b9cb3f00397c40edf5ebfc64a1f3425c9ec1ded9f9ba63daa0c0e5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:3:957db8a7af850a7b98556792084fb67180ba9efd3ec4b8b8310ac2ccd7a471f3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:4:3d10b208c0b8d250a1ea5aaea9e2971c00130986d749f26a7dc0b30809cc6f09",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:5:b5aa6a6343213d355a675072a8030ef3c847e83703c60f3615b339e973b1a6ac",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:6:8ad5fff96b5eefcc38712b3bb5452cf1fbf75ff42a56c021ad03615fa7989bb3",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:7:ae1252f5491558c61139247e33895aa89f8b7f529681f50e9ef3ef0e3c68c9f6",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:8:566206e6641a16539ba35b6b8fcd9740e51181ef72967124be6f62c9e84b13af",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:9:0f48a73b14195e5d0f3f92f4108f73ee737a7a7e98c82dc1b32f6ae5806e6e07",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:10:abccf07700e046c2b3c98947e40f42dce1178a7382c648f551e638ccc8327b34",
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           },
           {
-            "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+            "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
             "control_id": "rrt:second_route:mutant:11:91efccc07ca92d9858cf24e1ca1fb6e2e83b7458ce584a2bbfd3ff828acdfcd4",
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 29
+            "seq": 60
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 30,
+        "positive_seq": 61,
         "predicates": [
           "rrt"
         ]
@@ -5357,108 +5399,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "swept_arm:known",
-        "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+        "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
         "controls": [
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:0:3b5bcd59effa5988a437a93faf1098559e6e04ead057439038d7eeb5707931a3",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:1:be54053a3fa4c2e585a4091dc204e873a07d708b3a66eab482f396ae0b8bd6b5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:2:40ea01295b5f9610ac8e8e17d5775381386113a30dca8cca07048b832953048a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:3:38b114a82cc85ad8bd68b2984ea66b829c911e55d2a2682e0595212c94b72d37",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:4:916f2e1de41effa20cfb031ea0005de1a4fd7396315b5f6432b0e42457fd2937",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:5:41de6de303f911f994641c6511245b24e94db5c52d1954bdf859dc90bbcd845e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:6:d2c384575fba2840c12d754769dbf9ec61d2890280c4d08f3d24a4085aa4d91a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:7:507a53ba54ef50baf587c853e160108c6d0ce0ce82e8fc0f85a1d4a6817bb2fd",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:8:addcb3639a970e416a7a9ac4264ce4a1d08f3cb5bd0564bbc22128217219eb0f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:9:0ca7be83278ed36d921195b844172388d10dad269e554926dbb37b47c0f3073a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:10:53312eb70a33ac446fa58011b6eccf02250ed829083048722b4b720c964f86f6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+            "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
             "control_id": "swept_arm:known:mutant:11:bae9d62683d5bbce9b981cc9004de2e16e876d71394f05b2f24629af3da89738",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 33,
+        "positive_seq": 64,
         "predicates": [
           "swept_arm"
         ]
@@ -5467,108 +5509,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "swept_arm:second_route",
-        "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+        "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
         "controls": [
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:0:3b5bcd59effa5988a437a93faf1098559e6e04ead057439038d7eeb5707931a3",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:1:be54053a3fa4c2e585a4091dc204e873a07d708b3a66eab482f396ae0b8bd6b5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:2:40ea01295b5f9610ac8e8e17d5775381386113a30dca8cca07048b832953048a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:3:38b114a82cc85ad8bd68b2984ea66b829c911e55d2a2682e0595212c94b72d37",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:4:916f2e1de41effa20cfb031ea0005de1a4fd7396315b5f6432b0e42457fd2937",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:5:41de6de303f911f994641c6511245b24e94db5c52d1954bdf859dc90bbcd845e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:6:d2c384575fba2840c12d754769dbf9ec61d2890280c4d08f3d24a4085aa4d91a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:7:507a53ba54ef50baf587c853e160108c6d0ce0ce82e8fc0f85a1d4a6817bb2fd",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:8:addcb3639a970e416a7a9ac4264ce4a1d08f3cb5bd0564bbc22128217219eb0f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:9:0ca7be83278ed36d921195b844172388d10dad269e554926dbb37b47c0f3073a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:10:53312eb70a33ac446fa58011b6eccf02250ed829083048722b4b720c964f86f6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           },
           {
-            "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+            "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
             "control_id": "swept_arm:second_route:mutant:11:bae9d62683d5bbce9b981cc9004de2e16e876d71394f05b2f24629af3da89738",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 32
+            "seq": 63
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 33,
+        "positive_seq": 64,
         "predicates": [
           "swept_arm"
         ]
@@ -5577,108 +5619,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "swept_point:known",
-        "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+        "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
         "controls": [
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:0:9a95e4cffe871001f1007c002908880ec853d937f76a5ddb70f571cab4a4bd63",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:1:3c78101cd8938eb75c57372606ca2a8f372b50f78def11d4646b01d6b98c875f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:2:23f6721219a9e4c2b1a18b3c54f95725b484e213312e079b8b31948b265fc40f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:3:b9268b75ac31196f56b76d7a519abd45da9b73a456fab66b0c8ab6445c7cf31e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:4:c095c8f6c6a74f17bd4ef5409dc8dff76a7a7f583090efade5ae9b06831db6d2",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:5:84e9afbfe08995ad87b71caa1d10772d213c7963e93d2b4bc580a7efd93ee218",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:6:f5e7c44ff2c9ddb7477df79ada3b44c7dacdc320cb39b56d265332a4d8b6df1a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:7:a53049f2b31f23553a4ea1e2cd671165fa4538923058a73d6e01e9d11ef02eec",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:8:91c630ee5411f89d63f268a8fbc8357d49031496d1a3e9988dbed5841ab6c11a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:9:8769838597e00e873115fc84cea09467ffc3f5a8bb7a48dec95097bd84dbe64b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:10:7c7cd18a31f68dcebaba07a947533a4a574b335952efccca5bb456d4b89d3103",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+            "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
             "control_id": "swept_point:known:mutant:11:59efe186867c20e5eea4c8ff9af1997e88ca870304a3809ac69691dd49b72607",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 36,
+        "positive_seq": 67,
         "predicates": [
           "swept_point"
         ]
@@ -5687,108 +5729,108 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "swept_point:second_route",
-        "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+        "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
         "controls": [
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:0:9a95e4cffe871001f1007c002908880ec853d937f76a5ddb70f571cab4a4bd63",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:1:3c78101cd8938eb75c57372606ca2a8f372b50f78def11d4646b01d6b98c875f",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:2:23f6721219a9e4c2b1a18b3c54f95725b484e213312e079b8b31948b265fc40f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:3:b9268b75ac31196f56b76d7a519abd45da9b73a456fab66b0c8ab6445c7cf31e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:4:c095c8f6c6a74f17bd4ef5409dc8dff76a7a7f583090efade5ae9b06831db6d2",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:5:84e9afbfe08995ad87b71caa1d10772d213c7963e93d2b4bc580a7efd93ee218",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:6:f5e7c44ff2c9ddb7477df79ada3b44c7dacdc320cb39b56d265332a4d8b6df1a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:7:a53049f2b31f23553a4ea1e2cd671165fa4538923058a73d6e01e9d11ef02eec",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:8:91c630ee5411f89d63f268a8fbc8357d49031496d1a3e9988dbed5841ab6c11a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:9:8769838597e00e873115fc84cea09467ffc3f5a8bb7a48dec95097bd84dbe64b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:10:7c7cd18a31f68dcebaba07a947533a4a574b335952efccca5bb456d4b89d3103",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           },
           {
-            "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+            "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
             "control_id": "swept_point:second_route:mutant:11:59efe186867c20e5eea4c8ff9af1997e88ca870304a3809ac69691dd49b72607",
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 35
+            "seq": 66
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
-        "positive_seq": 36,
+        "positive_seq": 67,
         "predicates": [
           "swept_point"
         ]
@@ -5797,194 +5839,194 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "tolerance:known",
-        "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+        "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
         "controls": [
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:removal:0:cc3ba9f3e5980db07ed352f2d836e8aa22db34fe8518a602dfb6a1b2c3946ebe",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:1:b9268b75ac31196f56b76d7a519abd45da9b73a456fab66b0c8ab6445c7cf31e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:2:8769838597e00e873115fc84cea09467ffc3f5a8bb7a48dec95097bd84dbe64b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:3:1e9799c564ae4148c2788b87e52f879250526d67bfd5902a1b3c4739a044e58a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:4:c80c7c449a9d1ca0d25e4242f5496d8004865d07d17b37988dcc94ad1668fdaf",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:5:eb0dc3ca85533eae9a317e2efa8d4224de8fd00c14a0a8cc714234b21658e01e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:6:ac636be7c4aa869a50d353bd9d272183965eeea75d080b35465f7c2df985eea8",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:7:815bf17a85e53551fc571ca5e41e2723d86bf4762e051556a1573fde24b994a2",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:8:ea92d382ca27663f2c6edf0b459a33362874fd6da03b4b36d4f09a1588dfed0d",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:9:e0bcd51972bc7d6d7585b06533d3bea532016aa7320a4427efe143bfade8bde6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:10:c2ff42bf87e4889ba492f544398b9685b92a568d16083c1a052006c31ada45ae",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:11:677100dc25edd839688e733e734396acb0110e5ec522614cecf502a91fe7717b",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:boundary:12:f8b0c9e51cda6a9e551da3e5988db6dbf01e0c80a3fd63ea04820436a13b18f9",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:13:9a95e4cffe871001f1007c002908880ec853d937f76a5ddb70f571cab4a4bd63",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:14:3c78101cd8938eb75c57372606ca2a8f372b50f78def11d4646b01d6b98c875f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:15:23f6721219a9e4c2b1a18b3c54f95725b484e213312e079b8b31948b265fc40f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:16:c095c8f6c6a74f17bd4ef5409dc8dff76a7a7f583090efade5ae9b06831db6d2",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:17:84e9afbfe08995ad87b71caa1d10772d213c7963e93d2b4bc580a7efd93ee218",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:18:f5e7c44ff2c9ddb7477df79ada3b44c7dacdc320cb39b56d265332a4d8b6df1a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:19:a53049f2b31f23553a4ea1e2cd671165fa4538923058a73d6e01e9d11ef02eec",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:20:91c630ee5411f89d63f268a8fbc8357d49031496d1a3e9988dbed5841ab6c11a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:21:7c7cd18a31f68dcebaba07a947533a4a574b335952efccca5bb456d4b89d3103",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           },
           {
-            "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+            "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
             "control_id": "tolerance:known:mutant:22:59efe186867c20e5eea4c8ff9af1997e88ca870304a3809ac69691dd49b72607",
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 38
+            "seq": 69
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5995,162 +6037,162 @@
         "author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
         "certificate": "",
         "check_id": "work_bound:known",
-        "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+        "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
         "controls": [
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:removal:0:477b635ecf1661a07b11dbfafbc63b2ba6555a143e7081372fd7a07e4de8e384",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:1:d2c384575fba2840c12d754769dbf9ec61d2890280c4d08f3d24a4085aa4d91a",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:2:addcb3639a970e416a7a9ac4264ce4a1d08f3cb5bd0564bbc22128217219eb0f",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:3:18b8bfed6b554e97646adf978c75631e6512f5fb0a97fd6fc3435bcd0d0e902d",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:4:b23a642795dab4f21ca3695459470820a1f4bede54010ccc8606af8fada112a9",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:5:53312eb70a33ac446fa58011b6eccf02250ed829083048722b4b720c964f86f6",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:6:5a45b18ff31cc2b1f3a39c9502475903e54cbab323bbcbdd92c87f3b2b1c3122",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:7:20eec49c98c260ce285be145cd38626043a74df7462fc72bfdb2ee14c39257fa",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:8:0034e665151033fbd415c93b97c656eebf6a4300c1ee08c902794ee715f3cbab",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:boundary:9:23fa5d9148914f58e70dc6ead8477725ee245a588b181c4ff187edccb5348313",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:10:3b5bcd59effa5988a437a93faf1098559e6e04ead057439038d7eeb5707931a3",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:11:be54053a3fa4c2e585a4091dc204e873a07d708b3a66eab482f396ae0b8bd6b5",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:12:40ea01295b5f9610ac8e8e17d5775381386113a30dca8cca07048b832953048a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:13:38b114a82cc85ad8bd68b2984ea66b829c911e55d2a2682e0595212c94b72d37",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:14:916f2e1de41effa20cfb031ea0005de1a4fd7396315b5f6432b0e42457fd2937",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:15:41de6de303f911f994641c6511245b24e94db5c52d1954bdf859dc90bbcd845e",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:16:507a53ba54ef50baf587c853e160108c6d0ce0ce82e8fc0f85a1d4a6817bb2fd",
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:17:0ca7be83278ed36d921195b844172388d10dad269e554926dbb37b47c0f3073a",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           },
           {
-            "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+            "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
             "control_id": "work_bound:known:mutant:18:bae9d62683d5bbce9b981cc9004de2e16e876d71394f05b2f24629af3da89738",
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 41
+            "seq": 72
           }
         ],
-        "frozen_seq": 1,
+        "frozen_seq": 32,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -6160,7 +6202,7 @@
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "a9d2e71070dacd5f5e217585512881d955af44c410f531dfa4c138abdfbf0756",
+    "digest": "391d03131fd93d764aacef2702ca7ee61e5da4b29bffc9a26c6d8beaceac68f1",
     "formal": [],
     "gaps": [
       [
@@ -6346,202 +6388,202 @@
     "producer": "the embodied family build (Codex)",
     "receipts": [
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "a_star:known",
-        "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
+        "check_sha": "2a0e8e2400340c493b25addc0965e54045331b3fa0f6cf63756af7cc3a845b1b",
         "receipt_id": "a_star:known:receipt",
         "result": "pass",
-        "seq": 4
+        "seq": 35
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "a_star:second_route",
-        "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
+        "check_sha": "c916dfa7671502f79e72038aff9bd026cbb50c5f7f11b3dc61eea6a17a0885b8",
         "receipt_id": "a_star:second_route:receipt",
         "result": "pass",
-        "seq": 4
+        "seq": 35
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "average_speed:known",
-        "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
+        "check_sha": "415f7c442d35a43e84fa2e28b7e16377c95cac88658ba6a3b918bbbef680fcf5",
         "receipt_id": "average_speed:known:receipt",
         "result": "pass",
-        "seq": 7
+        "seq": 38
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "average_speed:second_route",
-        "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
+        "check_sha": "586ffbad5a343c093b3509682a69a0a67ab7bb50b9ce583491f7084bcbe713fa",
         "receipt_id": "average_speed:second_route:receipt",
         "result": "pass",
-        "seq": 7
+        "seq": 38
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "bounds:known",
-        "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
+        "check_sha": "efe0a214790a2baa95191849d8e397cf092fcbcdf009a96a7c98974f8cff623e",
         "receipt_id": "bounds:known:receipt",
         "result": "pass",
-        "seq": 10
+        "seq": 41
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "chain:known",
-        "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
+        "check_sha": "4946a12e2b6c993a4dc9e1cbe6ce6f1163777efb7cbddb6a2421fcb75157d458",
         "receipt_id": "chain:known:receipt",
         "result": "pass",
-        "seq": 13
+        "seq": 44
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "chain:second_route",
-        "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
+        "check_sha": "726fd458c51b5f7cf057eb896d6c82e442ed7ae56bedcacbe44a70f08d2d2eca",
         "receipt_id": "chain:second_route:receipt",
         "result": "pass",
-        "seq": 13
+        "seq": 44
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "closed_form:known",
-        "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
+        "check_sha": "2357f9d0e85136f305323e6736360cfd41007dc26db5627593854f593b54aef8",
         "receipt_id": "closed_form:known:receipt",
         "result": "pass",
-        "seq": 16
+        "seq": 47
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "closed_form:second_route",
-        "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
+        "check_sha": "fb9e32e4bece04fc39388f8a586e07691ab052bbb5b82806851c65272104cb03",
         "receipt_id": "closed_form:second_route:receipt",
         "result": "pass",
-        "seq": 16
+        "seq": 47
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "distance:known",
-        "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
+        "check_sha": "343df38c5f2673a503c5eb2dccd985a939706b0b8ce1576990d7301732eb286b",
         "receipt_id": "distance:known:receipt",
         "result": "pass",
-        "seq": 19
+        "seq": 50
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "distance:second_route",
-        "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
+        "check_sha": "703973a6ac4e602cd351494b5773f52104082374da7300474a3999af1dd74e97",
         "receipt_id": "distance:second_route:receipt",
         "result": "pass",
-        "seq": 19
+        "seq": 50
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "euler:known",
-        "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
+        "check_sha": "8f2c304cc80e02b220c30b19f53fe8171deb62144f34f8a35b8a903cfab27f22",
         "receipt_id": "euler:known:receipt",
         "result": "pass",
-        "seq": 22
+        "seq": 53
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "euler:second_route",
-        "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
+        "check_sha": "ab35a6f2314cfd3c24561686f0c1c4d4a6b8c72cf7a1d816a5d2f0d716825960",
         "receipt_id": "euler:second_route:receipt",
         "result": "pass",
-        "seq": 22
+        "seq": 53
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "force_tolerance:known",
-        "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
+        "check_sha": "bed814168c39e31f8e48ff26cf70f1e4caa382934edd3c9ec6f3628f939a74ae",
         "receipt_id": "force_tolerance:known:receipt",
         "result": "pass",
-        "seq": 25
+        "seq": 56
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "friction:known",
-        "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
+        "check_sha": "a77dba4906e0b3815d9e37a1b327cbcf33df75b981269d9629dd1afbda6d968c",
         "receipt_id": "friction:known:receipt",
         "result": "pass",
-        "seq": 28
+        "seq": 59
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "friction:second_route",
-        "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
+        "check_sha": "d47077fe0276d1ddfc888d9d546a0e2ba15e61db9dfdf39fceeeb195c25c6414",
         "receipt_id": "friction:second_route:receipt",
         "result": "pass",
-        "seq": 28
+        "seq": 59
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "rrt:known",
-        "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
+        "check_sha": "04a14716bee52e7cc4e5581afb1a952897d49540d83edfc303a98cfd604aa49b",
         "receipt_id": "rrt:known:receipt",
         "result": "pass",
-        "seq": 31
+        "seq": 62
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "rrt:second_route",
-        "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
+        "check_sha": "e165072f0f9608661a3a994ffadcbe1347630dd1f79e0eb3e291b291230196d9",
         "receipt_id": "rrt:second_route:receipt",
         "result": "pass",
-        "seq": 31
+        "seq": 62
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "swept_arm:known",
-        "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
+        "check_sha": "5dd546eee698941e83d179720d633d9f5c30102b4590ef7e260867f78be38f42",
         "receipt_id": "swept_arm:known:receipt",
         "result": "pass",
-        "seq": 34
+        "seq": 65
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "swept_arm:second_route",
-        "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
+        "check_sha": "a1ebb65e99d95b2588d9a52d9cbeb2fcfef81f75ba86f0693a10f96afa7d249c",
         "receipt_id": "swept_arm:second_route:receipt",
         "result": "pass",
-        "seq": 34
+        "seq": 65
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "swept_point:known",
-        "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
+        "check_sha": "473d879760bf1b2d7684358aa03258a86a8ca1dbfc7a1bb4c11834e136a11d83",
         "receipt_id": "swept_point:known:receipt",
         "result": "pass",
-        "seq": 37
+        "seq": 68
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "swept_point:second_route",
-        "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
+        "check_sha": "dcced5e4a4f03a432a8922e1bfe455e06da4fcd541e4504cfd198048fabbe77c",
         "receipt_id": "swept_point:second_route:receipt",
         "result": "pass",
-        "seq": 37
+        "seq": 68
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "tolerance:known",
-        "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
+        "check_sha": "b96cd480cd16942809a7c339f2d3d7dd1a187126d69472b0fbdb1039f9109b72",
         "receipt_id": "tolerance:known:receipt",
         "result": "pass",
-        "seq": 40
+        "seq": 71
       },
       {
-        "artifact_sha": "cc47d133673212cc47cd84e1369e490f4cb169e9ff0b13c8ee0a3dd80b6637d2",
+        "artifact_sha": "632b38e6e7c5683aaa7ce91655ec3406c53d8f9d707bac50c7f5c6bc7c21ca9e",
         "check_id": "work_bound:known",
-        "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
+        "check_sha": "a1897d619c6c6ae1b8e8adbdcc1061d93680fe50d114f0fb96313abd835e314d",
         "receipt_id": "work_bound:known:receipt",
         "result": "pass",
-        "seq": 43
+        "seq": 74
       }
     ],
     "rerun": [],
     "schema": "csir_certificate.v2",
     "solvability": null,
-    "standard_sha": "4149b8910e44917f3c4774ec45f4e27a14919c63e6b2ba9131a746edb841bd69",
+    "standard_sha": "47ce2405fc18ec8f6d0148ccc6ec0afac1f8bfa2dd23ba85d263c3591569610c",
     "state": "qualified-draft",
     "unresolved": [],
     "violations": []
@@ -9536,61 +9578,61 @@
   "positions": {
     "artifact": 1,
     "commits": {
-      "a_star:known": "229873b5509c5be646de8d1778607555357e5697",
-      "a_star:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "a_star:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "a_star:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
       "artifact": "229873b5509c5be646de8d1778607555357e5697",
-      "average_speed:known": "229873b5509c5be646de8d1778607555357e5697",
-      "average_speed:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "bounds:known": "229873b5509c5be646de8d1778607555357e5697",
-      "chain:known": "229873b5509c5be646de8d1778607555357e5697",
-      "chain:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "closed_form:known": "229873b5509c5be646de8d1778607555357e5697",
-      "closed_form:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "distance:known": "229873b5509c5be646de8d1778607555357e5697",
-      "distance:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "euler:known": "229873b5509c5be646de8d1778607555357e5697",
-      "euler:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "force_tolerance:known": "229873b5509c5be646de8d1778607555357e5697",
-      "friction:known": "229873b5509c5be646de8d1778607555357e5697",
-      "friction:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "rrt:known": "229873b5509c5be646de8d1778607555357e5697",
-      "rrt:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "swept_arm:known": "229873b5509c5be646de8d1778607555357e5697",
-      "swept_arm:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "swept_point:known": "229873b5509c5be646de8d1778607555357e5697",
-      "swept_point:second_route": "229873b5509c5be646de8d1778607555357e5697",
-      "tolerance:known": "229873b5509c5be646de8d1778607555357e5697",
-      "work_bound:known": "229873b5509c5be646de8d1778607555357e5697"
+      "average_speed:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "average_speed:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "bounds:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "chain:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "chain:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "closed_form:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "closed_form:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "distance:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "distance:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "euler:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "euler:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "force_tolerance:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "friction:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "friction:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "rrt:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "rrt:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "swept_arm:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "swept_arm:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "swept_point:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "swept_point:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "tolerance:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "work_bound:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8"
     },
-    "controls": 2,
+    "controls": 33,
     "frozen": {
-      "a_star:known": 1,
-      "a_star:second_route": 1,
-      "average_speed:known": 1,
-      "average_speed:second_route": 1,
-      "bounds:known": 1,
-      "chain:known": 1,
-      "chain:second_route": 1,
-      "closed_form:known": 1,
-      "closed_form:second_route": 1,
-      "distance:known": 1,
-      "distance:second_route": 1,
-      "euler:known": 1,
-      "euler:second_route": 1,
-      "force_tolerance:known": 1,
-      "friction:known": 1,
-      "friction:second_route": 1,
-      "rrt:known": 1,
-      "rrt:second_route": 1,
-      "swept_arm:known": 1,
-      "swept_arm:second_route": 1,
-      "swept_point:known": 1,
-      "swept_point:second_route": 1,
-      "tolerance:known": 1,
-      "work_bound:known": 1
+      "a_star:known": 32,
+      "a_star:second_route": 32,
+      "average_speed:known": 32,
+      "average_speed:second_route": 32,
+      "bounds:known": 32,
+      "chain:known": 32,
+      "chain:second_route": 32,
+      "closed_form:known": 32,
+      "closed_form:second_route": 32,
+      "distance:known": 32,
+      "distance:second_route": 32,
+      "euler:known": 32,
+      "euler:second_route": 32,
+      "force_tolerance:known": 32,
+      "friction:known": 32,
+      "friction:second_route": 32,
+      "rrt:known": 32,
+      "rrt:second_route": 32,
+      "swept_arm:known": 32,
+      "swept_arm:second_route": 32,
+      "swept_point:known": 32,
+      "swept_point:second_route": 32,
+      "tolerance:known": 32,
+      "work_bound:known": 32
     },
-    "positive": 3,
-    "receipts": 4
+    "positive": 34,
+    "receipts": 35
   },
   "printed_values": [
     {
