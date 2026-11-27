@@ -1429,7 +1429,8 @@ def test_review_i4_test_adequacy_on_a_new_450_line_module_keeps_to_the_deadline(
     assert took < 30 + MARGIN_S, took
     [adequacy] = got["assessment"]["completion"]["test_adequacy"]
     assert adequacy["skipped"] and all(s["reason"] for s in adequacy["skipped"]), adequacy
-    assert got["assessment"]["outcome"] == "supported_within_scope"
+    # the reasons say why when it is not (CI saw insufficient_evidence once, on one runner): a diagnostic only
+    assert got["assessment"]["outcome"] == "supported_within_scope", (took, got["assessment"]["reasons"])
 
 
 def test_review_i4_test_adequacy_leaves_out_a_file_over_its_size_and_says_why(tmp_path, monkeypatch):

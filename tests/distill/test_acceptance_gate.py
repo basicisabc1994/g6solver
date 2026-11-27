@@ -144,7 +144,9 @@ def test_demote_at_policy_demote_alpha(rig, monkeypatch):
     gate, candidate, _, _, _ = rig
     gate.decide(candidate, Library(), "a" * 64)
     monkeypatch.setattr(gate, "_field", lambda *a: (30, 0, 0))
-    gate.promote(Library().list()[0].entry_id, Library(), "a" * 64)
+    promoted = gate.promote(Library().list()[0].entry_id, Library(), "a" * 64)
+    # the A2 step the rest of the test stands on; its reasons say why when it refuses (CI saw an intermittent refuse)
+    assert promoted.verdict == "admit", promoted.reasons
     admitted = Library().list()[0]
     monkeypatch.setattr(gate, "_field", lambda *a: (2, 18, 0))
     decision = gate.monitor(admitted.entry_id, Library())
@@ -157,7 +159,9 @@ def test_withdrawal_is_append_only_and_hides_admitted_view(rig, monkeypatch):
     gate, candidate, _, _, _ = rig
     gate.decide(candidate, Library(), "a" * 64)
     monkeypatch.setattr(gate, "_field", lambda *a: (30, 0, 0))
-    gate.promote(Library().list()[0].entry_id, Library(), "a" * 64)
+    promoted = gate.promote(Library().list()[0].entry_id, Library(), "a" * 64)
+    # the A2 step the rest of the test stands on; its reasons say why when it refuses (CI saw an intermittent refuse)
+    assert promoted.verdict == "admit", promoted.reasons
     old = Library().list()[0]
     assert gate.withdraw(old.entry_id, Library(), reason="owner withdrawal", person="Fixture person").verdict == "withdraw"
     assert Library().by_status("admitted") == []
