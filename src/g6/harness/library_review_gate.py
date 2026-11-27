@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import threading
 import time
 
+from g6.core import component_process
 from g6.core.ledger import ChainLedger, LedgerError, digest
 from g6.core.storage import state_path
 from g6.distill.ledger import PartialAuthorityWrite, Stores, append_retained, failure_writer, retain_before_write
@@ -185,6 +186,8 @@ def _check(before: dict[str, str], after: dict[str, str], *, entry_id: str = "",
                     record_fire(found, before, after, entries)
                     found["field_recorded"] = True
                     found['publication_committed'] = True
+                except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+                    raise
                 except StatusChanged as error:
                     found.update(authority='A0', verdict='abstain', outcome='insufficient_evidence',
                                  code=error.code, reason=str(error), field_recorded=False)

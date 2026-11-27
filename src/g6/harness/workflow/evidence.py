@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 import re
 
+from g6.core import component_process
 from g6.core.cloud_consent import sha256
 from g6.core.ledger import digest
 from g6.harness.workflow import policy
@@ -34,6 +35,8 @@ def source_digests(root, checks: Iterable[str]) -> dict[str, str]:
                 if file not in files:
                     files[file] = sha256(path.read_bytes())
                 found[check] = files[file]
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise
         except OSError:
             continue
     return found
@@ -915,7 +918,11 @@ def capture_sources(root, checks: Iterable[str]) -> dict[str, str]:
             if len(files) == 1:
                 return next(iter(files.values()))
             return digest(sorted((p.relative_to(top).as_posix(), sha) for p, sha in files.items()))
-        except (OSError, SyntaxError, ValueError, RecursionError):
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+            # MemoryError: Python's parser stack overflowing on a module is G6's reading failing, so the identity
+            # is unknown (""), never an exception out of the review (review I3).
             return ""
 
     by_file = {n.partition("::")[0]: None for n in checks}
@@ -1098,6 +1105,8 @@ def read(repo, task: str, *, note: str = "", origin_kind: str = "", origin_id: s
                     and e.data.get("origin_sha256") == sha256(origin_id)}
             held["selected_run"] = next(iter(runs)) if len(runs) == 1 else ""
         return held
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
     except Exception:  # noqa: BLE001 - missing custody never manufactures evidence
         return bundle([], status="unavailable")
 
