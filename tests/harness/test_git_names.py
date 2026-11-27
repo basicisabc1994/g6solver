@@ -672,7 +672,9 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.workforce._collection_effects', 'g6.harn
          'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
          'g6.harness.executable_scenario', 'g6.harness.workflow.adapters',
          'g6.distill.acceptance_gate', 'g6.harness.library_review_gate',
-         'g6.distill.held_out.oracle', 'g6.distill.held_out.registration_gate')
+         'g6.distill.held_out.oracle', 'g6.distill.held_out.registration_gate',
+         # f7639fc9 (the card's source capture, workflow.evidence) and 1f13bd92 (distill_backend, RepoRefused only)
+         'g6.harness.workflow.evidence', 'g6.mcp.distill_backend')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:

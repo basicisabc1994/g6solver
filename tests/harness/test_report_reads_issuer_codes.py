@@ -147,6 +147,22 @@ PLACES: dict[tuple[str, str], tuple[str, str]] = {
     ("_steps", "str(r.get('stage', '')).startswith"): ("search", "the stage G6 gave one of the review's own reasons"),
     ("_steps", "outcome.replace"): ("search", "the review's own outcome code, its underscores put as spaces"),
     ("_latest", "file in run['results']"): ("membership", MEMBERSHIP),
+    # f7639fc9, the end-of-task card: membership over G6's own workflow-record events, ids and keys; searches over the
+    # card lines and report G6 itself rendered; a model name's provider family. None reads the issuer's or a check's text.
+    ("card", "'selected_run' in held"): ("membership", "a key of G6's own workflow-record bundle"),
+    ("card", "'selected_run' not in held"): ("membership", "a key of G6's own workflow-record bundle"),
+    ("card", "(e.get('data') or {}).get('target') in targets"): ("membership", "G6's own event ids: " + MEMBERSHIP),
+    ("card", "(e['task'], c) in checks['open']"): ("membership", "G6's own (task, check) pairs: " + MEMBERSHIP),
+    ("card", "e in selected_events"): ("membership", "G6's own workflow-record events: " + MEMBERSHIP),
+    ("card", "e['event_id'] not in labelled"): ("membership", "G6's own event ids: " + MEMBERSHIP),
+    ("card", "one.get('event_id') in labelled"): ("membership", "G6's own event ids: " + MEMBERSHIP),
+    ("card_lines", "r['by'].startswith"): ("search", "G6's own label of who labelled a finding ('reviewer:')"),
+    ("completion_report", "body[1].startswith"): ("search", f"{OWN}: the card's 'Checked' line G6 rendered"),
+    ("family", "re.search"): ("search", "a model's name, for its provider family; never the issuer's or a check's text"),
+    ("with_card", "body.split"): ("search", f"{OWN}: its rendered lines"),
+    ("with_card", "lines[0].startswith"): ("search", f"{OWN}: the card's 'Checked' line G6 rendered"),
+    ("with_card", "lines[i].startswith"): ("search", f"{OWN}: the card's labelled lines G6 rendered"),
+    ("with_card", "report.partition"): ("search", f"{OWN}: its headline line"),
 }
 
 

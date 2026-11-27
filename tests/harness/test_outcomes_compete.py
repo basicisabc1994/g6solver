@@ -457,6 +457,15 @@ PLACES.update({
     ("harness/confirmed_expectation.py", "with_expectation", "one.answer_sha256 == old.answer_sha256"): RECORD,
     ("harness/confirmed_expectation.py", "__init__", "kept != answered_at"): "a time, as text: not an outcome",
     ("harness/confirmed_expectation.py", "_parsed", "set(record) != set(fields)"): "field names: not an outcome"})
+# f7639fc9, the end-of-task card: a workflow-record event's kind and run id, its digest, and the base commit it names.
+CARD_RECORD = "a workflow-record event's kind, run id or digest, or a commit id: not an outcome"
+PLACES.update({("harness/patch_report.py", function, expression): CARD_RECORD for function, expression in (
+    ("card", "e['kind'] == kind"),
+    ("card", "e['run'] == held['selected_run']"),
+    ("card", "e['run'] == one['run']"),
+    ("card", "evidence.digest(e)"),
+    ("card", "evidence.sha256(raw_base) == one.get('baseline_sha256')"),
+    ("card_lines", "f-string: code(checked['base'][:12])"))})
 
 
 def test_every_place_the_slice_handles_an_outcome_goes_through_the_one_encoding():

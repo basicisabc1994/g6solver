@@ -12,7 +12,9 @@ READERS = {
     "harness/completion_loop.py": {"_read"},
     "harness/patch_review.py": {"_confined", "_failed_ids", "_in_repository", "_listing", "_observed",
                                 "_on_base", "_verdicts", "phases_of", "_not_loaded", "_patch_imports_missing",
-                                "_not_found", "_collection_errors"},
+                                "_not_found", "_collection_errors",
+                                # f7639fc9: the card's executed outcomes (read_report's phases and body_result)
+                                "_record"},
     "harness/verification_search.py": {"reading", "_messages", "_refused_access", "_uncollected", "read"},
     "workforce/bench.py": {"_in_place"},
     "workforce/receipt_store.py": {"_body"},
@@ -24,6 +26,8 @@ READERS = {
 ADAPTERS = {
     "algorithm_design/autonomous.py": {"baseline", "run"},
     "bundles/agent_change.py": {"runner", "run"},
+    # c9d212f2: the held-out oracle's run, decided by repo_tests.established(...).of
+    "distill/held_out/oracle.py": {"_run"},
     "harness/patch_review.py": {"_execute", "_execute_at_base"},
     "harness/verification_search.py": {"_run_check", "_run_mutant"},
     "metaharness/coding.py": {"oracle"},
@@ -33,6 +37,7 @@ ADAPTERS = {
 WHOLE_REPO_CONTEXTS = {
     "algorithm_design/autonomous.py": {"_observed"},
     "bundles/agent_change.py": {"_as_run", "run"},
+    "distill/held_out/oracle.py": {"_run"},
     "metaharness/coding.py": {"oracle", "run_mutant"},
     "workforce/bench.py": {"_in_place"},
 }
