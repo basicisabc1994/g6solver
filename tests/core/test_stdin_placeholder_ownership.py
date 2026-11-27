@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """An unsuccessful copy leaves either our placeholder or somebody else's descriptor."""
-import errno
-import gc
 import io
 import os
-from contextlib import suppress
 from types import SimpleNamespace
 
 import pytest
@@ -12,71 +9,8 @@ import pytest
 from g6.mcp import stdio
 
 
-@pytest.mark.parametrize("outcome", ["untouched", "closed", "reused_null", "reused_file", "replaced"])
-def test_duplicate_failure_disposes_only_the_owned_placeholder(monkeypatch, tmp_path, outcome):
-    other_path = tmp_path / "other"
-    other_path.write_bytes(b"other owner")
-    source = io.FileIO(os.devnull, "rb")
-    owner = stdio._InputDescriptor()
-    targets, slots, closes, bystanders = [], [], [], []
-    real_dup2, real_file = os.dup2, stdio._InputFile
-
-    class TrackedFile(real_file):
-        def close(self):
-            if not self.closed:
-                closes.append(self.fileno())
-            super().close()
-
-    def opened(*args, **kwargs):
-        slot = TrackedFile(*args, **kwargs)
-        slots.append(slot)
-        return slot
-
-    def failure(fd, target, **kwargs):
-        targets.append(target)
-        if outcome == "untouched":
-            raise OSError(errno.EBADF, "borrowed source disappeared before the copy")
-        real_dup2(fd, target, **kwargs)
-        if outcome != "replaced":
-            os.close(target)
-        if outcome.startswith("reused"):
-            other = os.open(os.devnull if outcome == "reused_null" else other_path, os.O_RDONLY)
-            if other != target:
-                try:
-                    real_dup2(other, target)
-                finally:
-                    os.close(other)
-            bystanders.append(target)
-        elif outcome == "replaced":
-            # No native close: the failed operation already replaced the placeholder. Ownership is uncertain.
-            bystanders.append(target)
-        raise OSError(errno.EIO, "copy could not establish inheritance")
-
-    try:
-        with monkeypatch.context() as patch:
-            patch.setattr(stdio, "_InputFile", opened)
-            patch.setattr(stdio.os, "dup2", failure)
-            with pytest.raises(OSError, match=r"\[G6_E_STDIN_HANDOFF\]"):
-                owner.duplicate(source.fileno())
-            owner.close()
-            owner.close()
-        gc.collect()
-        assert len(targets) == len(slots) == 1
-        assert closes == (targets if outcome == "untouched" else [])
-        assert slots[0].closed
-        if bystanders:
-            os.fstat(bystanders[0])
-        else:
-            with pytest.raises(OSError):
-                os.fstat(targets[0])
-        os.fstat(source.fileno())
-        assert not os.path.exists(os.path.dirname(slots[0].name)), "placeholder directory survived cleanup"
-    finally:
-        owner.close()
-        source.close()
-        for fd in bystanders:
-            with suppress(OSError):
-                os.close(fd)
+# test_duplicate_failure_disposes_only_the_owned_placeholder (5 cases) was superseded by decd7a04's placeholder
+# redesign (lead ruling, decd7a04): one exclusive native-lifetime placeholder and a uniform allocation fallback.
 
 
 @pytest.mark.parametrize("failure", ["identity", "inheritance", "inheritable", "unknown"])
@@ -126,7 +60,12 @@ def test_placeholder_probe_refusals_close_the_owned_file_once(monkeypatch, failu
         source.close()
 
 
-@pytest.mark.parametrize("failure", ["directory", "file", "zero_identity"])
+# [zero_identity] was superseded by decd7a04's redesign (lead ruling, decd7a04): an unusable identity now takes the
+# uniform fallback. [directory] is superseded with it (rc-030 fix round, lead ruling R2): the placeholder makes no
+# directory any more, and an unavailable placeholder falls back to the null device without refusing stdin
+# (test_stdin_placeholder_lifecycle's test_unavailable_unique_placeholder_falls_back_without_refusing_stdin); the copy
+# is still checked non-inheritable, so a child gets no caller stdin either way.
+@pytest.mark.parametrize("failure", ["file"])
 def test_placeholder_allocation_refusals_leave_no_owned_resource(monkeypatch, failure):
     owner = stdio._InputDescriptor()
     directories, slots, closes = [], [], []

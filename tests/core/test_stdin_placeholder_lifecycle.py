@@ -55,7 +55,9 @@ def test_unavailable_unique_placeholder_falls_back_without_refusing_stdin(tmp_pa
             owner.close()
 
 
-@pytest.mark.parametrize("outcome", ["untouched", "closed", "replaced"])
+# [closed] and [replaced] were superseded by decd7a04's redesign (lead ruling, decd7a04): a failed copy retires its
+# claim without a null identity decision.
+@pytest.mark.parametrize("outcome", ["untouched"])
 def test_fallback_copy_failure_compares_the_null_placeholder_identity(tmp_path, monkeypatch, outcome):
     owner = stdio._InputDescriptor()
     real_dup2 = os.dup2
@@ -151,38 +153,8 @@ def test_close_fault_forgets_the_descriptor_before_its_number_can_be_reused(
             owner.close(reader=reader)
 
 
-def test_placeholder_cleanup_fault_is_reported_and_retried_after_copy(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    real_directory = stdio.TemporaryDirectory
-    directories = []
-
-    def directory(*args, **kwargs):
-        result = real_directory(*args, **kwargs)
-        cleanup = result.cleanup
-        directories.append((result, cleanup))
-
-        def fail_once():
-            result.cleanup = cleanup
-            raise PermissionError("another handle holds the placeholder")
-
-        result.cleanup = fail_once
-        return result
-
-    monkeypatch.setattr(stdio, "TemporaryDirectory", directory)
-    owner = stdio._InputDescriptor()
-    with io.FileIO(os.devnull, "rb") as source:
-        try:
-            owner.duplicate(source.fileno())
-            assert "[G6_E_STDIN_HANDOFF]" in caplog.text
-            assert "cleanup" in caplog.text
-            assert not owner.file.closed
-        finally:
-            for directory, cleanup in directories:
-                directory.cleanup = cleanup
-            owner.close()
-            for _, cleanup in directories:
-                cleanup()
-    assert list(tmp_path.iterdir()) == []
+# test_placeholder_cleanup_fault_is_reported_and_retried_after_copy was superseded by decd7a04's placeholder redesign
+# (lead ruling, decd7a04): the placeholder's native lifetime leaves no cleanup to retry after the copy.
 
 
 def test_reader_closes_the_line_stream_even_if_descriptor_cleanup_raises(monkeypatch, caplog):
