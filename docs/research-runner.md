@@ -2,8 +2,9 @@
 
 The wave-3 runner is an inactive, injected-capability implementation. It does not
 start a daemon, discover credentials, call a provider or change repository authority
-when imported. `self_training/autonomy.json` ships with every authority off. Tags,
-releases, PyPI and certificate issuance remain owner actions.
+when imported. `self_training/autonomy.json` does not ship: an absent file reads as every authority off,
+as a malformed one does, and only the owner writes it. Tags, releases, PyPI and certificate issuance remain owner
+actions.
 
 ## Host service
 
