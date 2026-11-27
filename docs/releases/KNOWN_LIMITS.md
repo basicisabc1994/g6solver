@@ -55,7 +55,7 @@ None. Each must-close finding on code that ships was closed before the tag:
 - `platform-trusted-host`: Local settings assume a trusted host. An agent with the account's unrestricted shell can
   change G6's settings, state and hooks.
 
-## Patch review and behaviour checks (16)
+## Patch review and behaviour checks (17)
 
 - `limit-environmental-failure`: A stated check that fails for a reason of the computer, not of the patch (such as git
   that cannot run inside the sandbox), is reported as `defect_detected`. The reply quotes the failure's own line as
@@ -78,6 +78,9 @@ None. Each must-close finding on code that ships was closed before the tag:
   reachable without running.
 - `limit-change-map-hierarchy`: Without test collection, the change map does not check a file selection for
   hierarchy skips.
+- `limit-collection-lookup-interpreter`: The change map's collection lookup inventory (the standard-library and
+  pytest lookups that collection can run) is verified for CPython 3.12.11 only. On another interpreter its tests skip,
+  so whether the inventory is complete there is not shown.
 - `limit-tier2-collection`: One test file that cannot be collected turns the whole batch of tests that touch the
   change into a collection error.
 - `limit-receipt-path-tail`: G6 issues no test receipt when a module loaded from outside the repository has the same

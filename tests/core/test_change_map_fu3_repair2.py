@@ -183,8 +183,17 @@ def test_lookup_table_covers_installed_pytest_source():
                     relative, node.lineno, "dynamic lookup")
 
 
+def _pinned_interpreter(table) -> None:
+    """The table pins the stdlib sources and inspect.py lines of one interpreter (3e837f3a); on any other, it is not
+    verified (KNOWN_LIMITS limit-collection-lookup-interpreter)."""
+    if tuple(sys.version_info[:3]) != table["python_version"]:
+        pytest.skip(f"collection lookup inventory pinned to CPython {'.'.join(map(str, table['python_version']))}; "
+                    f"this is {'.'.join(map(str, sys.version_info[:3]))} (limit-collection-lookup-interpreter)")
+
+
 def test_lookup_table_pins_transitive_stdlib_sources():
     table = effects.PYTEST_COLLECTION_LOOKUPS
+    _pinned_interpreter(table)
     assert tuple(sys.version_info[:3]) == table["python_version"]
     assert {relative for relative, _ in table["stdlib_sources"]} == {"inspect.py", "unittest/loader.py"}
     for relative, digest in table["stdlib_sources"]:
@@ -209,6 +218,7 @@ def test_lookup_table_pins_transitive_stdlib_sources():
 
 def test_lookup_table_binds_indirect_names_to_call_sites():
     table = effects.PYTEST_COLLECTION_LOOKUPS
+    _pinned_interpreter(table)
     for relative, helper, argument, lookup_lines, anchors in table["indirect"]:
         source = (Path(sysconfig.get_path("stdlib")) / relative if relative == "inspect.py" else
                   distribution("pytest").locate_file(relative))
