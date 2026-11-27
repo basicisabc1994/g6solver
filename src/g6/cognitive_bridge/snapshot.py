@@ -34,6 +34,7 @@ nothing is honoured.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import decode as _decode_limited, is_undecodable_record
 from g6.core.decoder_limits import json_value as _decode_json
 
 import collections.abc
@@ -1030,9 +1031,16 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
     try:
-        parsed = _decode_json(reply, object_pairs_hook=_unique)
+        parsed = _decode_limited(reply, object_pairs_hook=_unique)
     except (RecursionError, MemoryError):   # the bridge's own refusal, never a translation it does not catch
         raise _too_deep("a model's reply") from None
+    except ValueError as exc:
+        # The shared decoder turns its parser's RecursionError/MemoryError into its limit refusal (62b6905f): that is
+        # the same reply nested past what the parser reads, refused with the bridge's own code. Any other
+        # ValueError (malformed JSON, a repeated key) keeps its own refusal.
+        if is_undecodable_record(exc) and isinstance(exc.__context__, (RecursionError, MemoryError)):
+            raise _too_deep("a model's reply") from None
+        raise
     if preflight is not None:
         preflight(parsed)
     return plain(parsed, where="a model's reply")
