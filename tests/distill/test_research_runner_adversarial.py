@@ -170,11 +170,11 @@ def test_daily_digest_appends_to_the_existing_remote_stream_on_later_days():
     commands = []
     def command(argv, **kwargs):
         commands.append(argv)
-        return 'a' * 40 if argv[:2] == ('git', 'rev-parse') else 'https://example.test/pr/7'
+        return 'a' * 40 if Path(argv[0]).name.lower() in {"git", "git.exe"} and argv[1:2] == ('rev-parse',) else 'https://example.test/pr/7'
     adapter = a.GhRepository(root='/missions/root', command=command, stop=lambda: False,
         session_trailers=('Co-Authored-By: Test <test@example.test>', 'Claude-Session: fixture'), pinned_issue=1,
         config=Autonomy(level='draft_pr', draft_pr=True, push=True, digest=True))
     adapter.publish_digest('2026-11-18', '# Day one\n')
     adapter.publish_digest('2026-11-19', '# Day two\n')
-    assert len([c for c in commands if c[:2] == ('git', 'fetch')]) == 2
-    assert not any(c[:3] == ('git', 'switch', '-c') for c in commands)
+    assert len([c for c in commands if Path(c[0]).name.lower() in {"git", "git.exe"} and c[1:2] == ('fetch',)]) == 2
+    assert not any(Path(c[0]).name.lower() in {"git", "git.exe"} and c[1:3] == ('switch', '-c') for c in commands)

@@ -191,8 +191,8 @@ def test_git_gh_adapter_uses_only_injected_commands_and_refuses_head_only_merge(
         config=__import__('g6.self_training.autonomy_gate', fromlist=['Autonomy']).Autonomy(
             level='draft_pr', push=True, draft_pr=True))
     assert adapter.propose(change, labels=('protected-change',)).startswith('https://')
-    assert any(argv[:3] == ('git', 'worktree', 'add') for argv, _, _ in recorded)
-    assert any(argv[:3] == ('git', 'push', '--') for argv, _, _ in recorded)
+    assert any(Path(argv[0]).name.lower() in {"git", "git.exe"} and argv[1:3] == ('worktree', 'add') for argv, _, _ in recorded)
+    assert any(Path(argv[0]).name.lower() in {"git", "git.exe"} and argv[1:3] == ('push', '--') for argv, _, _ in recorded)
     pr = [argv for argv, _, _ in recorded if argv[:3] == ('gh', 'pr', 'create')][0]
     assert '--draft' in pr and '--body-file' in pr
     with pytest.raises(ValueError, match='exact|squash'):

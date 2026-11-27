@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Git/gh command plans through an explicitly injected host command capability.
 
-No subprocess, shell, network or executable discovery. Every command is argv;
+No subprocess, shell or network. Every command is argv, and git is the one the person installed (found on PATH by
+g6.core.outside.find_program, never in the current folder);
 multiline bodies/commit messages use stdin via --body-file/--file. The command
 port owns authentication, exit checking, confinement and exact-commit custody.
 Do not construct this adapter inside an untrusted engineer mission.
@@ -12,6 +13,7 @@ import re
 
 from g6.core import stop as global_stop
 from g6.core.ledger import digest
+from g6.core.outside import find_program
 from g6.self_training.merge_gate import Change, normal
 from g6.self_training.autonomy_gate import authority
 
@@ -40,6 +42,12 @@ class GhRepository:
             raise ValueError('repository push/draft authority is off')
         return self.command(tuple(argv), cwd=cwd or self.root, stdin=stdin)
 
+    def _git(self, *args, cwd=None, stdin=None):
+        program = find_program('git')
+        if program is None:
+            raise ValueError('[G6_E_GIT_MISSING_BINARY] no git on PATH; the current folder is never searched')
+        return self._run((program, *args), cwd=cwd, stdin=stdin)
+
     @staticmethod
     def _public(text):
         if re.search(r'(?i)([a-z]:[\\/]|/(?:users|home)/|BEGIN [A-Z ]*PRIVATE KEY)', text):
@@ -47,16 +55,16 @@ class GhRepository:
 
     def _worktree(self, branch, parent, key):
         path = str(PurePosixPath(self.root.replace('\\', '/')) / '.claude/worktrees' / ('auto-' + key[:20]))
-        self._run(('git', 'worktree', 'add', '--detach', '--', path, parent))
+        self._git('worktree', 'add', '--detach', '--', path, parent)
         if branch is not None:
-            self._run(('git', 'switch', '-c', branch), cwd=path)
+            self._git('switch', '-c', branch, cwd=path)
         return path
 
     def _publish(self, path, branch, message, body, labels=()):
         self._public(message + body + '\n'.join(self.trailers))
-        self._run(('git', 'commit', '--file', '-'), cwd=path,
+        self._git('commit', '--file', '-', cwd=path,
                   stdin=message + '\n\n' + '\n'.join(self.trailers) + '\n')
-        self._run(('git', 'push', '--', 'origin', f'HEAD:refs/heads/{branch}'), cwd=path)
+        self._git('push', '--', 'origin', f'HEAD:refs/heads/{branch}', cwd=path)
         argv = ['gh', 'pr', 'create', '--draft', '--base', 'main', '--head', branch,
                 '--title', message, '--body-file', '-']
         for label in labels:
@@ -82,7 +90,7 @@ class GhRepository:
                 tofile='b/' + path if file.after is not None else '/dev/null'))
         self._public('\n'.join(self.trailers))
         worktree = self._worktree(change.branch, change.parent_commit, change.sha256)
-        self._run(('git', 'apply', '--index', '-'), cwd=worktree, stdin=''.join(patch))
+        self._git('apply', '--index', '-', cwd=worktree, stdin=''.join(patch))
         return self._publish(worktree, change.branch, f'G6 proposal {change.sha256[:12]}',
             f'Change: {change.sha256}\nClaim: {change.claim}\nHost evaluation and certificate required before merge.\n', labels)
 
@@ -100,7 +108,7 @@ class GhRepository:
     def revert_pr(self, change, *, evidence, key):
         branch = 'claude/g6-auto/revert-' + key[:20]
         path = self._worktree(branch, change.merge_commit, key)
-        self._run(('git', 'revert', '--no-commit', change.merge_commit), cwd=path)
+        self._git('revert', '--no-commit', change.merge_commit, cwd=path)
         return self._publish(path, branch, f'G6 revert generation {evidence["generation"]}',
             f'Reverted commit: {change.merge_commit}\nMeasured regression receipt: {evidence["receipt"]}\n', ('regression',))
 
@@ -116,14 +124,14 @@ class GhRepository:
         key = digest({'day': day, 'body': body})
         # The owner bootstraps this fixed stream once. Start each later day from
         # its fresh tip, commit detached and push fast-forward, without resets.
-        self._run(('git', 'fetch', '--no-tags', 'origin', 'refs/heads/claude/g6-auto/digest'))
-        parent = self._run(('git', 'rev-parse', '--verify', 'FETCH_HEAD^{commit}')).strip()
+        self._git('fetch', '--no-tags', 'origin', 'refs/heads/claude/g6-auto/digest')
+        parent = self._git('rev-parse', '--verify', 'FETCH_HEAD^{commit}').strip()
         if not re.fullmatch(r'[0-9a-f]{40}([0-9a-f]{24})?', parent):
             raise ValueError('digest stream has no checked commit tip')
         path = self._worktree(None, parent, key)
         target = 'validation/distill/digest/' + day + '.md'
         patch = ''.join(unified_diff([], body.splitlines(keepends=True), fromfile='/dev/null', tofile='b/' + target))
-        self._run(('git', 'apply', '--index', '-'), cwd=path, stdin=patch)
+        self._git('apply', '--index', '-', cwd=path, stdin=patch)
         pr = self._publish(path, 'claude/g6-auto/digest', f'G6 daily digest {day}', body, ('protected-change',))
         self._run(('gh', 'issue', 'comment', str(self.pinned_issue), '--body-file', '-'),
                   stdin=f'Daily research digest {day}: {pr}\n')
