@@ -79,7 +79,7 @@ None. Each must-close finding on code that ships was closed before the tag:
 - `limit-change-map-hierarchy`: Without test collection, the change map does not check a file selection for
   hierarchy skips.
 - `limit-collection-lookup-interpreter`: The change map's collection lookup inventory (the standard-library and
-  pytest lookups that collection can run) is verified for CPython 3.12.11 only. On another interpreter its tests skip,
+  pytest lookups that collection can run) is checked against CPython 3.12.11 only. On another interpreter its tests skip,
   so whether the inventory is complete there is not shown.
 - `limit-changemap-abcmeta-uncertain`: On Linux, a test class whose metaclass is abc.ABCMeta may get the change
   map's uncertain instead of an answer. Uncertain is the conservative reading, never a wrong one; the likely cause,
