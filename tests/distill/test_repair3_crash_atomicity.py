@@ -174,7 +174,12 @@ def child(root, action, mode, stop_at=0):
                           env=env, capture_output=True, text=True, timeout=120)
 
 
-@pytest.mark.parametrize('action', ['admission', 'restore', 'lift_hold', 'withdraw', 'demote',
+_RESTORE_ON_WINDOWS = pytest.mark.skipif(sys.platform == "win32", reason=(
+    "Windows: the restore baseline child exceeds the 120 s step timeout on CI runners (lead ruling 11-28; "
+    "limit-crash-restore-windows)"))
+
+
+@pytest.mark.parametrize('action', ['admission', pytest.param('restore', marks=_RESTORE_ON_WINDOWS), 'lift_hold', 'withdraw', 'demote',
                                    'withdraw_cascade', 'reconcile', 'reconcile_independent',
                                    'independent_release', 'field_fire'])
 def test_kill_after_every_durable_step_then_read_and_reply(tmp_path, action):

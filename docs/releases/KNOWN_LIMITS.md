@@ -439,7 +439,7 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
   ended `insufficient_evidence` or `not_run` in two test files, as they did before the line's changes; this has not
   been run on Linux.
 
-## Distillation and the learning library (11)
+## Distillation and the learning library (12)
 
 - `review-dfufu3r4#1`: After an interrupted restore, the reply can say recovery completed while G6's intent file is
   still on disk, so the next request is refused until it is cleared.
@@ -467,6 +467,9 @@ except `review-split3#pbr` and the three `review-mvp-s14` lines is (repair lande
   fixture than its custody binding is refused (`NO_ENVIRONMENT`) and not counted, so a claim resting on it is
   inconclusive before any contamination is recorded. The 36 field-only cases of the contamination inventory, which
   expect that claim to be supported first, are marked as expected failures; rewriting them is planned for 0.3.1.
+- `limit-crash-restore-windows`: The distill crash-kill test's restore case (kill after every durable step, then
+  read and reply) runs on Linux CI only: on Windows its baseline child exceeds the 120 s step timeout on CI runners,
+  so a Windows-only kill or restore defect would not be caught.
 
 ## Release copy checks, repository tooling (4)
 
