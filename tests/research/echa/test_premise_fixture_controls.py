@@ -51,6 +51,37 @@ def matching_ledger(original, location):
     return led
 
 
+def disagreeing_ledger(original, role, location):
+    """Replay the tracked builder's shape with the disagreeing pair set explicitly on the role's receipt.
+
+    That receipt seals the dirty fixture in its custody binding and the clean one in its repeated field (binding
+    cases), or the reverse (field cases); every other receipt holds the clean fixture in both. The tracked builder's
+    own declarations are not relied on: since d2629128 its binding cases declare the bound fixture, so the pair agrees.
+    Exact-record references are updated; no stored ledger is edited.
+    """
+    bound, declared = (F["DIRTY"], H["FX"]) if location == "binding" else (H["FX"], F["DIRTY"])
+    led = Ledger()
+    hashes = {}
+    for entry in original.entries():
+        body = entry["body"]
+        if entry["kind"] == "standard":
+            led.add_standard(StandardRef.from_dict(body))
+        elif entry["kind"] == "vault":
+            led.add_vault(body["vault_id"], body["digest"], files=body["files"], roots=body["roots"])
+        else:
+            assert entry["kind"] == "evidence"
+            rec = EvidenceRecord.from_dict(body)
+            target = rec.evidence_id == ROLE_IDS[role]
+            binding = json.loads(rec.source_ref)
+            binding["fixture_sha256"] = bound if target else H["FX"]
+            changed = replace(rec, source_ref=H["canonical"](binding),
+                              fixture_version=declared if target else H["FX"])
+            changed = replace(changed, applies_to_sha256=hashes.get(rec.applies_to_sha256, rec.applies_to_sha256))
+            hashes[rec.sha256] = changed.sha256
+            led.add_evidence(changed)
+    return led
+
+
 @pytest.mark.parametrize("role", F["ROLES"])
 @pytest.mark.parametrize("location", ["binding", "field"])
 @pytest.mark.parametrize("category", EXECUTABLE)
@@ -89,7 +120,7 @@ def test_matching_sealed_fixture_supports_every_receipt_role(role, location, cat
 @pytest.mark.parametrize("location", ["binding", "field"])
 @pytest.mark.parametrize("category", EXECUTABLE)
 def test_two_seals_do_not_make_disagreeing_fixture_identities_match(role, location, category):
-    led = F["_ledger"](role, location, category)
+    led = disagreeing_ledger(F["_ledger"](role, location, category), role, location)
     rec = EvidenceRecord.from_dict(led.get("evidence", ROLE_IDS[role]))
     parts, refused = about(rec)
     expected = (F["DIRTY"], H["FX"]) if location == "binding" else (H["FX"], F["DIRTY"])
