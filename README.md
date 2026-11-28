@@ -71,7 +71,7 @@ A language model is a stochastic generator, and it cannot supply reliable monito
   al., 2022), but not reliably for any given answer.
 - Without outside feedback, they generally cannot correct their own reasoning, and sometimes get worse (Huang et
   al., 2024).
-- When a model critiques its own answers, performance drops; a sound external verifier helps (Stechly et al., 2024).
+- When a model critiques its own answers, performance drops; a sound external checker helps (Stechly et al., 2024).
 - Their written reasoning can leave out what actually drove the answer (Turpin et al., 2023).
 - Under a formal definition, hallucination cannot be fully removed (Xu et al., 2024). Training and evaluation that
   reward guessing over admitting uncertainty encourage it (Kalai et al., 2025).
@@ -93,8 +93,8 @@ References:
 - Kadavath, S., et al. (2022). Language models (mostly) know what they know. arXiv:2207.05221.
 - Huang, J., Chen, X., Mishra, S., Zheng, H. S., Yu, A. W., Song, X., & Zhou, D. (2024). Large language models cannot
   self-correct reasoning yet. *ICLR 2024*. arXiv:2310.01798.
-- Stechly, K., Valmeekam, K., & Kambhampati, S. (2024). On the self-verification limitations of large language models
-  on reasoning and planning tasks. arXiv:2402.08115.
+- Stechly, K., Valmeekam, K., & Kambhampati, S. (2024). On the limits of large language models critiquing their own
+  answers on reasoning and planning tasks (title paraphrased). arXiv:2402.08115.
 - Turpin, M., Michael, J., Perez, E., & Bowman, S. R. (2023). Language models don't always say what they think:
   Unfaithful explanations in chain-of-thought prompting. *NeurIPS 2023*. arXiv:2305.04388.
 - Xu, Z., Jain, S., & Kankanhalli, M. (2024). Hallucination is inevitable: An innate limitation of large language
