@@ -59,6 +59,48 @@ conditional: each holds only while its condition holds. None of them is a measur
 | Where a known algorithm or solver exists, running it beats a model's approximation, and some algorithms carry bounds of their own ([algorithms](https://g6solver.com/essays/algorithms-missing-intelligence/), [formal verification](https://g6solver.com/essays/formal-verification-safety-net/)) | G6 hands a formal statement to a solver (SMT, model checking, operations research) instead of asking a model to guess the answer | `g6_invoke` on `formal`, `optimisation` and `model_checking`. TLA+, Prolog, Lean and synthesis ops are sensitive and run only once you allow them. When an op refuses at a limit it declares, see [the agentic override](#how-an-agent-uses-g6-and-the-agentic-override) | the problem has a formal statement and the statement is right. The model's own part is still judged only by tests and evaluation |
 | A limit enforced outside the model holds whatever the model intends ([alignment](https://g6solver.com/essays/alignment-is-engineering/), [move fast and break things](https://g6solver.com/essays/move-fast-break-things/)) | Sensitive operations need your permission, untrusted code runs inside an operating-system boundary, and a cloud model gets data only with your grant | Enforced on every MCP call; grants go through `g6_cloud_grant` | the boundary is present (`g6 doctor` says whether it is). Code running in G6's own process is outside it |
 
+### Why this needs an architecture: metacognition, not a bigger model
+
+Metacognition is a monitoring process paired with a control process. Monitoring judges how well the work is going,
+and control acts on that judgement (Nelson & Narens, 1990; Flavell, 1979). Accurate self-assessment is the
+monitoring half. Preventing overclaims is control acting on what the monitor reports. How good a system's
+metacognition is depends on how reliably it judges its own performance (Fleming & Lau, 2014).
+
+A language model is a stochastic generator, and it cannot supply reliable monitoring of itself:
+- Models carry some knowledge of what they know, calibrated on average on suitably formatted questions (Kadavath et
+  al., 2022), but not reliably for any given answer.
+- Without outside feedback, they generally cannot correct their own reasoning, and sometimes get worse (Huang et
+  al., 2024).
+- When a model critiques its own answers, performance drops; a sound external verifier helps (Stechly et al., 2024).
+- Their written reasoning can leave out what actually drove the answer (Turpin et al., 2023).
+- Under a formal definition, hallucination cannot be fully removed (Xu et al., 2024). Training and evaluation that
+  reward guessing over admitting uncertainty encourage it (Kalai et al., 2025).
+
+So an LLM alone cannot guarantee accurate self-assessment or prevent its own overclaims. The monitor and the control
+have to sit outside the generator. That is G6's architecture:
+- **Monitoring:** checks the producer did not write, run inside an operating-system boundary, with a record of what
+  was observed. It never relies on the model's account of its own work.
+- **Control:** labels G6 never upgrades on its own, held-out gates, and stopping to escalate to a person.
+
+The model still does the reasoning. G6 makes what it claims answerable to evidence.
+
+References:
+- Flavell, J. H. (1979). Metacognition and cognitive monitoring: A new area of cognitive-developmental inquiry.
+  *American Psychologist*, 34(10), 906–911.
+- Nelson, T. O., & Narens, L. (1990). Metamemory: A theoretical framework and new findings. *Psychology of Learning
+  and Motivation*, 26, 125–173.
+- Fleming, S. M., & Lau, H. C. (2014). How to measure metacognition. *Frontiers in Human Neuroscience*, 8, 443.
+- Kadavath, S., et al. (2022). Language models (mostly) know what they know. arXiv:2207.05221.
+- Huang, J., Chen, X., Mishra, S., Zheng, H. S., Yu, A. W., Song, X., & Zhou, D. (2024). Large language models cannot
+  self-correct reasoning yet. *ICLR 2024*. arXiv:2310.01798.
+- Stechly, K., Valmeekam, K., & Kambhampati, S. (2024). On the self-verification limitations of large language models
+  on reasoning and planning tasks. arXiv:2402.08115.
+- Turpin, M., Michael, J., Perez, E., & Bowman, S. R. (2023). Language models don't always say what they think:
+  Unfaithful explanations in chain-of-thought prompting. *NeurIPS 2023*. arXiv:2305.04388.
+- Xu, Z., Jain, S., & Kankanhalli, M. (2024). Hallucination is inevitable: An innate limitation of large language
+  models. arXiv:2401.11817.
+- Kalai, A. T., Nachum, O., Vempala, S. S., & Zhang, E. (2025). Why language models hallucinate. arXiv:2509.04664.
+
 ### How an agent uses G6, and the agentic override
 
 Two different things are easy to confuse here.
