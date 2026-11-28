@@ -102,8 +102,25 @@ your own work. G6's own studies, misses included, are on the [Research](site/doc
 ### How G6 adapts itself: antifragility and second-order learning
 
 G6's design principle is that a stressor becomes a governed adaptation, never a weaker gate. A stressor here is a
-failure, a refusal, a false alarm or a defect a review reproduces. G6 adapts at three levels, and each level is
-reachable over MCP:
+failure, a refusal, a false alarm or a defect a review reproduces.
+
+**G6 diagnoses its own failures and finds what would have to change.**
+- Every failure is reported with a stable `G6_E_*` code and a repair step. `g6_select` turns a refusal into the next
+  valid call.
+- Repeated failures are diagnosed into a cause and its remedies (`metaharness_diagnose`, `g6.metaharness.recovery`).
+- What limits improvement is found by bottleneck analysis built on Eliyahu Goldratt's Theory of Constraints
+  (`g6.self_maintenance.constraints`). The work is treated as a serial process, each stage is measured from
+  independent observations rather than a model's estimate, and the five focusing steps are applied:
+  1. identify the constraint;
+  2. exploit it;
+  3. subordinate everything else to it;
+  4. elevate it;
+  5. repeat, because the bottleneck moves.
+
+  Safety and authorization are hard conditions, never traded for a score. Because the bottleneck shifts, one passing
+  trial never establishes lasting improvement.
+
+G6 adapts at three levels, and each level is reachable over MCP:
 
 1. **The task.** In the review-and-repair loop, each defect G6 reproduces becomes a stated check for the next round,
    so a fix has to pass the original counterexample (`g6_review_patch`, `g6_review_until_clean`).
@@ -115,7 +132,7 @@ reachable over MCP:
      cases, getting your approval, and keeping rollback available (`metaharness_*`).
    - **The self-improvement loop repeats the cycle on a folder you enrol** (`g6_improve_*`). Each tick:
      - measures the work;
-     - finds the cause that costs the most cases;
+     - identifies the constraint: the cause that costs the most cases, found by the Theory-of-Constraints analysis;
      - proposes changes within an editable schema;
      - gates the best one on held-out cases;
      - adopts it in its own workspace.

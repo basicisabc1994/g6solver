@@ -19,6 +19,10 @@ Adapt, never weaken. A failure, refusal, false alarm or reproduced defect is a s
 - record it with `g6_failure_record` (learn);
 - or let the loop (improve) or `metaharness_*` (fit) propose a harness change.
 
+G6 diagnoses its own failures. Each refusal carries a code and a repair step. `metaharness_diagnose` names a
+repeated failure's cause and remedies. Improvement follows Goldratt's Theory of Constraints: find the bottleneck,
+exploit it, subordinate the rest, elevate it, and repeat, because the bottleneck moves.
+
 A change gains authority only through a held-out gate and the person. Never lower a gate, edit a judge or held-out
 data, or treat G6's reading of itself as evidence.
 
