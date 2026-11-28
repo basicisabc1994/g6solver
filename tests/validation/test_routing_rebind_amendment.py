@@ -89,7 +89,8 @@ def test_every_route_is_bound_as_it_stands_and_no_task_changed():
     assert {route: row["before"] for route, row in record["routes"].items() if row["before"]} == before["routes"]
     assert now["tasks"] == before["tasks"]
     learn = freeze.read(LEARN)["routes"]
-    assert run.load_tasks()["routes"] == {**now["routes"], "review": freeze.read(REVIEW)["routes"]["review"]["after"],
+    # "review" is the release amendment's (RELEASE, below), which replaced REVIEW's
+    assert run.load_tasks()["routes"] == {**now["routes"],
                                           **{route: row["after"] for route, row in learn.items()},
                                           "question": freeze.read(QUESTION)["routes"]["question"]["after"],
                                           "workflow": freeze.read(WF27)["routes"]["workflow"]["after"],

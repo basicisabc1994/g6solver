@@ -150,7 +150,8 @@ markers = ["heavy: slow or resource-hungry; run weekly in CI"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = ["src/g6/**/vendor"]
+# Reviewer-evidence folders are kept as the reviewer wrote them and run apart from the suite, never blocking (ci.yml).
+extend-exclude = ["src/g6/**/vendor", "tests/_review_*"]
 
 [tool.ruff.lint]
 # Correctness rules only; style is not enforced on code ported from the archive.
