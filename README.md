@@ -46,6 +46,187 @@ These replies carry `completion_state`; discovery replies such as `g6_components
 - **Small parts.** 40 components in the core harness, each usable on its own, extensions that join the library one at
   a time, and 11 bundles that package them for one problem each.
 
+## Design guarantees, and what they depend on
+
+G6's design follows the arguments in the [essays](https://g6solver.com/essays/). The guarantees they give are
+conditional: each holds only while its condition holds. None of them is a measured improvement for your application.
+
+| Design guarantee (essay) | How G6 applies it | Over MCP | It holds only if |
+|---|---|---|---|
+| A checker kept separate from the generator catches the work that fails its rules, whatever produced the work ([hallucination](https://g6solver.com/essays/hallucination-is-design/), [map and territory](https://g6solver.com/essays/map-is-not-territory/)) | A label needs a check the producer did not write. Patch review runs the tests instead of reading the agent's account | `g6_review_patch` (allowed by `g6 setup`) | the check is correct and covers the property that matters. A checker built on the same kind of model as the generator shares its blind spots |
+| Self-modification is safe when it happens in a layer that can be inspected, reversed and bounded, and that cannot edit its own checks ([self-improvement](https://g6solver.com/essays/self-improvement-safety/), [antifragility](https://g6solver.com/essays/antifragile-ai/)) | A change to G6's own behaviour passes a held-out gate and can be rolled back. The loop cannot edit its gates, judges, held-out data or frozen files | `metaharness_propose`, `metaharness_evaluate`, `metaharness_approve` (asks you) and `metaharness_rollback` | the gate's tests and invariants are specified correctly and kept isolated. A regression they do not test for gets through |
+| Learning kept outside a model's weights cannot overwrite what the model already knows ([learning without forgetting](https://g6solver.com/essays/learning-without-forgetting/)) | G6 learns as checks, profiles and library entries. A LoRA adapter is a separate file: the base model's files are compared before and after training, and any change refuses the result | `g6_failure_record` and `g6_distill_start`; LoRA training is Python-only | the base weights stay frozen, and what is added is reviewed and can be removed |
+| Where a known algorithm or solver exists, running it beats a model's approximation, and some algorithms carry bounds of their own ([algorithms](https://g6solver.com/essays/algorithms-missing-intelligence/), [formal verification](https://g6solver.com/essays/formal-verification-safety-net/)) | G6 hands a formal statement to a solver (SMT, model checking, operations research) instead of asking a model to guess the answer | `g6_invoke` on `formal`, `optimisation` and `model_checking`. TLA+, Prolog, Lean and synthesis ops are sensitive and run only once you allow them. When an op refuses at a limit it declares, see [the agentic override](#how-an-agent-uses-g6-and-the-agentic-override) | the problem has a formal statement and the statement is right. The model's own part is still judged only by tests and evaluation |
+| A limit enforced outside the model holds whatever the model intends ([alignment](https://g6solver.com/essays/alignment-is-engineering/), [move fast and break things](https://g6solver.com/essays/move-fast-break-things/)) | Sensitive operations need your permission, untrusted code runs inside an operating-system boundary, and a cloud model gets data only with your grant | Enforced on every MCP call; grants go through `g6_cloud_grant` | the boundary is present (`g6 doctor` says whether it is). Code running in G6's own process is outside it |
+
+### Why this needs an architecture: metacognition, not a bigger model
+
+Metacognition is a monitoring process paired with a control process. Monitoring judges how well the work is going,
+and control acts on that judgement (Nelson & Narens, 1990; Flavell, 1979). Accurate self-assessment is the
+monitoring half. Preventing overclaims is control acting on what the monitor reports. How good a system's
+metacognition is depends on how reliably it judges its own performance (Fleming & Lau, 2014).
+
+A language model is a stochastic generator, and it cannot supply reliable monitoring of itself:
+- Models carry some knowledge of what they know, calibrated on average on suitably formatted questions (Kadavath et
+  al., 2022), but not reliably for any given answer.
+- Without outside feedback, they generally cannot correct their own reasoning, and sometimes get worse (Huang et
+  al., 2024).
+- When a model critiques its own answers, performance drops; a sound external checker helps (Stechly et al., 2024).
+- Their written reasoning can leave out what actually drove the answer (Turpin et al., 2023).
+- Under a formal definition, hallucination cannot be fully removed (Xu et al., 2024). Training and evaluation that
+  reward guessing over admitting uncertainty encourage it (Kalai et al., 2025).
+
+So an LLM alone cannot guarantee accurate self-assessment or prevent its own overclaims. The monitor and the control
+have to sit outside the generator. That is G6's architecture:
+- **Monitoring:** checks the producer did not write, run inside an operating-system boundary, with a record of what
+  was observed. It never relies on the model's account of its own work.
+- **Control:** labels G6 never upgrades on its own, held-out gates, and stopping to escalate to a person.
+
+The model still does the reasoning. G6 makes what it claims answerable to evidence.
+
+References:
+- Flavell, J. H. (1979). Metacognition and cognitive monitoring: A new area of cognitive-developmental inquiry.
+  *American Psychologist*, 34(10), 906–911.
+- Nelson, T. O., & Narens, L. (1990). Metamemory: A theoretical framework and new findings. *Psychology of Learning
+  and Motivation*, 26, 125–173.
+- Fleming, S. M., & Lau, H. C. (2014). How to measure metacognition. *Frontiers in Human Neuroscience*, 8, 443.
+- Kadavath, S., et al. (2022). Language models (mostly) know what they know. arXiv:2207.05221.
+- Huang, J., Chen, X., Mishra, S., Zheng, H. S., Yu, A. W., Song, X., & Zhou, D. (2024). Large language models cannot
+  self-correct reasoning yet. *ICLR 2024*. arXiv:2310.01798.
+- Stechly, K., Valmeekam, K., & Kambhampati, S. (2024). On the limits of large language models critiquing their own
+  answers on reasoning and planning tasks (title paraphrased). arXiv:2402.08115.
+- Turpin, M., Michael, J., Perez, E., & Bowman, S. R. (2023). Language models don't always say what they think:
+  Unfaithful explanations in chain-of-thought prompting. *NeurIPS 2023*. arXiv:2305.04388.
+- Xu, Z., Jain, S., & Kankanhalli, M. (2024). Hallucination is inevitable: An innate limitation of large language
+  models. arXiv:2401.11817.
+- Kalai, A. T., Nachum, O., Vempala, S. S., & Zhang, E. (2025). Why language models hallucinate. arXiv:2509.04664.
+
+### How an agent uses G6, and the agentic override
+
+Two different things are easy to confuse here.
+
+- **Your agent drives G6.** This is how G6 is used. Over MCP, your agent:
+  - calls G6's tools (70 after `g6 setup`);
+  - builds each next call from G6's own replies: the server's instructions, the call templates `g6_select` returns,
+    and the `repair` step a refusal carries;
+  - stops and tells you whenever a reply says only you can decide.
+
+  The model reasoning is your agent's. G6 supplies the checks, the limits and the record around it.
+  `tests/e2e/test_fresh_journey.py` runs a whole first session this way, from a client that has granted nothing.
+- **The agentic override lets a model fill in part of G6's own computation.** It does this only where a component
+  declares a part as replaceable. `g6_agentic_run`:
+  1. runs the original operation first;
+  2. when the operation refuses at a limit it declares, or fails in its own code, lets a model propose that one part,
+     in a confined run;
+  3. requires the proposal to pass the operation's own validator and checker.
+
+  The answer is `qualified-draft` at best, is shown beside the original, and never counts as evidence. `g6_select`
+  routes the agent there after such a refusal. Today one part opts in: synthesis's float-grid hole.
+
+**Why the override is narrow, by design.** G6's guarantees come from keeping the checker apart from what produced the
+work. A model filling in part of a component sits inside that component. So:
+- only a pure-computation part with its own validator may opt in;
+- trust doors, permissions and the protected set can never be overridden;
+- the original answer is kept beside the substitute, so a person can see what changed.
+
+A wider override would trade away the separation the checks depend on. G6 widens it part by part, only where a
+validator can still judge the result.
+
+If your client lists only a few G6 tools, its registration predates this version: run `g6 setup` again from this
+checkout (remove the old `g6` entry first) and restart the client.
+
+**What decides how much G6 helps you.** The guarantees above shape how G6 is built; they do not set how much it helps
+in your application. That depends heavily on what you give it: the quality of your data, of your requirements and
+of the tests that state them. It also depends on the guidance a person gives: which checks matter, where the limits
+sit, and what to approve. With weak tests or vague requirements, G6 checks the wrong thing correctly. Measure G6 on
+your own work. G6's own studies, misses included, are on the [Research](site/docs/research.md) page.
+
+### How G6 adapts itself: antifragility and second-order learning
+
+G6's design principle is that a stressor becomes a governed adaptation, never a weaker gate. A stressor here is a
+failure, a refusal, a false alarm or a defect a review reproduces.
+
+**G6 diagnoses its own failures and finds what would have to change.**
+- Every failure is reported with a stable `G6_E_*` code and a repair step. `g6_select` turns a refusal into the next
+  valid call.
+- Repeated failures are diagnosed into a cause and its remedies (`metaharness_diagnose`, `g6.metaharness.recovery`).
+- What limits improvement is found by bottleneck analysis built on Eliyahu Goldratt's Theory of Constraints
+  (`g6.self_maintenance.constraints`). The work is treated as a serial process, each stage is measured from
+  independent observations rather than a model's estimate, and the five focusing steps are applied:
+  1. identify the constraint;
+  2. exploit it;
+  3. subordinate everything else to it;
+  4. elevate it;
+  5. repeat, because the bottleneck moves.
+
+  Safety and authorization are hard conditions, never traded for a score. Because the bottleneck shifts, one passing
+  trial never establishes lasting improvement.
+
+G6 adapts at three levels, and each level is reachable over MCP:
+
+1. **The task.** In the review-and-repair loop, each defect G6 reproduces becomes a stated check for the next round,
+   so a fix has to pass the original counterexample (`g6_review_patch`, `g6_review_until_clean`).
+2. **The harness.**
+   - **Failures become checks.** A failure you report (`g6_failure_record`) can be distilled into a candidate
+     checking method (`g6_distill_start`). The method gains authority only through a held-out acceptance gate, with
+     its precision measured, and you can demote or withdraw it (`g6_library_decide`).
+   - **Workflows are fitted and gated.** A workflow is fitted by proposing a change, evaluating it on held-out
+     cases, getting your approval, and keeping rollback available (`metaharness_*`).
+   - **The self-improvement loop repeats the cycle on a folder you enrol** (`g6_improve_*`). Each tick:
+     - measures the work;
+     - identifies the constraint: the cause that costs the most cases, found by the Theory-of-Constraints analysis;
+     - proposes changes within an editable schema;
+     - gates the best one on held-out cases;
+     - adopts it in its own workspace.
+3. **Second order: the loop learning about its own learning.** Each tick first reads the loop's own records and says
+   whether the work or the loop itself is what limits progress (`g6.metaharness.reflex`).
+   - Each diagnosis is a prediction that the next tick scores (`g6.metaharness.tick_rca`).
+   - Repeated mistakes are counted (`g6.metaharness.lessons`).
+   - A constraint stuck for three cycles is named, with what must change: the method, then the level, then the
+     frame.
+
+   The loop may name its gates, judges, held-out data or stop as the constraint, but it can never edit them, because
+   the cheapest way through a gate is to lower it. Today this second-order reading is recorded for a person to read.
+   It does not yet change what the loop does next.
+
+### Does G6 work in practice? What the evidence shows
+
+- **The mechanics work, as tested.** CI runs a whole first session over MCP from a client that has granted nothing
+  (`tests/e2e/test_fresh_journey.py`), and a smoke test of the installed server on Linux and Windows. Both pass on
+  the release.
+- **Gains have been observed, including on coding tasks, but none is confirmed yet.**
+  - **Coding.** In a study of 20 bugs from real repositories, each run twice:
+    - with G6's review-and-repair loop, Claude Code's fix passed the maintainers' own tests in 26 of 40 runs;
+    - on its own, it passed in 23 of 40;
+    - on the 3 bugs where the two arms differed, G6's arm was the one that passed every time.
+
+    The sample is too small to confirm that difference (exact paired test, p = 0.125). That study's records are
+    not yet on the Research page. The coding study registered there is a separate study that has not run yet.
+  - **The meta-harness.** In its first study, the gate approved one change, which raised held-out success on one
+    dataset of four from 10 of 60 to 42 of 60. Pooled over all four, the result is inconclusive.
+  - **Everything published,** misses included, is on the [Research](site/docs/research.md) page.
+
+  So it would be wrong to say G6 does not help. The gains point the same way, but they have not yet been confirmed
+  at a pre-registered bar.
+- **What the gains depend on.** They depend on the quality of the data, the requirements and the tests G6 is given.
+  They also depend on a person checking the results, or on a benchmark whose answers people have checked. G6 checks
+  what it is given; it cannot make up for weak tests or a requirement nobody stated.
+- **Why an AI evaluating G6 cannot settle this on its own.** G6 was built with Claude Code and Codex, and models from
+  the same families design and run its studies. A model judging a system built by its own kind is the circularity G6
+  exists to break: by G6's own rule, a check the producer wrote is not independent evidence. Claude Code on its own
+  cannot show that G6 does better. Valid evidence needs three things:
+  - ground truth that people wrote, such as maintainers' own bug fixes and their tests;
+  - an instrument that has been seen to fail a planted wrong answer;
+  - a person who checks the results.
+
+  G6's studies are now held to these rules. For your own work, measure G6 against results a person has checked.
+- **Dogfooding has not reached its bar.** G6's own use on real tasks is logged against a bar set in advance: at
+  least 10 tasks, with the action taken in the top 3 of G6's suggestions in at least 7. Too few tasks are logged to
+  meet it, so no dogfooding claim is made.
+
+Until a pre-registered study against human-checked ground truth confirms it, treat G6's benefit for your work as a
+hypothesis to test on your own tasks.
+
 ## Install
 
 You need Python 3.12 or 3.13, git, and Claude Code or Codex. Run these yourself, in a terminal, not through your

@@ -12,6 +12,20 @@ Reach for G6 before finishing a Python task, when constructing AI applications f
 investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
 Open only the detail needed for the route you take.
 
+You drive G6: your reasoning, its checks, limits and record. `g6_agentic_run` is a narrow recovery step, not the way
+you use G6.
+
+Adapt, never weaken. A failure, refusal, false alarm or reproduced defect is a stressor G6 learns from:
+- record it with `g6_failure_record` (learn);
+- or let the loop (improve) or `metaharness_*` (fit) propose a harness change.
+
+G6 diagnoses its own failures. Each refusal carries a code and a repair step. `metaharness_diagnose` names a
+repeated failure's cause and remedies. Improvement follows Goldratt's Theory of Constraints: find the bottleneck,
+exploit it, subordinate the rest, elevate it, and repeat, because the bottleneck moves.
+
+A change gains authority only through a held-out gate and the person. Never lower a gate, edit a judge or held-out
+data, or treat G6's reading of itself as evidence.
+
 A tool named here that your server does not list is absent: say so, use `g6_find`, and do not call it again.
 
 When a G6 reply carries `repair`, follow its step; if `by` is person, tell the person and stop.
