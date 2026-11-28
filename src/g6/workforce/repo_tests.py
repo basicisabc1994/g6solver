@@ -383,6 +383,14 @@ REPORT_FIELDS = {
                                       and not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
                                       for name in names)),
 }
+REPORT_FIELDS["subtests"] = ReportField(
+    {str: {"passed": int, "failed": int, "skipped": int, "messages": str}}, {},
+    "subtest counts and bounded failure text by parent identity", "complete nonnegative counts; parent phases stay separate",
+    predicate=lambda value: all(set(item) == {"passed", "failed", "skipped", "messages"}
+        and all(0 <= item[key] <= sys.maxsize for key in ("passed", "failed", "skipped"))
+        and sum(item[key] for key in ("passed", "failed", "skipped")) > 0
+        and len(item["messages"]) <= 2000 and (not item["messages"] or item["failed"] > 0)
+        for item in value.values()))
 for _name in ("passed", "failed", "not_passed", "total", "deselected"):
     REPORT_FIELDS[_name] = ReportField(int, int(_name in ("passed", "total")), "runner tally",
                                       "machine count; phase and annotation bounds, aggregate total, omitted count",
@@ -444,7 +452,7 @@ OBSERVATION_FIELDS = {"verdict": True, "said": True, "g6_observation": True, "so
 OBSERVATION_ONLY = frozenset({"g6_observation", "bootstrap_sha256", "execution_artifact", "execution_limit"})
 
 REPORT_LISTINGS = {"test_outcomes": dict, "failed_ids": list, "setup_errors": dict,
-                   "omitted_ids": list, "collected_ids": list, "not_found_ids": list}
+                   "omitted_ids": list, "collected_ids": list, "not_found_ids": list, "subtests": dict}
 REPORT_PHASES = ("setup", "call", "teardown")
 REPORT_OUTCOMES = frozenset({"passed", "failed", "skipped"})
 REPORT_VERDICTS = frozenset({*RAN, CHANGED, RUN_INCONSISTENT, CRASHED, "timed_out", "collection_error",
@@ -489,6 +497,7 @@ class PhaseRecord(Mapping):
     """An immutable ordered phase record; unknown records never have a body result."""
     entries: tuple[tuple[str, str], ...]
     valid: bool
+    failed_subtests: bool = False
 
     def __getitem__(self, key):
         return dict(self.entries)[key]
@@ -502,6 +511,8 @@ class PhaseRecord(Mapping):
     def body(self) -> str:
         if not self.valid:
             return "error" if "failed" in self.values() else "not_run"
+        if self.failed_subtests:
+            return "failed"
         # A failed call is a positive body match, including an independently
         # failed teardown. A fixture failure alone is never a body failure.
         if self.get("setup") == "passed" and self.get("call") == "failed":
@@ -630,9 +641,13 @@ def read_report(raw: object) -> RunReport:
     phases_raw = value.get("test_outcomes")
     phase_items = {node: item for node, item in phases_raw.copy().items() if type(node) is str} if type(phases_raw) is dict else {}
     phases = {node: read_phases(item) for node, item in phase_items.items()}
+    subtests = value.get("subtests", {}) if typed else {}
+    subtest_failures = {node for node, item in subtests.items() if item["failed"]}
+    phases = {node: PhaseRecord(record.entries, record.valid, node in subtest_failures)
+              for node, record in phases.items()}
     failed, setup = set(listings["failed_ids"]), set(listings["setup_errors"])
     omitted, collected = set(listings["omitted_ids"]), set(listings["collected_ids"])
-    phase_failures = {node for node, record in phases.items() if "failed" in record.values()}
+    phase_failures = {node for node, record in phases.items() if "failed" in record.values()} | subtest_failures
     # A session that stopped while collecting started no test: what pytest had collected by then has no phases and was
     # not left out either. That is the producer's own shape for it (``_Counted``: collection_finish lists the items,
     # sessionfinish marks the stop), the one in which a collected test is neither run nor omitted. It establishes
@@ -645,6 +660,7 @@ def read_report(raw: object) -> RunReport:
                   and not (failed & setup) and failed | setup == phase_failures
                   and all(phases[node].get("setup") == "failed" for node in setup if node in phases)
                   and setup <= set(phases)
+                  and set(subtests) <= set(phases)
                   and all(len(ids) == len(set(ids)) for ids in listings.values())
                   and all(record.valid for record in phases.values()))
     verdict = value.get("verdict") if type(value.get("verdict")) is str else ""
@@ -709,6 +725,7 @@ def read_report(raw: object) -> RunReport:
     # tallies; exact identity counts above come from the producer's own lists.
     max_passes = sum(record.get("call") == PASSED for record in phases.values())
     max_failures = sum(outcome == FAILED for record in phases.values() for outcome in record.values())
+    max_failures += sum(phases[node].get("call") != FAILED for node in subtest_failures if node in phases)
     max_failures += len(collection_failures)
     bounds = {"passed": (int(bool(passes) and not any_failure and verdict in RAN), max_passes),
               "failed": (int(any_failure), max_failures),
@@ -2115,6 +2132,7 @@ class _Counted:
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
         self.rootdir = ""
         self.messages = {}
+        self.subtests = {}
         self.os_errors = set()
         self.missing_modules, self.not_found_ids = set(), set()
         self.session = None
@@ -2157,6 +2175,21 @@ class _Counted:
         elif report.failed:
             self.messages[report.nodeid] = str(report.longrepr)[-2000:]
     def pytest_runtest_logreport(self, report):
+        context = getattr(report, "context", None)
+        subtest = (type(report).__name__ == "SubtestReport" or
+                   hasattr(context, "msg") or hasattr(context, "kwargs"))
+        if subtest:
+            counts = self.subtests.setdefault(report.nodeid, {"passed": 0, "failed": 0, "skipped": 0, "messages": ""})
+            counts[report.outcome] = counts.get(report.outcome, 0) + 1
+            if report.failed:
+                crash = getattr(report.longrepr, "reprcrash", None)
+                message = str(getattr(crash, "message", "") or report.longrepr)[-2000:]
+                counts["messages"] = (counts["messages"] + "\n" + message).strip()[-2000:]
+                self.messages.setdefault(report.nodeid, message)
+                if report.nodeid not in self.failed and report.nodeid not in self.setup_errors:
+                    self.failed.append(report.nodeid)
+            self.write()
+            return
         phases = self.test_outcomes.setdefault(report.nodeid, {})
         phases[report.when] = report.outcome if report.when not in phases else None
         if report.when in ("setup", "teardown"):
@@ -2176,15 +2209,18 @@ class _Counted:
         self.write()
     def write(self):
         if self.collected is not None:
+            payload = {"collected": self.collected, "deselected": self.deselected, "started": len(self.started),
+                       "finished": len(self.finished), "failed_ids": self.failed,
+                       "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
+                       "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
+                       "rootdir": self.rootdir, "messages": self.messages,
+                       "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
+                       "not_found_ids": sorted(self.not_found_ids),
+                       "collection_stopped": self.collection_stopped}
+            if self.subtests:
+                payload["subtests"] = self.subtests
             with open(counted, "w", encoding="utf-8") as handle:
-                json.dump({"collected": self.collected, "deselected": self.deselected, "started": len(self.started),
-                           "finished": len(self.finished), "failed_ids": self.failed,
-                           "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
-                           "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
-                           "rootdir": self.rootdir, "messages": self.messages,
-                           "os_errors": sorted(self.os_errors), "missing_modules": sorted(self.missing_modules),
-                           "not_found_ids": sorted(self.not_found_ids),
-                           "collection_stopped": self.collection_stopped}, handle)
+                json.dump(payload, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -2920,6 +2956,11 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
     # dispositions without pretending the process has already failed.
     report = read_report({**raw, "verdict": "incomplete", "said": "", "output": ""} if type(raw) is dict else raw)
     found = report.wire()
+    # JUnit attaches a subtest's skip to the parent's testcase, even when its
+    # own phases passed. Keep that parent's disposition in the run's tallies.
+    subtest_skips = min(counts.get("skipped", 0), sum(
+        item["skipped"] > 0 and report.phases[report.full(node)].body() == PASSED
+        for node, item in found.get("subtests", {}).items())) if report.valid else 0
     counters = ("collected", "deselected", "started", "finished")
     complete = report.valid and all(type(found.get(key)) is int for key in counters)
     expected = found["collected"] - found["deselected"] if complete else None
@@ -2927,6 +2968,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
     return {**counts, "expected": expected, "finished": finished,
             "deselected": found.get("deselected", 0),
             "test_outcomes": found.get("test_outcomes") if complete or report.started else None,
+            "subtests": found.get("subtests", {}),
             "collected_ids": found.get("collected_ids", sorted(report.nodes)),
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
@@ -2934,7 +2976,8 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
             "os_errors": found.get("os_errors", []),
             "missing_modules": found.get("missing_modules", []), "not_found_ids": found.get("not_found_ids", []),
             "collection_stopped": found.get("collection_stopped"),
-            "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
+            "skipped": max(0, counts.get("skipped", 0) - subtest_skips),
+            "passed": max(0, counts.get("passed", 0) + subtest_skips - max(0, started - finished))}
 
 
 def _loaded(path: Path) -> tuple[dict[str, str], bool]:
@@ -3537,6 +3580,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "failed": failed, "not_passed": int(tally.get("skipped", 0)), "total": passed + failed,
                 "deselected": int(tally.get("deselected", 0)),
                 "test_outcomes": tally.get("test_outcomes"), "collected_ids": tally.get("collected_ids", []),
+                "subtests": tally.get("subtests", {}),
                 "omitted_ids": tally.get("omitted_ids", []),
                 "changed": list(moved), "output": output, "seconds": round(time.monotonic() - started, 3),
                 "python": python, "interpreter_source": whose, "command": command, "isolation": isolation,

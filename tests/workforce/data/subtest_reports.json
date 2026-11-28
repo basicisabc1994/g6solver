@@ -1,0 +1,334 @@
+{
+  "pytest_version": "9.1.1",
+  "capture": "pytest.main -q --capture=sys; pytest_runtest_logreport records class, nodeid, when, outcome, context",
+  "cases": {
+    "fixture_pass": {
+      "source": "def test_case(subtests):\n    for i in range(2):\n        with subtests.test(msg='item', i=i):\n            assert i < 2\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_pass.py::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_fixture_pass.py::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "0"
+            }
+          }
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_fixture_pass.py::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "1"
+            }
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_pass.py::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_pass.py::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "fixture_fail": {
+      "source": "def test_case(subtests):\n    for i in range(2):\n        with subtests.test(msg='item', i=i):\n            assert i == 0\n",
+      "exitstatus": 1,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_fail.py::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_fixture_fail.py::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "0"
+            }
+          }
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_fixture_fail.py::test_case",
+          "when": "call",
+          "outcome": "failed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "1"
+            }
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_fail.py::test_case",
+          "when": "call",
+          "outcome": "failed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_fail.py::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "unittest_pass": {
+      "source": "import unittest\n\nclass TestCase(unittest.TestCase):\n    def test_case(self):\n        for i in range(2):\n            with self.subTest(msg='item', i=i):\n                self.assertLess(i, 2)\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_pass.py::TestCase::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_unittest_pass.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "0"
+            }
+          }
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_unittest_pass.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "1"
+            }
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_pass.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_pass.py::TestCase::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "unittest_fail": {
+      "source": "import unittest\n\nclass TestCase(unittest.TestCase):\n    def test_case(self):\n        for i in range(2):\n            with self.subTest(msg='item', i=i):\n                self.assertEqual(i, 0)\n",
+      "exitstatus": 1,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_fail.py::TestCase::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_unittest_fail.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "0"
+            }
+          }
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_unittest_fail.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "failed",
+          "context": {
+            "msg": "item",
+            "kwargs": {
+              "i": "1"
+            }
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_fail.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_fail.py::TestCase::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "fixture_skip": {
+      "source": "import pytest\n\ndef test_case(subtests):\n    with subtests.test(msg='later'):\n        pytest.skip('later')\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_skip.py::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_fixture_skip.py::test_case",
+          "when": "call",
+          "outcome": "skipped",
+          "context": {
+            "msg": "later",
+            "kwargs": {}
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_skip.py::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_fixture_skip.py::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "unittest_skip": {
+      "source": "import unittest\n\nclass TestCase(unittest.TestCase):\n    def test_case(self):\n        with self.subTest(msg='later'):\n            self.skipTest('later')\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_skip.py::TestCase::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_unittest_skip.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "skipped",
+          "context": {
+            "msg": "later",
+            "kwargs": {}
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_skip.py::TestCase::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_unittest_skip.py::TestCase::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "xfail_fail": {
+      "source": "import pytest\n\n@pytest.mark.xfail(reason='expected')\ndef test_case(subtests):\n    with subtests.test(msg='item'):\n        assert False\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_fail.py::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_xfail_fail.py::test_case",
+          "when": "call",
+          "outcome": "skipped",
+          "context": {
+            "msg": "item",
+            "kwargs": {}
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_fail.py::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_fail.py::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    },
+    "xfail_pass": {
+      "source": "import pytest\n\n@pytest.mark.xfail(reason='expected')\ndef test_case(subtests):\n    with subtests.test(msg='item'):\n        assert True\n",
+      "exitstatus": 0,
+      "reports": [
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_pass.py::test_case",
+          "when": "setup",
+          "outcome": "passed"
+        },
+        {
+          "class": "SubtestReport",
+          "nodeid": "test_xfail_pass.py::test_case",
+          "when": "call",
+          "outcome": "passed",
+          "context": {
+            "msg": "item",
+            "kwargs": {}
+          }
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_pass.py::test_case",
+          "when": "call",
+          "outcome": "passed"
+        },
+        {
+          "class": "TestReport",
+          "nodeid": "test_xfail_pass.py::test_case",
+          "when": "teardown",
+          "outcome": "passed"
+        }
+      ]
+    }
+  }
+}

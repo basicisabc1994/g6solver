@@ -259,6 +259,15 @@
     }
   },
   "fields": {
+    "subtests": {
+      "meaning": "subtest counts folded into each parent's body result; a failed subtest makes the parent fail",
+      "consumers": [
+        "workforce/repo_tests.py:read_report",
+        "harness/patch_review.py:_record"
+      ],
+      "type": "{str: {passed: int, failed: int, skipped: int, messages: str}}",
+      "constraint": "optional; complete nonnegative counts by parent identity; failure text at most 2000 characters"
+    },
     "verdict": {
       "meaning": "the run's verdict, which G6 decides outside the run from its exit code and counts (repo_tests._judge)",
       "consumers": [

@@ -298,6 +298,7 @@ READING = ("_listing", "_failed_ids", "phases_of", "_whole", "body_of", "_verdic
            "_not_found", "_collection_errors")
 #: Every field of the runner's report the phase reading reads, with what it takes from it.
 READ = {
+    "subtests": "subtest counts folded into each parent's body result by repo_tests.read_report",
     "test_outcomes": "each test's outcome by phase (phases_of)",
     "failed_ids": "the tests the runner lists as failed: each is a test of the run (phases_of)",
     "setup_errors": "the tests whose set-up failed on a fixture pytest could not find: each is a test of the run",
@@ -359,7 +360,14 @@ def plugin_fields() -> dict[str, ast.expr]:
     """Each field the runner's plugin writes to its report, with the value it writes."""
     write = _functions(_counted())["write"]
     dump = next(n for n in ast.walk(write) if isinstance(n, ast.Call) and ast.unparse(n.func) == "json.dump")
-    return {k.value: v for k, v in zip(dump.args[0].keys, dump.args[0].values, strict=True)}
+    payload = next(n.value for n in ast.walk(write) if isinstance(n, ast.Assign)
+                   and ast.unparse(n.targets[0]) == ast.unparse(dump.args[0]))
+    fields = {k.value: v for k, v in zip(payload.keys, payload.values, strict=True)}
+    for node in ast.walk(write):
+        if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Subscript)
+                and ast.unparse(node.targets[0].value) == ast.unparse(dump.args[0])):
+            fields[node.targets[0].slice.value] = node.value
+    return fields
 
 
 def passed_on() -> dict[str, str]:
@@ -428,6 +436,7 @@ def read_by_the_reading() -> set[str]:
                 # A read of the validated form reads the producer's required
                 # evidence fields, rather than keeping another raw reader here.
                 found |= {key for key, field in repo_tests.REPORT_FIELDS.items() if field.required}
+                found |= set(repo_tests.REPORT_LISTINGS)  # including optional subtest identities
             elif (isinstance(node, ast.Call) and ast.unparse(node.func) == "report.data.get"
                   and node.args and isinstance(node.args[0], ast.Constant)):
                 found.add(node.args[0].value)
