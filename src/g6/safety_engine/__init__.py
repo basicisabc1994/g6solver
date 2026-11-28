@@ -35,3 +35,12 @@ __g6_mitigates__: tuple[str, ...] = ("runaway_run", "test_weakening")
 __g6_introduces__: tuple[str, ...] = ()
 
 __all__ = ["TestWeakeningReport", "detect_test_weakening", "read_snapshot"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_TEST_WEAKENING_DETECTED": "none",
+    "G6_E_TEST_WEAKENING_INPUT_INVALID": "input",
+    "G6_E_TEST_WEAKENING_NOTHING_COMPARED": "none",
+    "G6_E_TEST_WEAKENING_STATIC_ONLY": "none",
+}

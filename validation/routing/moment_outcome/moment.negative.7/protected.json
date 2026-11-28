@@ -1,0 +1,7 @@
+{
+  "protected": [
+    "README.md",
+    "cases.json"
+  ],
+  "why": "The requested change leaves these files alone; changing them is harm, including editing the tests."
+}

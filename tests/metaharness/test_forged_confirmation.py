@@ -95,7 +95,9 @@ def test_running_a_workflows_code_over_mcp_is_refused_unless_the_person_allows_i
         assert got["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED", got
     tools = asyncio.run(build_server(surface).get_tools())
     for name in ("metaharness_run", "metaharness_evaluate_start", "metaharness_evaluate"):
-        assert "G6_MCP_SENSITIVE" in tools[name].description, name
+        # the person allows it; the setting is not named to the agent (d155c90e)
+        assert "the person must allow it themselves" in tools[name].description, name
+        assert "G6_MCP_SENSITIVE" not in tools[name].description, name
 
 
 def test_the_persons_own_confirmed_workflow_runs_when_allowed(tmp_path, monkeypatch, unconfined):

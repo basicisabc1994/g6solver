@@ -25,6 +25,8 @@ auditor each pass rows they read themselves.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
@@ -908,7 +910,10 @@ def gather(*, plan: Plan, runs: Iterable[Mapping], artifacts: Mapping[str, Mappi
         sends.setdefault(unit_of.get(receipt.get("run_id", ""), ""), []).append(str(receipt.get("state", "")))
     degradations: dict[str, tuple[str, ...]] = {}
     for key, run in latest.items():
-        outcome = Outcome.from_record(json.loads(run.get("outcome_json") or "{}"))
+        try:
+            outcome = Outcome.from_record(_decode_json(run.get("outcome_json") or "{}"))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if outcome.degraded:
             texts = tuple(r.removeprefix("degraded: ") for r in outcome.reasons if r.startswith("degraded: "))
             degradations[key] = texts or ("no reason was given",)

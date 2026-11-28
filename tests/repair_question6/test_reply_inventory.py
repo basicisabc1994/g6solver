@@ -13,7 +13,7 @@ from g6.core import component_process
 from g6.harness import patch_report, patch_review, standard_publication
 from g6.mcp import behaviour, review_reply
 from tests.repair_question5 import renderer_68ca0eb
-from tests.repair_question5.test_rendering_differential import strings
+from tests.repair_question5.test_rendering_differential import _without_card, strings
 from tests.repair_question6 import review_entry_68ca0eb, reviewed_68ca0eb, tool_68ca0eb, transport_68ca0eb
 
 
@@ -192,7 +192,8 @@ def test_report_error_return_and_all_outcome_renderers(tmp_path, monkeypatch, te
     for outcome in patch_report.OUTCOMES:
         one = copy.deepcopy(assessment)
         one.update(outcome=outcome, summary=text, unknowns=[text], next_actions=[text])
-        same(patch_report.safe_render(one), renderer_68ca0eb.safe_render(one))
+        # rc030-card: the frozen renderer predates the card block and the unlabelled-finding suffix.
+        same(_without_card(patch_report.safe_render(one)), renderer_68ca0eb.safe_render(one))
     monkeypatch.setattr(patch_report, 'render', lambda _: (_ for _ in ()).throw(ValueError(text)))
     monkeypatch.setattr(renderer_68ca0eb, 'render', patch_report.render)
     same(patch_report.safe_render(assessment), renderer_68ca0eb.safe_render(assessment))
@@ -205,7 +206,10 @@ def test_mcp_tool_return_paths_keep_historical_text(monkeypatch, text, branch):
     tree = ast.parse(Path(mcp.__file__).read_text(encoding='utf-8'))
     node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'g6_review_patch')
     node.decorator_list = []
+    # The tool body is lifted out of its enclosing function, so the name that function imports is supplied here
+    # (g6.mcp keeps it as a lazy public attribute, not a module global).
     namespace = {**vars(mcp), '_allowed': lambda *a: branch != 'denied', 'allowed_sensitive': lambda: (),
+                 'public_instructions': mcp.public_instructions,
                  '_DENIED': '[G6_E_SENSITIVE_DENIED]',
                  'jobs': SimpleNamespace(start=lambda run, **k: run())}
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<current MCP tool>', 'exec',
@@ -218,7 +222,12 @@ def test_mcp_tool_return_paths_keep_historical_text(monkeypatch, text, branch):
     monkeypatch.setattr(behaviour, 'reviewed', lambda *a, **k: {'assessment': {'report': text}})
     expected = FunctionType(tool_68ca0eb.g6_review_patch.__code__, namespace,
                             argdefs=tool_68ca0eb.g6_review_patch.__defaults__)
-    same(namespace['g6_review_patch']('unused', 'task'), expected('unused', 'task'))
+    historical = expected('unused', 'task')
+    if branch == 'unreadable':
+        # Its remedy names a setting, now filtered: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+        from g6.core.agent_guidance import reply_for_agent
+        historical = reply_for_agent(historical)
+    same(namespace['g6_review_patch']('unused', 'task'), historical)
 
 
 @pytest.mark.parametrize('text', TEXTS)
@@ -287,5 +296,12 @@ def test_full_reply_and_report_each_outcome_keep_every_text_leaf(tmp_path, monke
         actual = original(*bound.args, **bound.kwargs)
         with monkeypatch.context() as old:
             old.setattr(patch_report, 'render', renderer_68ca0eb.render)
-            expected = frozen(review_entry_68ca0eb._reply, patch_review)(*bound.args, **bound.kwargs)
+            historical = dict(bound.arguments)
+            historical.pop("neighbourhood", None)
+            expected = frozen(review_entry_68ca0eb._reply, patch_review)(**historical)
+        actual = copy.deepcopy(actual)
+        actual["assessment"]["completion"].pop("neighbourhood", None)
+        # rc030-card: the frozen producer predates the card field and the card block in the report.
+        actual["assessment"].pop("card")
+        actual["assessment"]["report"] = _without_card(actual["assessment"]["report"])
         same(actual, expected)

@@ -27,6 +27,7 @@ runs as you. That is also why the ops that run it are sensitive: callable from P
 person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import os
 import shutil
@@ -62,17 +63,20 @@ _TAIL = 8000
 
 
 def find_swipl() -> str:
-    """The ``swipl`` program: ``G6_SWIPL`` when it is set, else ``swipl`` on PATH. Refused when there is none."""
+    """The ``swipl`` program: ``G6_SWIPL`` when it is set, else ``swipl`` on PATH. Refused when there is none. The
+    refusal is the agent's to read, so it does not name the setting (the person's install steps, ``INSTALL_SWIPL``, do),
+    as ``g6.lean.runner.find_lean``'s does not."""
     named = os.environ.get(SWIPL_ENV, "").strip()
     if named:
         found = find_program(named) or (named if Path(named).is_file() else None)
         if not found:
-            raise Refusal(SWIPL_MISSING, f"{SWIPL_ENV} names {named}, which is not a program here; G6 never installs "
-                                         "SWI-Prolog")
+            raise Refusal(SWIPL_MISSING, f"a setting named in G6's documentation names {named}, which is not a program "
+                                         "here; G6 never installs SWI-Prolog")
         return found
     found = find_program("swipl")
     if not found:
-        raise Refusal(SWIPL_MISSING, f"no swipl on PATH and {SWIPL_ENV} is not set; G6 never installs SWI-Prolog")
+        raise Refusal(SWIPL_MISSING, "no swipl on PATH and no setting named in G6's documentation names one; G6 never "
+                                     "installs SWI-Prolog")
     return found
 
 
@@ -137,7 +141,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
                               "so G6 stopped it and read the run as finished")
         except (OSError, ProcessTreeError) as exc:
             if isinstance(exc, confine.NotStarted) and "isolation" in record:
-                record["isolation"] = confine.not_started(record["isolation"], exc)
+                record["isolation"] = confine_not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"SWI-Prolog could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -174,10 +178,10 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
         confined = None
         if DRIVER_FILE in arguments:   # the caller's program and goal: untrusted, so planned (a version run is not)
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=confine.program_paths(swipl)))
-            record["isolation"] = confined.record()
-            said = confine.refused(confined)
-            if said:
-                raise Refusal(ISOLATION_UNAVAILABLE, said)
+            record["isolation"] = confine_record(confined)
+            said = confine_refused(confined)
+            if said:   # refused before SWI-Prolog starts: it did not run, and the refusal carries how it would have
+                raise Refusal(ISOLATION_UNAVAILABLE, said, swipl_ran=False, isolation=record["isolation"])
         try:
             return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end, confined)
         finally:

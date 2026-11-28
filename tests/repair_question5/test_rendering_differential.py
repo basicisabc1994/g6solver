@@ -27,6 +27,18 @@ def strings(value, path=()):
             yield from strings(item, (*path, index))
 
 
+def _without_card(report):
+    # rc030-card: the end-of-task card sits under the headline, and a reproduced finding says it is not labelled by
+    # the person. The frozen renderer predates both, so the current report drops them before the comparison.
+    lines = report.split('\n')
+    labels = ('Checked', 'Caught', 'Repaired', 'Not checked', 'Needs you')
+    if len(lines) > 5 and all(lines[i + 1].startswith(f'- **{label}:**') for i, label in enumerate(labels)):
+        del lines[1:6]
+    elif len(lines) > 1 and lines[1].startswith('- **Checked:**'):
+        del lines[1]
+    return '\n'.join(lines).replace(' Not labelled by you.', '')
+
+
 @pytest.mark.parametrize('text', TEXTS)
 def test_every_reply_and_report_text_field_matches_frozen_renderer(tmp_path, monkeypatch, text):
     root = repo(tmp_path)
@@ -61,6 +73,7 @@ def test_every_reply_and_report_text_field_matches_frozen_renderer(tmp_path, mon
     monkeypatch.setattr(patch_review, '_one_line', old_guidance._one_line)
     monkeypatch.setattr(patch_report, 'render', old_report.render)
     frozen = original(*args, **kwargs)
+    reply['assessment']['report'] = _without_card(reply['assessment']['report'])
     assert dict(strings(reply)) == dict(strings(frozen))
 
 

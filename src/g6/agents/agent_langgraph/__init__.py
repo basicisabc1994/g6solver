@@ -52,3 +52,22 @@ __g6_outside__: tuple = ()
 
 __all__ = ["AgentLangGraphBlock", "AgentLangGraphInput", "GraphSpec", "LangGraphRuntime", "call_tool",
            "list_checkpoints"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_AGENT_LANGGRAPH_CHECKPOINTS_LISTED": "none",
+    "G6_E_AGENT_LANGGRAPH_GRAPH_CHANGED": "none",
+    "G6_E_AGENT_LANGGRAPH_NODE_FAILED": "none",
+    "G6_E_AGENT_LANGGRAPH_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_AGENT_LANGGRAPH_NO_THREAD": "none",
+    "G6_E_AGENT_LANGGRAPH_SPEC_REQUIRED": "input",
+    "G6_E_AGENT_LANGGRAPH_THREAD_EXISTS": "none",
+    "G6_E_AGENT_LANGGRAPH_THREAD_REQUIRED": "input",
+    "G6_E_AGENT_LANGGRAPH_TOO_LARGE": "person",
+    "G6_E_LLM_DISABLED": ("tool:g6_select",
+        "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+    "G6_E_AGENT_LANGGRAPH_INPUT_UNDECLARED": "person",
+    "G6_E_AGENT_LANGGRAPH_MODEL_FAILED": "person",
+    "G6_E_AGENT_LANGGRAPH_NOT_INSTALLED": "person",
+}

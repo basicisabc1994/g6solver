@@ -62,3 +62,12 @@ __g6_introduces__: tuple[str, ...] = ("leaked_secret", "prompt_injection")
 __g6_outside__ = (CLAUDE,)
 
 __all__ = ["CLAUDE", "CLAUDE_ENV", "AgentClaudeBlock", "AgentClaudeInput", "ClaudeCodeRuntime"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_AGENT_CLAUDE_FOUND": "none",
+    "G6_E_AGENT_CLAUDE_GOAL_REQUIRED": "input",
+    "G6_E_LLM_DISABLED": ("tool:g6_select",
+        "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+}

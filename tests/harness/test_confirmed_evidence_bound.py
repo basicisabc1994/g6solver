@@ -91,8 +91,17 @@ class Dialog:
 
 
 def ask(root: Path, *, data=None, dialog=None, task=TASK, **kwargs) -> dict:
-    return asyncio.run(behaviour.confirm(dialog or Dialog(), str(root), task,
-                                         candidates=[candidate()] if data is None else data, **kwargs))
+    # a known caller supplying its own arguments: since 107f3bac a call with no known client is refused before a
+    # question is asked, which would stop before the binding checks these tests are about (as test_question_store_bound)
+    from g6.core import cloud_consent as cloud
+
+    dialog = dialog or Dialog()
+    candidates = [candidate()] if data is None else data
+    with cloud.collect_sources() as capture:
+        capture.client = ("openai:codex", dialog.session)
+        capture.supplied.add(cloud.input_source(json.dumps(
+            {"repo": str(root), "task": task, "candidates": candidates}, sort_keys=True)))
+        return asyncio.run(behaviour.confirm(dialog, str(root), task, candidates=candidates, **kwargs))
 
 
 def standard(*, root=None) -> ExpectationStandard:
@@ -174,9 +183,15 @@ def test_finding_4_a_saved_review_of_another_repository_and_task_supplies_nothin
 
 
 @pytest.mark.parametrize("change", ["none", "tree_changed", "unbound"])
-def test_a_saved_review_is_taken_only_bound_to_this_task_and_tree(tmp_path, monkeypatch, change):
+def test_a_saved_review_is_taken_only_bound_to_this_task_and_tree(tmp_path, monkeypatch, change, accepted_cloud_dialog):
     root = make_repo(tmp_path)
     job, instance = _saved_review(monkeypatch, root, TASK)
+    # a known client reads a saved review under that review's sources (ac7ee88b; a known client since 107f3bac): the
+    # person shares G6's saved reviews with it, so a bound review reaches the probe
+    from g6.core import cloud_consent as cloud
+    from g6.core.storage import g6_home
+
+    accepted_cloud_dialog(cloud.repository_source(g6_home() / "reviews"), "openai:codex", text=job)
     if change == "tree_changed":   # the working tree is not the one the review observed
         (root / "calc.py").write_text(GOOD + "\n# later\n", encoding="utf-8")
     elif change == "unbound":   # a reply saved without its binding (as before this change)
@@ -549,7 +564,15 @@ def test_every_place_an_artefact_digest_reaches_the_issuer_comes_from_the_bytes_
     assert "binding = {'artefact': before} if before is not None else {}" in ast.unparse(run)
     review = (ROOT / "src" / "g6" / "harness" / "patch_review.py").read_text(encoding="utf-8")
     assert "deadline=deadline, artifact=artifact, roots=roots, before=before," in review
-    assert "before = repo_tests.snapshot(root)\n        artifact = digest(before)" in review
+    # db861331 reserves closing time between these statements; the data binding, not adjacency, is the invariant.
+    review_fn = next(n for n in ast.walk(ast.parse(review))
+                     if isinstance(n, ast.FunctionDef) and n.name == "review_patch")
+    assignments = [n for n in ast.walk(review_fn) if isinstance(n, ast.Assign)]
+    [snapshot] = [n for n in assignments if ast.unparse(n) == "before = repo_tests.snapshot(root)"]
+    [artefact] = [n for n in assignments if ast.unparse(n) == "artifact = digest(before)"]
+    assert snapshot.lineno < artefact.lineno
+    assert not any(isinstance(n, ast.Name) and n.id == "before" and snapshot.lineno < n.lineno < artefact.lineno
+                   for n in ast.walk(review_fn))
 
 
 # --- finding 10: the report keeps the meaning ---------------------------------------------------------------------

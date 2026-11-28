@@ -34,6 +34,8 @@ nothing is honoured.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import collections.abc
 import contextvars
 import dataclasses
@@ -572,7 +574,10 @@ def canonical_json(value: Any, *, cap: int | None = None, error: str | None = No
 
 def record_data(value: Any) -> Any:
     """A record's plain representation, through the bounded canonical encoder."""
-    return json.loads(canonical_json(value))
+    try:
+        return _decode_json(canonical_json(value))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def publish(value: T, *, where: str) -> T:
@@ -648,7 +653,10 @@ def plain(value: Any, *, where: str, _depth: int = 0, cap: int | None = None, er
     found = _not_json(value, where, _depth)
     if found:
         raise NotPlainData(*found)
-    out = json.loads(canonical_json(value))
+    try:
+        out = _decode_json(canonical_json(value))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not _same(value, out, _depth):
         raise NotPlainData(where, "it does not survive the bridge's canonical encoder unchanged")
     return out
@@ -1014,6 +1022,22 @@ def _admit_reply(reply: Any, cap: int) -> None:
         raise ValueError(f"a model's reply is longer than its {cap}-character cap")
 
 
+#: A JSON text's strings, so brackets inside them are not counted as nesting.
+_JSON_STRINGS = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+
+
+def _nesting(text: str) -> int:
+    """How deep a JSON text's arrays and objects nest, counted on its brackets outside its strings."""
+    level = deepest = 0
+    for mark in _JSON_STRINGS.sub("", text):
+        if mark in "[{":
+            level += 1
+            deepest = max(deepest, level)
+        elif mark in "]}":
+            level -= 1
+    return deepest
+
+
 def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = None) -> Any:
     """A :func:`returned` check for a model's reply: text of at most ``cap`` characters, read as JSON with no repeated
     key, and taken as plain data (:func:`plain`); the value it holds (so :func:`returned` reads what is used), or a
@@ -1021,9 +1045,14 @@ def json_reply(reply: Any, cap: int, preflight: Callable[[Any], None] | None = N
     too deep."""
     _admit_reply(reply, cap)
     reply = text(reply, where="a model's reply")
+    # Refused on its words before the parser: the shared decoder (62b6905f) reports the parser's own RecursionError as
+    # an undecodable record, without the bridge's code, and where the parser gives up differs by platform. Nesting
+    # past twice codes.DEPTH is refused by plain() anyway, with this same refusal.
+    if _nesting(reply) > 2 * DEPTH:
+        raise _too_deep("a model's reply")
     try:
-        parsed = json.loads(reply, object_pairs_hook=_unique)
-    except RecursionError:
+        parsed = _decode_json(reply, object_pairs_hook=_unique)
+    except (RecursionError, MemoryError):   # the bridge's own refusal, never a translation it does not catch
         raise _too_deep("a model's reply") from None
     if preflight is not None:
         preflight(parsed)

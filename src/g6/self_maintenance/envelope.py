@@ -55,6 +55,8 @@ cut off at its own reservation is blocked and on the record, and in no streak: t
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextlib
 import errno
 import hashlib
@@ -272,25 +274,40 @@ class CycleLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._chain = ChainLedger(self.path, validate=_rules)
+        try:
+            self._chain = ChainLedger(self.path, validate=_rules)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def reload(self) -> None:
         """Read the file again: another handle may have written it. Its earlier entries must be unchanged."""
-        self._chain.reload()
+        try:
+            self._chain.reload()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def head(self) -> str:
         """The hash of the last row as this handle holds the records, which names every row before it (``""`` with none)."""
-        return self._chain.head()
+        try:
+            return self._chain.head()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def _rows(self) -> list[tuple[str, dict]]:
-        return [(e["kind"], e["body"]) for e in self._chain.entries()]
+        try:
+            return [(e["kind"], e["body"]) for e in self._chain.entries()]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def _append(self, kind: str, body: dict) -> dict:
         """Every row this writes: on a fresh line (``fresh_line``), so a last row the file holds with no newline is ended
         before the ledger adds its own, which it writes whole with its newline."""
         body = utf8_fields(body)
         _durably(self.path, "", make=False)
-        self._chain.append(kind, str(len(self._rows()) + 1), body)
+        try:
+            self._chain.append(kind, str(len(self._rows()) + 1), body)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return body
 
     def _write_record(self, kind: str, body: dict, record_id: str | None = None) -> str:
@@ -299,17 +316,26 @@ class CycleLog:
         that identity. Bodies keep their meaning."""
         ident = utf8_text(uuid4().hex if record_id is None else record_id)
         _durably(self.path, "", make=False)
-        self._chain.append(kind, ident, utf8_fields(body))
+        try:
+            self._chain.append(kind, ident, utf8_fields(body))
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return ident
 
     def latest_id(self, kind: str) -> str:
         """The latest row's stored identity, including the numeric identities of older logs; no row is empty text."""
-        return next((e["id"] for e in reversed(self._chain.entries()) if e["kind"] == kind), "")
+        try:
+            return next((e["id"] for e in reversed(self._chain.entries()) if e["kind"] == kind), "")
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def record(self, kind: str, ident: str) -> dict | None:
         """Read precisely the row written with this identity. An absent row is distinct from unreadable records."""
         try:
-            return self._chain.get(kind, utf8_text(ident))
+            try:
+                return self._chain.get(kind, utf8_text(ident))
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
         except KeyError:
             return None
 
@@ -673,7 +699,7 @@ def _canonical_stops_on_disk(root: str | Path, expected: bytes | None = None) ->
             if sorted(p.name for p in record.iterdir()) != ["stop.json"]:
                 return None
             held = (record / "stop.json").read_bytes()
-            value = json.loads(held.decode("ascii"))
+            value = _decode_json(held.decode("ascii"))
             if (not isinstance(value, dict) or set(value) != {"id", "at"} or value["id"] != ident
                     or not _on_a_clock(value["at"])):
                 return None
@@ -738,7 +764,7 @@ def canonical_stop_record(root: str | Path, ident: str | None) -> bool | None:
         return None
     try:
         held = (Path(root) / STOP_RECORDS / ident / "stop.json").read_bytes()
-        return json.loads(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
+        return _decode_json(held.decode("ascii"))["id"] == ident and _canonical_stops_on_disk(root, held) is not None
     except FileNotFoundError:
         return False
     except BaseException:
@@ -1374,8 +1400,8 @@ def beat(root: str | Path, **fields: Any) -> None:
 
 def heartbeat(root: str | Path) -> dict | None:
     try:
-        return json.loads((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return _decode_json((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError, MemoryError):
         return None
 
 

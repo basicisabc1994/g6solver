@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-27",
+  "before_any_arm": true,
+  "reason": "the 0.3.0 using-g6 update (the Stop hook's default review, the change map as a lead, the operating-system boundary and the Windows git grants) rewrites the review route's text and the root skill outside the routes; no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "794adf65b5ef2ac0dcfabc84b907358ebbfc556c9ebfdbc51540a544776c4ff4"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "9c55124f9341cc305e2b601305db9b34d0461891470786445b5fba8b090fa15b"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-794adf65b5ef.json",
+    "frozen.json": "frozen.retired-a200e00c46da.json"
+  },
+  "routes": {
+    "every-route": {
+      "before": "4da418590c2f59e1d7924c0b37852e7a31d7bd31d2366eaa612dbe6a6129c94b",
+      "after": "5d4b9cdef1afafa18165b5c0d525711858015c1dcfdb83bf6752ebd7cb38d315"
+    },
+    "review": {
+      "before": "d767a2c3a3ba7f54e7da27faeb17379b78065c983e897ae797a1b33a7347cd20",
+      "after": "1e508dfac440e4800a5b8fb0b23147c41fbaf34d42d3721365d60abeab09c138"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "lead ruling, 2026-11-27: the release pull request updates the using-g6 skill to what the repository can do; one dated amendment rebinds the review and every-route digests it moves, before any session runs; the routing trials have run no session and this changes no result",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

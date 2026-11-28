@@ -19,7 +19,8 @@ many matches a search source reported, so a list it cut short says so.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 import xml.etree.ElementTree as ET
 import xml.parsers.expat as expat
@@ -312,8 +313,10 @@ def xml_root(body: bytes) -> ET.Element:
 def json_body(body: bytes) -> Any:
     """A JSON reply's value."""
     try:
-        return json.loads(body)
-    except (ValueError, UnicodeDecodeError) as exc:
+        return _decode_json(body)
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ParseProblem(f"the reply is not JSON: {exc}") from None
 
 

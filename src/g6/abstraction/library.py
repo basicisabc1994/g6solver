@@ -21,6 +21,8 @@ a state file written when the top status was called ``verified`` loads as
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -242,7 +244,10 @@ class Library:
     @classmethod
     def load(cls, path: str) -> tuple["Library", dict[str, ConcreteDomain]]:
         with open(path) as fh:
-            state = json.load(fh)
+            try:
+                state = _decode_json(fh.read())
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if state.get("version") != 1:
             raise ValueError(f"unsupported state version "
                              f"{state.get('version')!r}; expected 1")

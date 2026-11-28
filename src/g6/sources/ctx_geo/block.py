@@ -71,7 +71,14 @@ _ACTIONS: dict[str, str] = {
 
 
 def _code(outcome: str) -> str:
-    return f"G6_E_GEO_{outcome.upper()}"
+    return {
+        "auth_failed": "G6_E_GEO_AUTH_FAILED", "quota_exceeded": "G6_E_GEO_QUOTA_EXCEEDED",
+        "rejected": "G6_E_GEO_REJECTED", "not_found": "G6_E_GEO_NOT_FOUND",
+        "server_error": "G6_E_GEO_SERVER_ERROR", "parse_failed": "G6_E_GEO_PARSE_FAILED",
+        "unreachable": "G6_E_GEO_UNREACHABLE", "refused": "G6_E_GEO_REFUSED",
+        "too_large": "G6_E_GEO_TOO_LARGE", "http_error": "G6_E_GEO_HTTP_ERROR",
+        "unsupported": "G6_E_GEO_UNSUPPORTED",
+    }.get(outcome, "G6_E_GEO_UNKNOWN_OUTCOME")
 
 
 class CtxGeoInput(BaseModel):

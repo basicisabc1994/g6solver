@@ -142,8 +142,25 @@ def test_level_off_gives_the_existing_reply_exactly(granted, repo, tmp_path, mon
         assert tools._viewed(reply, str(repo), TASK_TEXT, ("assessment", "report")) is reply
         assert view.appended(str(repo), TASK_TEXT, "REPORT", provider=PROVIDER) == "REPORT"
         monkeypatch.delenv(name)
-    monkeypatch.delenv(policy.RECORD_ENV, raising=False)                  # the record is off unless turned on
-    assert view.level() == "off"
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)      # the record is on by default; the view is not
+    assert policy.enabled()[0] is True and view.level() == "off"
+    monkeypatch.setenv(view.VIEW_ENV, "narrow")                # the person asked for the view
+    assert view.level() == "narrow"
+
+
+@pytest.mark.parametrize("value", ["", " ", "none", "None", "narow", "on", "NARROW", "off"])
+def test_with_the_record_on_only_by_default_a_view_value_that_is_no_level_leaves_the_view_off(monkeypatch, value):
+    # dogfood 2: an empty value, "none" or a typo is not a request for the view
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+    monkeypatch.setenv(view.VIEW_ENV, value)
+    assert policy.enabled()[0] is True and view.level() == "off"
+
+
+@pytest.mark.parametrize("value", ["narrow", "diagnosis", "suggestions"])
+def test_with_the_record_on_only_by_default_a_named_level_turns_the_view_on(monkeypatch, value):
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+    monkeypatch.setenv(view.VIEW_ENV, value)
+    assert view.level() == view.ADMITTED_LEVEL                 # never above the admitted level
 
 
 def test_withheld_view_holds_only_the_notice(granted, repo, tmp_path):

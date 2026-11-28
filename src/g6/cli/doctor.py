@@ -25,6 +25,7 @@ import platform
 import re
 import sqlite3
 import sys
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -159,6 +160,17 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
                  "Use none, claude_code, codex, ollama, anthropic, openai or openrouter.")
 
 
+def _repository_here() -> str | None:
+    """The top folder of the git repository the current folder is in, found by its ``.git`` entry alone (no git runs),
+    or None; never a network or device folder (``storage._elsewhere``)."""
+    from g6.core.storage import _elsewhere
+
+    here = Path.cwd()
+    if _elsewhere(str(here)):
+        return None
+    return next((str(folder) for folder in (here, *here.parents) if (folder / ".git").exists()), None)
+
+
 def _isolation() -> Check:
     """Whether untrusted code (patches, generated scripts, a repository's tests) runs confined by the operating system
     (``g6.core.confine``). On Windows it is read from the access lists alone: nothing is started or created. On Linux
@@ -183,11 +195,53 @@ def _isolation() -> Check:
                          confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
                                                  "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
+    repo, (chosen, _) = _repository_here(), confine._select()
+    if repo and callable(getattr(chosen, "readable", None)) and not confine.owned(repo) and not chosen.readable(repo):
+        # the repository the person runs this in is the folder a review's tests run from: its grant, whole
+        return Check("isolation", "warn", f"{said} for {', '.join(pythons)}, but the Windows AppContainer cannot read the "
+                     f"repository here, {repo}, so G6 refuses to run its tests confined",
+                     chosen.cannot_read([repo]).removeprefix("unavailable: "))
     where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
              "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else
              f"in a Windows {name} (no network, only its run folder writable; G6 test-starts each interpreter there "
              "before its first confined run)")
     return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run {where}")
+
+
+#: What a Windows AppContainer must read of each folder above its run folder for git to work in it: Git for Windows
+#: checks every folder of a repository's path from the drive's top down, which needs that folder's attributes
+#: (FILE_READ_ATTRIBUTES in its own access list) or a listing of the folder that holds it (FILE_LIST_DIRECTORY there).
+_READ_ATTRIBUTES, _LIST_FOLDER = 0x80, 0x1
+
+
+def _confined_git() -> Check | None:
+    """Windows with the AppContainer backend only: whether a confined test can run git in the run folders G6 makes
+    under the temporary folder, read from the access lists alone (dogfood pass 2, 2026-11-26: ``git init`` failed in
+    every confined test, "cannot lock ref 'HEAD': unable to create directory for ...", while isolation said ok). The
+    drive's top is never checked by git, so it is left out. None elsewhere."""
+    if sys.platform != "win32":
+        return None
+    from g6.core import confine
+
+    chosen, _ = confine._select()
+    if chosen is None or getattr(chosen, "name", "") != confine.APPCONTAINER:
+        return None
+    root = Path(tempfile.gettempdir()).resolve()
+    unseen = [str(folder) for folder in [*reversed(root.parents), root][1:]
+              if not (chosen._granted(str(folder)) & _READ_ATTRIBUTES or
+                      chosen._granted(str(folder.parent)) & _LIST_FOLDER)]
+    if not unseen:
+        return Check("git in confined runs", "ok", f"the container can read each folder above {root}")
+    # owner ruling 2026-11-27, option (a): a one-time grant of each such folder's attributes alone (RA: no contents, no
+    # listing, nothing inherited below it), so git can see the folder exists; the person runs it, G6 never does
+    grants = [f'icacls "{folder}" /grant "*{confine.ALL_APPLICATION_PACKAGES}:(RA)"' for folder in unseen]
+    return Check("git in confined runs", "warn",
+                 "a test that runs git (git init, git commit) fails inside the container here, though it passes for "
+                 "you: git checks every folder above its repository, and Windows lets the container read none of "
+                 f"{', '.join(unseen)}, which hold the run folders G6 makes in {root}. The grant below lets the "
+                 "container read only those folders' attributes (that each exists), not their files or their names",
+                 f"Run once, as yourself: {', then '.join(grants)}. Until then, read a confined failure of a test that "
+                 "runs git as this computer's limit, not your code's: run that test yourself to tell.")
 
 
 def _components() -> list[Check]:
@@ -226,8 +280,9 @@ def run_checks(env: dict[str, str] | None = None) -> list[Check]:
 
     filed = keys.read()
     settings = {**filed, **(os.environ if env is None else env)}
+    git = _confined_git()
     return [_python(), _package(), _home(), _sqlite(), *_extras(), _keys(), _model(settings, filed), _isolation(),
-            *_components(), _names()]
+            *([git] if git else []), *_components(), _names()]
 
 
 def report(checks: list[Check]) -> dict[str, Any]:

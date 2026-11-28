@@ -62,7 +62,7 @@ def _resolved(ledger: ChainLedger | None, kind: str, ident: str, body: Mapping[s
         return None
     try:
         return ledger.entry(kind, ident)["body_sha256"] == _digest(dict(body))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, RecursionError, MemoryError):
         return False
 
 
@@ -71,7 +71,7 @@ def _provenance(ledger: ChainLedger | None, receipt_id: str) -> dict | None:
         return None
     try:
         return dict(ledger.get("provenance", receipt_id))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, RecursionError, MemoryError):
         return None
 
 
@@ -149,7 +149,7 @@ def source_record(rec: EvidenceRecord) -> SourceRecord:
         result=rec.result if rec.result in ("pass", "fail", "unknown") else "unknown",
         artefact_sha256=parts.artefact, producer="", artefact_seq=None, standard_sha256=parts.standard,
         check_id=parts.check_id or rec.evidence_id, check_sha256=parts.check_sha, author="", frozen_seq=None,
-        environment_sha256="", seq=None, scope=parts.scope, certificate=rec.fixture_version if formal else "",
+        environment_sha256="", seq=None, scope=parts.scope, certificate=parts.fixture if formal else "",
         binding=binding)
 
 

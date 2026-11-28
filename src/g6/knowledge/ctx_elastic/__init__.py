@@ -41,3 +41,29 @@ __g6_index_backends__: tuple[str, ...] = ("elastic",)  # the family's registry i
 
 __all__ = ["ELASTICSEARCH", "ELASTIC_KEY", "SENSITIVE_OPS", "CtxElasticBlock", "CtxElasticInput", "ElasticError",
            "ElasticIndex", "elastic"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_ELASTIC_COUNTED": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_COUNT_PARTIAL": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_DENIED": "person",
+    "G6_E_KNOWLEDGE_ELASTIC_DOCUMENT": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_HELD": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_INPUT": "input",
+    "G6_E_KNOWLEDGE_ELASTIC_MAPPING": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_NOT_FOUND": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_NO_MATCH": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_PARSE_FAILED": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_PARTIAL": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_REDIRECTED": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_REJECTED": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_SEARCHED": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_SERVER_ERROR": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_TARGET": "none",
+    "G6_E_KNOWLEDGE_ELASTIC_TIMEOUT": "person",
+    "G6_E_KNOWLEDGE_FIELD_NOT_IN_MAPPING": "input",
+    "G6_E_KNOWLEDGE_FILTER_ON_TEXT": "none",
+    "G6_E_KNOWLEDGE_NESTED_FIELD": "input",
+    "G6_E_KNOWLEDGE_NO_TEXT_FIELDS": "none",
+}

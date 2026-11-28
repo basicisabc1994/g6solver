@@ -15,7 +15,7 @@ from math import isfinite
 from pathlib import PurePosixPath
 from typing import Literal, Sequence
 
-from g6.core.ledger import ChainLedger, digest
+from g6.core.ledger import LedgerError, ChainLedger, digest
 
 PROVIDERS = ("codex", "claude")
 # Neither prompts nor generated code can expand this allowlist.
@@ -146,11 +146,17 @@ class BudgetBook:
     """
 
     def __init__(self, ledger: ChainLedger | None = None) -> None:
-        self.ledger = ledger if ledger is not None else ChainLedger()
+        try:
+            self.ledger = ledger if ledger is not None else ChainLedger()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def _rows(self) -> list[dict]:
-        return [dict(e["body"]) | {"kind": e["kind"], "id": e["id"]}
-                for e in self.ledger.entries() if e["kind"] in ("maintenance_reserve", "maintenance_settle")]
+        try:
+            return [dict(e["body"]) | {"kind": e["kind"], "id": e["id"]}
+                    for e in self.ledger.entries() if e["kind"] in ("maintenance_reserve", "maintenance_settle")]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def usage(self, day: str) -> dict:
         reserves: dict[str, dict] = {}
@@ -172,15 +178,21 @@ class BudgetBook:
             total_usd += usd
             provider[e["provider"]] += tokens
             issue_counts[e["ticket_id"]] = issue_counts.get(e["ticket_id"], 0) + 1
-        return {"tokens": total_tokens, "usd": round(total_usd, 4),
-                "providers": provider, "calls": len(reserves), "issue_counts": issue_counts,
-                "unsettled": sorted(set(reserves) - set(settles)), "ledger_head": self.ledger.head()}
+        try:
+            return {"tokens": total_tokens, "usd": round(total_usd, 4),
+                    "providers": provider, "calls": len(reserves), "issue_counts": issue_counts,
+                    "unsettled": sorted(set(reserves) - set(settles)), "ledger_head": self.ledger.head()}
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
     def reserve(self, ticket: MaintenanceTicket, provider: str, policy: BudgetPolicy, day: str,
                 *, cycle_tokens_used: int = 0) -> Reservation:
         if provider not in PROVIDERS or not _valid_day(day):
             raise ValueError("unsupported provider or day")
-        self.ledger.reload()
+        try:
+            self.ledger.reload()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         used = self.usage(day)
         tokens = min(policy.attempt_tokens, ticket.estimated_tokens)
         if (used["tokens"] + tokens > policy.day_tokens - policy.reserve_tokens or
@@ -190,20 +202,32 @@ class BudgetBook:
             used["calls"] >= policy.max_calls_per_day or
             used["issue_counts"].get(ticket.id, 0) >= policy.max_calls_per_issue):
             raise ValueError("maintenance budget or per-issue attempt limit exhausted")
-        rid = digest({"day": day, "ticket": ticket.id, "provider": provider,
-                      "index": used["calls"] + 1, "head": self.ledger.head()})[:24]
-        self.ledger.append("maintenance_reserve", rid, {
-            "day": day, "ticket_id": ticket.id, "provider": provider,
-            "tokens": tokens, "usd": policy.usd_reservation_per_call,
-        })
+        try:
+            rid = digest({"day": day, "ticket": ticket.id, "provider": provider,
+                          "index": used["calls"] + 1, "head": self.ledger.head()})[:24]
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
+        try:
+            self.ledger.append("maintenance_reserve", rid, {
+                "day": day, "ticket_id": ticket.id, "provider": provider,
+                "tokens": tokens, "usd": policy.usd_reservation_per_call,
+            })
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         return Reservation(ticket.id, provider, tokens, policy.usd_reservation_per_call, used["calls"] + 1, rid)
 
     def settle(self, reservation: Reservation, day: str, *,
                observed_tokens: int | None = None, observed_usd: float | None = None,
                receipt_trusted: bool = False, outcome: str = "unknown") -> None:
         """Provider-reported usage is advisory unless independently metered by the host."""
-        self.ledger.reload()
-        original = self.ledger.get("maintenance_reserve", reservation.record_id)
+        try:
+            self.ledger.reload()
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
+        try:
+            original = self.ledger.get("maintenance_reserve", reservation.record_id)
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
         if original["day"] != day or original["provider"] != reservation.provider or original["ticket_id"] != reservation.ticket_id:
             raise ValueError("reservation/day mismatch")
         if any(e["kind"] == "maintenance_settle" and e["id"] == reservation.record_id for e in self._rows()):
@@ -213,10 +237,13 @@ class BudgetBook:
         # Never refund a reservation because an untrusted model reports low usage.
         tokens = min(reservation.reserved_tokens, observed_tokens) if use else reservation.reserved_tokens
         usd = min(reservation.reserved_usd, observed_usd) if use else reservation.reserved_usd
-        self.ledger.append("maintenance_settle", reservation.record_id, {
-            "day": day, "tokens": tokens, "usd": usd, "outcome": outcome[:100],
-            "source": "independent_meter" if use else "reservation_conservative",
-        })
+        try:
+            self.ledger.append("maintenance_settle", reservation.record_id, {
+                "day": day, "tokens": tokens, "usd": usd, "outcome": outcome[:100],
+                "source": "independent_meter" if use else "reservation_conservative",
+            })
+        except (RecursionError, MemoryError):
+            raise LedgerError("a stored JSON record exceeds decoder limits") from None
 
 
 def _valid_day(day: str) -> bool:
@@ -233,7 +260,10 @@ def rank_tickets(tickets: Sequence[MaintenanceTicket], *, policy: BudgetPolicy,
         raise ValueError("invalid planning date, provider or ticket count")
     if len({t.id for t in tickets}) != len(tickets):
         raise ValueError("duplicate ticket id")
-    book.ledger.reload()
+    try:
+        book.ledger.reload()
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
     used = book.usage(day)
     ranked = sorted(((t, round(t.severity * t.benefit * t.confidence * 1000 / t.estimated_tokens, 8))
                      for t in tickets), key=lambda p: (-p[1], p[0].id))
@@ -250,9 +280,15 @@ def rank_tickets(tickets: Sequence[MaintenanceTicket], *, policy: BudgetPolicy,
                 used["providers"][provider] + estimate <= policy.provider_tokens[PROVIDERS.index(provider)] and
                 used["usd"] + policy.usd_reservation_per_call <= policy.max_usd_day and
                 used["calls"] < policy.max_calls_per_day):
-                return Plan("qualified-draft", ticket.id, provider, estimate,
-                            tuple((t.id, s) for t, s in ranked), tuple(refusals),
-                            "risk-adjusted expected benefit per reserved token; no model execution", book.ledger.head())
+                try:
+                    return Plan("qualified-draft", ticket.id, provider, estimate,
+                                tuple((t.id, s) for t, s in ranked), tuple(refusals),
+                                "risk-adjusted expected benefit per reserved token; no model execution", book.ledger.head())
+                except (RecursionError, MemoryError):
+                    raise LedgerError("a stored JSON record exceeds decoder limits") from None
         refusals.append(ticket.id + ":budget_exhausted")
-    return Plan("blocked-escalated", None, None, 0, tuple((t.id, s) for t, s in ranked),
-                tuple(refusals), "no budget-feasible ticket; nothing will run", book.ledger.head())
+    try:
+        return Plan("blocked-escalated", None, None, 0, tuple((t.id, s) for t, s in ranked),
+                    tuple(refusals), "no budget-feasible ticket; nothing will run", book.ledger.head())
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None

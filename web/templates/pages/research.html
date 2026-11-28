@@ -12,7 +12,7 @@ the harness engineering itself.{% endcomment %}
     <h1>G6 engineers its own gains.</h1>
     <p class="rs-lede why">AI is usually judged by public benchmarks, and a high score there often fails to carry over to
     real work. So G6 never takes a score on trust: every change it makes is tested on tasks held out from it.</p>
-    <p class="rs-lede">Every study here asks one question: when G6 engineers the harness around a model for a task, how
+    <p class="rs-lede">Every study here asks one question: when the harness around a model is changed for a task, how
     much better does the same model do? It counts every study run, the earliest included, and says which part of G6
     did the work. Together they are a worked example, built to show what the system can do; on your own work,
     results will vary with the task and the data you have. <a class="link" href="#reading">How to read them</a></p>
@@ -25,7 +25,7 @@ the harness engineering itself.{% endcomment %}
     <h2>Bootstrapping a small model through its harness</h2>
     <p class="rs-lede">{{ facts.model }}, an 8-billion-parameter model running on one computer with Ollama, on
     {{ facts.per_dataset }} fresh held-out tasks per dataset, in a study registered before it ran. Larger models
-    engineer the harness: Claude Code built G6's components and its diagnosis of failures, and in the development
+    shaped this harness: Claude Code built G6's components and its diagnosis of failures, and in the development
     rounds a 20-billion-parameter model reflects on the small model's mistakes to propose changes. The small model then
     runs inside that harness alone, with no weights changed. That is G6's core idea: a larger model's judgement,
     distilled into a smaller model's harness.</p>

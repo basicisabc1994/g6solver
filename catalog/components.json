@@ -819,14 +819,18 @@
     "name": "cegis",
     "summary": "g6.cegis \u2014 fill the holes in a code sketch by counterexample-guided synthesis, running every candidate out of process.",
     "maturity": "beta",
-    "maturity_reason": "",
-    "surface": "python",
-    "ops": [],
+    "maturity_reason": "counterexample-guided synthesis over a table, every candidate run in a confined child; a result holds only on the domain it names; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "synthesize"
+    ],
     "requires": [
       "formal",
       "distillation"
     ],
-    "sensitive_ops": [],
+    "sensitive_ops": [
+      "synthesize"
+    ],
     "vetting": null
   },
   {
@@ -1155,6 +1159,7 @@
     ],
     "requires": [
       "action_gating",
+      "code",
       "grounding",
       "knowledge"
     ],
@@ -1348,6 +1353,28 @@
       "diff_cycles"
     ],
     "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "distill",
+    "summary": "Training-only method proposals, static test-change observations and independently gated library admission.",
+    "maturity": "unlabelled",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "cognitive_bridge",
+      "distillation",
+      "harness",
+      "metaharness",
+      "reasoning",
+      "safety_engine",
+      "self_maintenance",
+      "self_model",
+      "self_training",
+      "workforce"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },
@@ -1881,13 +1908,29 @@
     "vetting": null
   },
   {
+    "name": "self_model",
+    "summary": "An inspectable self-model: immutable facts, discrepancies and pre-action simulations.",
+    "maturity": "unlabelled",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "reliability_pipeline"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "self_training",
     "summary": "Governed self-modification: the promotion authority for proposed harness changes, one governed improvement cycle, and a maturity scorecard.",
     "maturity": "beta",
     "maturity_reason": "",
     "surface": "python",
     "ops": [],
-    "requires": [],
+    "requires": [
+      "_agentic",
+      "safety_engine"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

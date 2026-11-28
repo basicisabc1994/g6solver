@@ -384,6 +384,16 @@ CLASSIFIED = {
     ("algorithm_design/autonomous.py", "_observed"): "the algorithm mission's run",
     ("algorithm_design/autonomous.py", "baseline"): "the algorithm mission's run",
     ("algorithm_design/autonomous.py", "run"): "the algorithm mission's run",
+    # c9d212f2: the held-out oracle's confined run, stated by the one statement (repo_tests.established(...).of)
+    ("distill/held_out/oracle.py", "_run"): "the held-out oracle's run: the one statement (established(...).of)",
+    # f7639fc9: the end-of-task card's counts read patch_review's reply (its _record rows and its assessment), never a
+    # run report; a False loaded_complete there only withholds counts
+    ("harness/workflow/evidence.py", "executed"): "not a run report: the reply's record (patch_review._record); a "
+                                                  "False loaded_complete only withholds card counts",
+    ("harness/workflow/evidence.py", "repair_blocked"): "not a run report: the reply's assessment; a False "
+                                                        "loaded_complete only withholds a repair pass",
+    ("harness/workflow/evidence.py", "review_data"): "not a run report: the reply's checks_run records; a False "
+                                                     "loaded_complete only withholds card counts",
 }
 
 

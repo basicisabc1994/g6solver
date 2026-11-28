@@ -82,13 +82,15 @@ def contract(*classes):
 
 TOOLS = {
     'g6_help': contract('g6_operational'),
-    'g6_components': contract('source:component_catalogue'),
-    **{name: contract('client_request', 'source:component_catalogue') for name in ('g6_find', 'g6_describe')},
+    'g6_components': contract('g6_operational'),
+    **{name: contract('client_request', 'g6_operational') for name in ('g6_find', 'g6_describe')},
     **{name: contract('client_request', 'source:component_data') for name in ('g6_invoke', 'g6_compose')},
+    'g6_agentic_run': contract('client_request', 'source:component_data'),
     'g6_review_patch': contract('client_request', 'client_repository', 'source:host_configuration'),
     'g6_review_until_clean': contract('client_request', 'client_repository', 'source:host_configuration',
                                      'source:completion_history'),
     'g6_premortem': contract('client_request', 'client_repository'),
+    'g6_select': contract('client_request', 'g6_operational'),
     'g6_mission_create': contract('client_request', 'client_repository', 'source:missions'),
     'g6_mission_submit': contract('client_request', 'client_repository', 'source:missions', 'source:host_configuration'),
     **{name: contract('client_request', 'source:missions') for name in (
@@ -117,6 +119,18 @@ TOOLS = {
     'g6_feedback': contract('client_request', 'client_workflow_feedback'),
     **{name: contract('client_request', 'client_workflow') for name in (
         'g6_suggestion_decide', 'g6_workflow_correct', 'g6_workflow_delete', 'g6_workflow_export')},
+    'g6_failure_record': contract('client_request'),
+    'g6_distill_start': contract('client_request', 'source:component_data', 'source:host_configuration'),
+    'g6_distill_job': contract('client_request', 'source:jobs'),
+    'g6_library': contract('client_request', 'source:component_data'),
+    'g6_library_decide': contract('client_request'),
+    'g6_self_model': contract('g6_operational'),
+    'g6_simulate': contract('client_request', 'g6_operational'),
+    'g6_extend': contract('client_request', 'client_repository'),
+    'g6_research_start': contract('client_request', 'source:improvement'),
+    'g6_research_stop': contract('client_request', 'source:improvement'),
+    'g6_research_status': contract('client_request', 'source:improvement'),
+    'g6_research_digest': contract('client_request', 'source:improvement'),
 }
 
 def _arguments(content='', pointer=''):
@@ -133,11 +147,13 @@ TOOL_ARGUMENTS = {
     'g6_find': _arguments('query limit'),
     'g6_describe': _arguments(pointer='component'),
     'g6_invoke': _arguments('op', 'component params_json'),
+    'g6_agentic_run': _arguments('op part mode reason', 'component params_json'),
     'g6_compose': _arguments(pointer='composition_json'),
     'g6_review_patch': _arguments('task requirements claim intent timeout_s expected_artifact_digest',
                                  'repo tests sources base search import_roots proposed_checks template_instances'),
     'g6_review_until_clean': _arguments('task reason', 'repo session base'),
     'g6_premortem': _arguments('task intent', 'repo'),
+    'g6_select': _arguments('task phase last_outcome considering limit rerank'),
     'g6_mission_create': _arguments('objective function budget_cents risk', 'repo module helpers'),
     'g6_mission_clarify': _arguments('replay_semantics', 'mission_id'),
     'g6_mission_confirm': _arguments(pointer='mission_id'),
@@ -181,6 +197,18 @@ TOOL_ARGUMENTS = {
     'g6_workflow_correct': _arguments(pointer='repo'),
     'g6_workflow_delete': _arguments('scope task', 'repo run'),
     'g6_workflow_export': _arguments(pointer='repo'),
+    'g6_failure_record': {'kind': 'content', 'family': 'content', 'case_json': 'content', 'note': 'content'},
+    'g6_distill_start': {'family': 'content', 'failure_ids': 'pointer'},
+    'g6_distill_job': {'job_id': 'pointer', 'detail': 'content'},
+    'g6_library': {'op': 'content', 'entry_id': 'pointer'},
+    'g6_library_decide': {'entry_id': 'pointer', 'action': 'content', 'reason': 'content'},
+    'g6_self_model': {'section': 'content', 'detail': 'content'},
+    'g6_simulate': {'action_json': 'content'},
+    'g6_extend': {'request': 'content', 'repo': 'pointer'},
+    'g6_research_start': {'folder': 'pointer'},
+    'g6_research_stop': {'folder': 'pointer', 'reason': 'content'},
+    'g6_research_status': {'folder': 'pointer'},
+    'g6_research_digest': {'folder': 'pointer'},
 }
 
 

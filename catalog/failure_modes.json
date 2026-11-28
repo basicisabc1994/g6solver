@@ -1578,7 +1578,8 @@
       "cegis"
     ],
     "introduced_by": [
-      "adapt_healing"
+      "adapt_healing",
+      "distill"
     ],
     "planned": [],
     "awaiting_review": []
@@ -1623,7 +1624,8 @@
       "graph_reasoning"
     ],
     "introduced_by": [
-      "adapt_bayesian"
+      "adapt_bayesian",
+      "self_model"
     ],
     "planned": [
       "g6.ml.science_harness"
@@ -1846,12 +1848,14 @@
   },
   {
     "code": "risk_management_failure",
-    "title": "risk management failure",
+    "title": "a risky step taken without weighing what it could break",
     "description": "risk management failure",
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "self_model"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2057,7 +2061,8 @@
     "guarded_by": [
       "australian_legal_corpus",
       "ctx_ace",
-      "ctx_contexthub"
+      "ctx_contexthub",
+      "self_model"
     ],
     "introduced_by": [],
     "planned": [],
@@ -2141,12 +2146,14 @@
   },
   {
     "code": "test_suite_missing_or_weak",
-    "title": "test suite missing or weak",
+    "title": "tests missing, or too weak to catch the change they are meant to check",
     "description": "test suite missing or weak",
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "distill"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2716,6 +2723,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "distill",
       "learning"
     ],
     "introduced_by": [],

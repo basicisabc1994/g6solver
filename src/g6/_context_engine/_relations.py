@@ -21,7 +21,8 @@ the new version, so the same name there stays unresolved until an extraction rea
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -110,8 +111,8 @@ def _rows(reply: Any) -> list[dict[str, Any]]:
     """The model's reply read as a list of plain rows; anything else is no row. Nothing in it is followed."""
     try:
         text = str(reply)
-        found = json.loads(text[text.index("["):text.rindex("]") + 1])
-    except ValueError:
+        found = _decode_json(text[text.index("["):text.rindex("]") + 1])
+    except (ValueError, RecursionError, MemoryError):
         return []
     return [row for row in found if isinstance(row, dict)] if isinstance(found, list) else []
 

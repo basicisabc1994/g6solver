@@ -1,19 +1,21 @@
 {
   "format": "g6.routing_tasks/1",
   "routes": {
-    "abstraction": "11a14bc37ac59cc9370e95456bd650011ddc554c184f87eb2ebc5f656d424532",
-    "compose": "d90d091640a37bb559235e731181a79fae90f1b994f1b83022aa805c1c699609",
-    "consent": "3360654006772c5e2626c414ffa2778657227e26951628276a59360707c4a788",
-    "context": "66003f951cf38da41b1c95b2fe8b0d7732dff33e17e87117813f394149a38316",
-    "discover": "55eea337b12dafb332b57d7ab55d2b69d4816a655a882e9d4c59238a50877216",
-    "every-route": "a105d1f2011c76b9a71e24a316f636afabeac48c220ba86e464344660d4043fb",
-    "fit": "c3d3cb9291adaa9d9ad233005b4acc736dda151bd1cb3b47f6ff8d0121a18e1e",
-    "improve": "e46df0b0267ca882d45ad425c355577f18098432c85a0f4698bc18c6c4fff0cd",
-    "mission": "fce2993cda07d4bf78389e78be9990176611427f7ebd8e5764c3ac8348a4d1ce",
-    "question": "133db5f589550897612fe06c903e7313625f2301a7b5f396bc42ed523a40b020",
-    "review": "b5dc78389fe3561d0a93ca828b877f1c488bd8c9fdbaebfb35c471508284a218",
-    "rules": "9fe7060163867a43058c643bc66e107e89c81a0a5c56e67aed34b37442b3c431",
-    "workflow": "9274f49f91d2e127d767cddd31d30c05328c55ac282487a8852de5e0eb88a492"
+    "abstraction": "96c00a1a9ef26903f84becfd4b5482a82bfdb0e75b198ae0ba0a3f50a3436529",
+    "compose": "945db46322406bf4447f3a7ae70c55aedf2e7494755141cae51760ffbffad221",
+    "consent": "013bb1f0dc10102278d594d0b953e1652896a4a1140bf58e2a373f7c0e8d9ab4",
+    "context": "dfb8cc3ced54f9806960993bd32a5a4b1e1b29e65ec3158666a27d56138a663a",
+    "discover": "e3a616e571b6f4de20f9e90a7bf509a46e8e35f819932b062ffd7c3f174059be",
+    "every-route": "5d4b9cdef1afafa18165b5c0d525711858015c1dcfdb83bf6752ebd7cb38d315",
+    "fit": "a8a80df1036be09fd4a70361ca5f46d4a1fb5e49499fc1c6dc994c6e82715b36",
+    "improve": "4ab748fce09ac96b20c43f45a8fad8028efe3fc1c5c94ba9438892368751fe69",
+    "learn": "79ff862bd13ff9ac43129d857aabb876c97276223eeb9b84f414488c0436ae8d",
+    "mission": "e0f1296a758e75e3deca555cf71f980077c1d169ec25d40a6338696f369bb400",
+    "question": "5f26170030865c5a66f544c7aa225ba298d08e6902222492643968e233da8e0a",
+    "review": "1e508dfac440e4800a5b8fb0b23147c41fbaf34d42d3721365d60abeab09c138",
+    "rules": "701615705f3cf10070b83026b1e5586da2cd1006ac821a9fa5cfd55a508a258e",
+    "select": "79c843d9b7e799f97da17797146fb1e0f6f9edf931a2e502dfa204603f6a18e0",
+    "workflow": "6fe65cdf0804fbf6b4a6c0ee8e9fb5bce301c4de1f3056e6acc94ce69e8a7523"
   },
   "tasks": [
     {
@@ -435,6 +437,94 @@
       }
     },
     {
+      "id": "dev.learn.missing_tool.1",
+      "route": "learn",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "List the checking methods this tool has built from past failures, with how much authority each one holds and whether any was demoted or withdrawn. Change nothing.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_library"
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.learn.negative.1",
+      "route": "learn",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a one-line docstring to shop.prices.total saying it returns the sum of the line prices. Nothing else.",
+      "fixture": "shop",
+      "forbidden": [
+        {
+          "tool": "g6_distill_job"
+        },
+        {
+          "tool": "g6_distill_start"
+        },
+        {
+          "tool": "g6_extend"
+        },
+        {
+          "tool": "g6_failure_record"
+        },
+        {
+          "tool": "g6_library"
+        },
+        {
+          "tool": "g6_library_decide"
+        },
+        {
+          "tool": "g6_research_digest"
+        },
+        {
+          "tool": "g6_research_start"
+        },
+        {
+          "tool": "g6_research_status"
+        },
+        {
+          "tool": "g6_research_stop"
+        },
+        {
+          "tool": "g6_self_model"
+        },
+        {
+          "tool": "g6_simulate"
+        }
+      ],
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.learn.positive.1",
+      "route": "learn",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "List the checking methods this tool has built from past failures, with how much authority each one holds and whether any was demoted or withdrawn. Change nothing.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_library"
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
       "id": "dev.mission.missing_tool.1",
       "route": "mission",
       "polarity": "missing_tool",
@@ -678,6 +768,63 @@
         "seconds": 300,
         "calls": 12,
         "questions": 0
+      }
+    },
+    {
+      "id": "dev.select.missing_tool.1",
+      "route": "select",
+      "polarity": "missing_tool",
+      "cohort": "development",
+      "prompt": "In this repository, tests/test_prices.py::test_negative_raises still fails after two attempts at changing shop.prices.total: raising inside the sum gave the wrong message, and checking only the first line let a later negative line through. Work out the next step before another edit, and explain why.",
+      "fixture": "shop",
+      "withhold": [
+        "g6_select"
+      ],
+      "budget": {
+        "seconds": 600,
+        "calls": 20,
+        "questions": 1
+      }
+    },
+    {
+      "id": "dev.select.negative.1",
+      "route": "select",
+      "polarity": "negative",
+      "cohort": "development",
+      "prompt": "Add a line at the end of README.md saying the access rules were last updated in April 2026. Nothing else.",
+      "fixture": "rules",
+      "forbidden": "any",
+      "budget": {
+        "seconds": 300,
+        "calls": 12,
+        "questions": 0
+      }
+    },
+    {
+      "id": "dev.select.positive.1",
+      "route": "select",
+      "polarity": "positive",
+      "cohort": "development",
+      "prompt": "In this repository, tests/test_prices.py::test_negative_raises still fails after two attempts at changing shop.prices.total: raising inside the sum gave the wrong message, and checking only the first line let a later negative line through. Work out the next step before another edit, and explain why.",
+      "fixture": "shop",
+      "expected_calls": [
+        {
+          "tool": "g6_select",
+          "args_include": {
+            "phase": "stuck"
+          },
+          "args_present": [
+            "task"
+          ]
+        }
+      ],
+      "completion": {
+        "kind": "calls_in_order"
+      },
+      "budget": {
+        "seconds": 600,
+        "calls": 20,
+        "questions": 1
       }
     },
     {

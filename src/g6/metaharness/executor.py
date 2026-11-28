@@ -11,6 +11,8 @@ start at once.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -150,11 +152,11 @@ def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0,
     and run out of process by ``g6.core.sandbox`` (``main.solve(task)``). The user's own folder is never written. A run
     no operating-system boundary could confine, where isolation is required, raises ``confine.IsolationRefused``: it is
     no answer, so it is never scored as an empty one."""
-    import json
     from pathlib import Path
 
     from g6.core.confine import IsolationRefused
-    from g6.core.sandbox import isolation_refused, run_script
+    from g6.core.sandbox import isolation_refused
+    from g6.core.guidance_builders import script_run as run_script
 
     root = Path(workflow.code_root)
 
@@ -169,8 +171,8 @@ def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0,
             if ran.status != "ok":
                 return ""
             try:
-                return str(json.loads(ran.stdout.strip().splitlines()[-1])["output"])
-            except (ValueError, KeyError, IndexError):
+                return str(_decode_json(ran.stdout.strip().splitlines()[-1])["output"])
+            except (ValueError, KeyError, IndexError, RecursionError, MemoryError):
                 return ""
 
         return execute

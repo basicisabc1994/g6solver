@@ -11,6 +11,7 @@ no randomness; ties break by declared order.
 """
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -95,8 +96,11 @@ def record_decision(ledger: Ledger, decision: Mapping, *, recorded_at: str, acto
                     actor_role: str = "planner") -> dict:
     """Append a decision to the caller's ledger as ``DECISION_RECORDED``; returns what the ledger returns. The
     actor fields are the caller's claim, kept as given."""
-    return ledger.append("DECISION_RECORDED", recorded_at=recorded_at, actor_id=actor_id, actor_role=actor_role,
-                         payload=dict(decision))
+    try:
+        return ledger.append("DECISION_RECORDED", recorded_at=recorded_at, actor_id=actor_id, actor_role=actor_role,
+                             payload=dict(decision))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 __all__ = ["ACTION_RUN_EXPERIMENT", "ACTION_STOP", "ExperimentCandidate", "Ledger", "PlanNextActionPolicy",

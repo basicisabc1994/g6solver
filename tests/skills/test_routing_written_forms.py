@@ -4,6 +4,7 @@
 derived from the manifest and the recorded servers: every route, every surface it owns, every registered tool."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -115,11 +116,28 @@ def test_a_routed_tool_is_named_only_in_a_written_form(given: dict[str, Any]) ->
 
 
 def test_a_components_own_skill_may_name_its_code_and_other_components(given: dict[str, Any]) -> None:
-    """Derived from the routes: a detail file outside the root skill's folder has the names of its component's code;
-    without them the check holds every backticked name there against the route's tools."""
-    own = sorted(surface for _route, surface, plain in _surfaces(given)
-                 if plain and surface != routing.ROOT and not surface.startswith(routing.REFERENCES))
+    """Explicitly link a component skill in a test contract; shipped routes need not fold it.
+
+    Without identifiers the check still holds every backticked name in that skill
+    against the route's tools. Keep this behaviour covered independently of layout.
+    """
+    manifest = routing.load()
+    routes, details = dict(manifest.routes), dict(given["details"])
+    own = []
+    for server, tools in given["registrations"].items():
+        if not any(not _prefixed(tool) for tool in tools):
+            continue
+        paths = sorted(p for p in given["files"] if p.startswith(server + "/") and p.endswith("/skill/SKILL.md"))
+        own.extend(paths)
+        route_ids = {entry.route for key, entry in manifest.entries.items() if key.startswith("mcp:" + server + "/")}
+        for route_id in route_ids:
+            route = routes[route_id]
+            routes[route_id] = replace(route, detail=tuple(dict.fromkeys([*route.detail, *paths])))
+        details.update({p: (registrations.package_root() / p).read_text(encoding="utf-8") for p in paths})
+    manifest = replace(manifest, routes=routes)
+    given = {**given, "details": details, "identifiers": registrations.identifiers(own)}
     assert own and set(own) <= set(given["identifiers"])
-    strict = routing.check(routing.load(), **{**given, "identifiers": {}})
+    assert routing.check(manifest, **given) == []
+    strict = routing.check(manifest, **{**given, "identifiers": {}})
     assert strict and {p.code for p in strict} == {"STALE"} and {p.key for p in strict} == set(own)
     assert all(GONE not in given["identifiers"][surface] for surface in own)

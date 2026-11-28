@@ -148,9 +148,13 @@ from __future__ import annotations
 
 import configparser
 import hashlib
+import io
+import os
 import platform
 import re
+import stat
 import time
+import tokenize
 import uuid
 from collections.abc import Collection, Sequence
 from dataclasses import replace
@@ -164,11 +168,11 @@ from g6.core import component_process
 from g6.core.ai_block import AIBlock
 from g6.core.block_contract import BlockContract
 from g6.core.compose import Stage, compose
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
 from g6.core.errors import ISOLATION_UNAVAILABLE
-from g6.core.git_name import shown
+from g6.core.git_name import shown, shown_name
 from g6.core.ledger import digest
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.result import Result
 from g6.evidence.mapping import id_of
 from g6.safety_engine.weakening import _kind as _weakening_kind
@@ -260,7 +264,7 @@ NORMATIVE = frozenset({"stated", "repository_stated", "person_confirmed"})
 #: Where a check came from: ``stated`` (the caller cited it) or ``derived`` (tier 2's tests of the changed modules); a
 #: check the caller proposes is ``proposed`` (``assessment.completion``). ``structural`` and ``adopted_proposal`` are
 #: kept for verification search's later phases; no check has them yet.
-CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal"]
+CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal", "library"]
 STATED, DERIVED, STRUCTURAL = "stated", "derived", "structural"
 #: A structural check of a stated contract that found an import the patch adds and the contract forbids: a defect.
 STRUCTURAL_DEFECT = "forbidden_dependency_added"
@@ -269,7 +273,8 @@ CONFIRMED_FAILED, CONFIRMED_NOT_RUN = "confirmed_expectation_failed", "confirmed
 CONFIRMED_NOTE = ("each expectation is a question G6 asked and the option the person chose in the client's dialog; G6 "
                   "compiled it into one example.v1 check and ran it on the patch. It is enforced on that one case "
                   "only, whatever scope was confirmed, and a model's result is never among these")
-DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT, CONFIRMED_FAILED})
+DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT, CONFIRMED_FAILED,
+                          "library_defect_detected"})
 INTEGRITY_SKIP = ("the review found an integrity problem, so the checks would run under tests or a test runner that "
                   "may be weakened")
 TIER_3_ADEQUACY = ("tier 3: mutation of the changed lines ran only for test adequacy (assessment.completion."
@@ -448,6 +453,21 @@ def _import_roots(root: Path, values) -> tuple[str, ...]:
                                                     "with no link on the way")
         found.append(rel)
     return tuple(dict.fromkeys(found))
+
+
+#: The most of a failed check's own words a reason quotes (``_failure_excerpt``).
+MAX_FAILURE_EXCERPT = 300
+
+
+def _failure_excerpt(ran: dict, check: str) -> str:
+    """The line a failed check raised (pytest's ``E`` line, else its first: ``verification_search._failure``), read
+    from the run's record of the failure (``failure_messages``), on one line, with secrets and the home and temporary
+    folders' roots masked (``g6.context.redact``) and at most ``MAX_FAILURE_EXCERPT`` characters; "" when none was
+    recorded. The test's own words, quoted as data: nothing is decided from them (dogfood pass 2, 2026-11-26)."""
+    from g6.context.redact import mask_paths, scrub
+    from g6.harness import verification_search
+
+    return mask_paths(scrub(" ".join(verification_search._failure(ran, check).split())))[:MAX_FAILURE_EXCERPT]
 
 
 def _confined(ran: dict) -> dict:
@@ -773,12 +793,26 @@ _SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodu
               "generated_left_out")
 
 
-def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
+def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED,
+            *, sources: dict[str, str] | None = None) -> dict:
     found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(shown(one) for one in ids),
              "tests": list(ids),
              "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
              "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
              "receipt": ran.get("receipt", ""), "provenance": provenance}
+    report = repo_tests.read_report(ran)
+    if sources is not None:
+        by_file = {n.partition("::")[0]: sha for n, sha in sources.items()}
+        # A capture belongs to this run even when a collector rewrites its ids.
+        # An outcome outside its coverage is explicitly incomplete, never legacy.
+        found["check_sources"] = {n: by_file.get(n.partition("::")[0], "")
+                                  for n in [*ids, *report.phases]}
+    # Executed identities do not depend on whether source bytes were captured.
+    # Keep aggregate-only legacy fixtures when no phase report was supplied.
+    if sources is not None or report.phases:
+        found["executed_outcomes"] = {node: report.body_result(node) for node in report.phases
+                                      if report.body_result(node) in ("passed", "failed")}
+        found["executed_tests"] = len(found["executed_outcomes"])
     found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
     if ran.get("loaded_complete") is False:
         found["loaded_complete"] = False
@@ -1010,7 +1044,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
         refused = blocked_reply(f"[{exc.code}] {said}")
         if getattr(exc, "help", ""):
-            refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
+            refused["warning_card"] = {**refused["warning_card"],
+                "suggested_action": exc.help, "next_step": exc.help}
         return refused
     except (OSError, ValueError, TypeError) as exc:
         return blocked_reply(f"[{CODE}] {exc}")
@@ -1039,6 +1074,189 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
         stopped.append({"activity": "search stage", "stage": what, "result": "error",
                         "reason": verification_search.stopped(exc), "stopped": what, "seconds": 0.0, "model_calls": 0})
         return None
+
+
+def _map_collection(change, stated_checks, proposed_checks, roots, *, deadline, collector):
+    """Optional pytest collection has no route into review evidence or outcomes."""
+    from g6.harness import change_map
+
+    proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in proposed_checks]
+    return change_map.collect_checks(change, stated_checks, proposed, roots, collector=collector, deadline=deadline)
+
+
+def _change_neighbourhood(change, stated_checks, proposed_checks, roots, *, deadline: float, collector=None) -> dict:
+    """Read a bounded inventory and connect calls only to pytest-collected bodies.
+
+    This is the last search activity, after the decided fields and closing snapshots. It cannot
+    consume another check's time or turn an analysis error into an evidence-stage reason.
+    """
+    from g6.harness import change_map
+
+    record = change_map.empty()
+    if deadline <= time.monotonic():
+        record["skipped"].append(change_map.skip("change map", "the time budget is spent"))
+        return record
+    if not any(p.endswith(".py") for p in change.files):
+        return record
+    collection = _map_collection(change, stated_checks, proposed_checks, roots,
+                                 deadline=min(deadline - 2.0, time.monotonic() + 10.0),
+                                 collector=repo_tests.collect if collector is None else collector)
+    end = min(deadline, time.monotonic() + 2.0)
+    if end <= time.monotonic():
+        record["skipped"].append(change_map.skip("change map", "the time budget is spent"))
+        return record
+    skipped = []
+
+    def checkpoint():
+        if time.monotonic() >= end:
+            raise TimeoutError("change map time budget is spent")
+        component_process.checkpoint()
+
+    def bounded(items):
+        for item in items:
+            checkpoint()
+            yield item
+
+    def read():
+        checkpoint()
+        base_names = repo_tests._paths(repo_tests._git(
+            change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit))
+        patch_names = repo_tests._paths(repo_tests._git(
+            change.repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        checks = {node.partition("::")[0] for node in bounded(stated_checks)}
+        paths = set()
+        for p in bounded((*base_names, *patch_names, *change.files)):
+            if p.endswith(".py"):
+                paths.add(p)
+            if len(paths) > change_map.MAX_FILES:
+                omitted = change_map.empty()
+                omitted["skipped"].append(change_map.skip("change map inventory", "file limit reached"))
+                return omitted
+        paths.update(change_map.pytest_context_paths(bounded((*base_names, *patch_names))))
+        inventory = sorted(paths,
+                           key=lambda p: (p not in change.files, p not in checks, p))
+        entries = repo_tests._listed_at(change.repo, change.base_commit, inventory)
+        base, patch, unavailable = {}, {}, set()
+        versions, total = {}, 0
+        for rel in bounded(inventory):
+            try:
+                # Validate the name before opening anything; disk and git names
+                # continue through the repository's existing crossing rules.
+                repo_tests._index_path(change.repo, rel)
+                path = repo_tests._disk(change.repo, rel)
+                if path is None or rel in change.outside_links or repo_tests._linked(path):
+                    raise ValueError("source path is unavailable or linked")
+                if path.is_file():
+                    raw = _change_map_text(change.repo, path, change_map.MAX_FILE_BYTES)
+                    if raw is None:
+                        raise ValueError("not a regular file inside the repository")
+                    if len(raw) > change_map.MAX_FILE_BYTES:
+                        skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file byte limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    text = (_python_source(raw) if rel.endswith(".py") else raw.decode("utf-8-sig"))
+                    if len(text) > change_map.MAX_FILE_CHARS:
+                        skipped.append(change_map.skip(f"change map: {shown_name(rel)}", "file text limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    patch[rel] = text
+                elif path.exists():
+                    raise ValueError("not a regular source file")
+                entry = entries.get(rel)
+                if entry and entry[0] in ("100644", "100755") and entry[1] == "blob":
+                    # The byte cap guards I/O before decoding; source character
+                    # counts apply independently to the resulting parser text.
+                    if int(entry[3]) > change_map.MAX_FILE_BYTES:
+                        skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
+                        unavailable.add(rel)
+                        continue
+                    if rel not in change.files and rel in patch:
+                        base[rel] = patch[rel]
+                    else:
+                        checkpoint()
+                        raw = repo_tests.blob_bytes(change.repo, entry[2])
+                        if len(raw) > change_map.MAX_FILE_BYTES:
+                            skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file byte limit reached"))
+                            unavailable.add(rel)
+                            continue
+                        text = (_python_source(raw) if rel.endswith(".py") else raw.decode("utf-8-sig"))
+                        if len(text) > change_map.MAX_FILE_CHARS:
+                            skipped.append(change_map.skip(f"change map: base {shown_name(rel)}", "file text limit reached"))
+                            unavailable.add(rel)
+                            continue
+                        base[rel] = text
+                elif entry:
+                    raise ValueError("not a regular source blob")
+            except (*LETS_THROUGH, TimeoutError):
+                raise
+            except Exception as exc:
+                unavailable.add(rel)
+                skipped.append(change_map.skip(f"change map: {shown_name(rel)}",
+                                               f"source unavailable ({type(exc).__name__})"))
+                continue
+            for texts in bounded((base, patch)):
+                if rel in texts:
+                    seen = versions.setdefault(rel, set())
+                    if texts[rel] not in seen:
+                        seen.add(texts[rel])
+                        total += len(texts[rel])
+            if total > change_map.MAX_TOTAL_CHARS:
+                omitted = change_map.empty()
+                omitted["skipped"] = [*skipped, change_map.skip("change map inventory", "total text limit reached")]
+                return omitted
+        for rel in bounded(unavailable):
+            base.pop(rel, None)
+            patch.pop(rel, None)
+        # Its contents are unavailable, but its name still prevents static
+        # admission. Never turn a failed configuration read into no config.
+        patch.update(dict.fromkeys(change_map.pytest_context_paths(unavailable), ""))
+        proposed = [p.model_dump() if hasattr(p, "model_dump") else p for p in bounded(proposed_checks)]
+        checkpoint()
+        record = change_map.build(change, base, patch, stated_checks=stated_checks,
+                                  proposed_checks=proposed, roots=roots, deadline=end, collection=collection)
+        record["skipped"] = [*skipped, *record["skipped"]]
+        return record
+
+    try:
+        record = repo_tests.within(max(0.001, end - time.monotonic()), read)
+    except LETS_THROUGH:
+        raise
+    except Exception as exc:
+        record = change_map.empty()
+        reason = "the time budget is spent" if isinstance(exc, TimeoutError) else f"static analysis stopped ({type(exc).__name__})"
+        record["skipped"].append(change_map.skip("change map", reason))
+    if record is None or time.monotonic() >= end:
+        record = change_map.empty()
+        record["skipped"] = [*skipped, change_map.skip("change map", "the time budget is spent")]
+    return change_map.json_record(record, deadline=end)
+
+
+def _python_source(raw: bytes) -> str:
+    """Decode parser input using Python's BOM and PEP 263 cookie rules."""
+    # Give the detector physical lines even for CR-only Python source files.
+    lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    # CPython searches the first two physical header lines as bytes. The
+    # tokenizer's public detector instead decodes those lines as UTF-8 first.
+    # Cookies use ASCII characters: project other header bytes to '?' for
+    # detection only, retaining a leading BOM and decoding the original bytes
+    # strictly once the cookie has selected the codec.
+    bom = b"\xef\xbb\xbf" if lines.startswith(b"\xef\xbb\xbf") else b""
+    reader = io.BytesIO(lines[len(bom):]).readline
+    header = bom + b"".join(reader().decode("latin-1").encode("ascii", "replace") for _ in range(2))
+    encoding, _ = tokenize.detect_encoding(io.BytesIO(header).readline)
+    return raw.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _change_map_text(root: Path, path: Path, limit: int) -> bytes | None:
+    """A capped read; containment is checked on the held file, as in repo_tests._read_inside."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode) or not repo_tests._within(root.resolve(), repo_tests._where(fd)):
+            return None
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            return handle.read(limit + 1)
+    finally:
+        os.close(fd)
 
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline, limit,
@@ -1080,6 +1298,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     related = repo_tests.test_related(change, ids)
     for finding in detect_test_weakening(*repo_tests.related_texts(change, related), tests=related).reasons:
         reason("integrity", "test_weakened", finding)
+    from g6.harness.library_review_gate import apply_review
+    apply_review(*repo_tests.related_texts(change, related), reasons, runs)
     runner = _runner_changes(change)
     if runner:
         reason("integrity", "runner_configuration_changed", "; ".join(runner))
@@ -1130,8 +1350,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 if i not in present}
     first: dict = {}
     if present:
+        from g6.harness.workflow.evidence import capture_sources
+
+        check_sources = capture_sources(root, present)
         first = _confined(_execute(root, present, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
-        runs.append(_record(1, "stated checks and extra tests", present, first))
+        runs.append(_record(1, "stated checks and extra tests", present, first, sources=check_sources))
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
@@ -1148,8 +1371,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                         "reason": "no check was stated" if not ids else "no stated check names a file on the tree"})
     for check in ids:
         if verdicts[check]["verdict"] in DEFECTS:
-            reason("tier_1", "check_failed", f"{check}: {verdicts[check]['verdict']} ({verdicts[check]['detail']})",
-                   node=check, ran=first)
+            raised = _failure_excerpt(first, check)
+            reason("tier_1", "check_failed", f"{check}: {verdicts[check]['verdict']} ({verdicts[check]['detail']})"
+                   + (f"; it raised: {raised}" if raised else ""), node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
     # The template instances, after tier 1, so reading and parsing the files never takes its time (review I7): read
@@ -1218,8 +1442,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
                             "reason": "no other test file names a changed module"})
         else:
+            from g6.harness.workflow.evidence import capture_sources
+
+            check_sources = capture_sources(root, derived)
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
-            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
+            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED,
+                                sources=check_sources))
             seen = {"run": ["derived"], "verdicts": _observed(stated_ids, second)}   # a stated check it collected
             observed.append(seen)
             if second["verdict"] in UNTRUSTED:
@@ -1386,6 +1614,20 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     self_checked = ", ".join(self_checked)
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
+    # Advisory search, deliberately after every decided field. Its skips bypass stopped_unknowns
+    # and never feed the reasons, requirements or gate. Preserve operator/allowance interrupts.
+    from g6.harness import change_map
+    try:
+        analysis_deadline = min(deadline, time.monotonic() + 12.0)
+        neighbourhood = _change_neighbourhood(change, ids, proposed, roots, deadline=analysis_deadline)
+        neighbourhood = change_map.json_record(neighbourhood, deadline=analysis_deadline)
+    except LETS_THROUGH:
+        raise
+    except Exception as exc:
+        neighbourhood = change_map.empty()
+        neighbourhood["skipped"].append(change_map.skip("change map", f"static analysis stopped ({type(exc).__name__})"))
+    skipped.extend({**entry, "check": _one_line(entry["check"]), "reason": _one_line(entry["reason"])}
+                   for entry in neighbourhood["skipped"])
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
@@ -1393,7 +1635,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
-                  stopped=stopped, proposer=proposals,
+                  stopped=stopped, proposer=proposals, neighbourhood=neighbourhood,
                   issuer_inputs={"check_sha": check_sha, "written": lambda check: written.get(check, True),
                                  "again": again, "observed": observed},
                   confirmed=(confirmed, enforced) if confirmed is not None else None)
@@ -1532,10 +1774,13 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
                         "time budget was spent")
         return []
+    from g6.harness.workflow.evidence import capture_sources
+
+    sources = capture_sources(change.repo, passing) if getattr(change, "repo", None) is not None else None
     ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
     if "isolation" in ran:   # it ran, in a copy
         runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
-                                                              "commit's code, in a copy"))
+                                                              "commit's code, in a copy", sources=sources))
     elsewhere = _loaded_elsewhere(change, ran)
     if elsewhere:   # review C1: it ran code other than the base commit's, so it says nothing of it
         unknowns.append(f"the run against the base commit's code is not read: {elsewhere}")
@@ -1589,12 +1834,15 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
         for rel in failing:
             uncompared(f"{shown(rel)} fails on the patch; the time budget was spent before it ran at the base commit")
         return
+    from g6.harness.workflow.evidence import capture_sources
+
+    sources = capture_sources(root, failing)
     replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
         runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {shown(rel)} at the base commit "
                                                                               "and on the patch, in a copy",
-                            provenance=DERIVED))
+                            provenance=DERIVED, sources=sources))
         elsewhere = _loaded_elsewhere(change, out)
         mine = [check for check in stated if _names(check, {rel})]
         unkept = out.get("baseline") == "passed" and out.get("patched", "not_run") != "not_run"   # ran, results not kept
@@ -1708,7 +1956,7 @@ def _one_line(text: object) -> str:
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="",
-           issuer_inputs=None, confirmed=None) -> dict:
+           issuer_inputs=None, confirmed=None, neighbourhood=None) -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here).
     ``issuer_inputs``: each stated check's SHA-256 and whether the patch wrote it, every other run that observed a
@@ -1747,7 +1995,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                    "repo_env": ran.get("repo_env"), "env_set_by_g6": ran.get("env_set_by_g6"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
     # the envelope's evidence items are as they were before checks carried a provenance (in scope.checks_run)
-    evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
+    evidence = [{"source": "g6.distill" if run.get("provenance") == "library" else "g6.workforce.repo_tests",
+                 "summary": f"tier {run['tier']}: {run['command']}: "
                  f"{run['verdict']}"[:200], "authority": "host-observed", "artifact_digest": artifact,
                  "base_commit": change.base_commit,
                  "scope": "these test outcomes on this working tree; not complete correctness",
@@ -1770,6 +2019,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                                                      artifact=artifact, base_commit=change.base_commit,
                                                      templates=prepared, adequacy=adequacy, stopped=stopped,
                                                      proposals=proposer)}
+    if neighbourhood is not None:
+        assessment["completion"]["neighbourhood"] = neighbourhood
     if issuer_inputs is not None:   # the one authority's statement of each requirement (G6 0.3, slice 2)
         from g6.harness import requirement_evidence
         # the review's own integrity rule: a run it does not believe is no evidence for the issuer either
@@ -1802,9 +2053,12 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                 standard, enforced, artifact=artifact, base_commit=change.base_commit, environment=confirmed_environment,
                 integrity=[r["code"] for r in reasons if r["stage"] == "integrity"])}
     from g6.harness import patch_report   # A1: the readable report, derived from the fields above; it decides nothing
+    assessment["card"] = patch_report.card(assessment, None)
     assessment["report"] = patch_report.safe_render(assessment)
     card = warning_card(CODE, summary, next_actions[0])
-    return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
+    library_block = "library_defect_detected" in codes
+    return {**envelope_fields(reliability_label="blocked-escalated" if library_block else "qualified-draft",
+                              warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),
             "ok": True, "assessment": assessment,
             "merge": {"status": "requires_separate_approval", "reason": MERGE_REASON, "reasons": merge_reasons},

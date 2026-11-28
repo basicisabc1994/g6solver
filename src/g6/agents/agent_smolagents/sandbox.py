@@ -30,6 +30,9 @@ Each run keeps the limits and the operating-system isolation ``run_script`` says
 the step's reason, so an unconfined step is never reported as confined.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
+
+from g6.core.decoder_limits import json_value as _decode_json
 
 import ast
 import inspect
@@ -39,8 +42,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from g6.core import confine
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 #: The modules a code step may import: fixed, and the list smolagents itself names to the model.
 ALLOWED_IMPORTS: tuple[str, ...] = ("collections", "datetime", "itertools", "math", "queue", "random", "re", "stat",
@@ -227,7 +229,7 @@ class SandboxSession:
         (``g6.core.confine.summary``; no run: none, "no untrusted code was run"); ``runs`` each run's limits."""
         return {"os_sandbox": bool(self.applied) and all(run["limits"].get("os_sandbox") is True
                                                          and run["isolation"].get("backend") for run in self.applied),
-                "isolation": confine.summary([run["isolation"] for run in self.applied]),
+                "isolation": confine_summary([run["isolation"] for run in self.applied]),
                 "runs": [run["limits"] for run in self.applied]}
 
     def run(self, code: str) -> tuple[Any, str, bool]:
@@ -256,7 +258,10 @@ class SandboxSession:
                              f"{printed[-_TAIL:]}")
         self.earlier.append(code)
         if FINAL in done.outputs:
-            return json.loads(done.outputs[FINAL].decode("utf-8")), printed, True
+            try:
+                return _decode_json(done.outputs[FINAL].decode("utf-8")), printed, True
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return None, printed, False
 
 

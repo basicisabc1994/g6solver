@@ -223,10 +223,15 @@ def test_the_command_line_still_inspects(tmp_path, monkeypatch, capsys):
 # The class, at its root ----------------------------------------------------------------------------------------------------
 
 def _calls(path: Path) -> list[str]:
-    """Each call in ``path`` to the built-in ``input`` or to an ``isatty`` method: a terminal asked for a person's answer."""
+    """Each call in ``path`` to the built-in ``input`` or to an ``isatty`` method: a terminal asked for a person's answer.
+    One probe is not one: ``g6 setup``'s ``_terminal`` (62119a05) asks whether a terminal is attached so that setup's
+    own question is never put to a missing one; it reads no answer."""
     found = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Call):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    probe = {id(node) for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef) and fn.name == "_terminal"
+             and path.name == "setup.py" and path.parent.name == "cli" for node in ast.walk(fn)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and id(node) not in probe:
             func = node.func
             if isinstance(func, ast.Name) and func.id == "input":
                 found.append(f"{path.name}:{node.lineno} input()")
@@ -241,3 +246,5 @@ def test_no_consent_surface_asks_a_terminal_for_an_answer():
     found = [call for folder in ("mcp", "metaharness", "cli") for path in sorted((source / folder).rglob("*.py"))
              for call in _calls(path)]
     assert found == []
+    setup = (source / "cli" / "setup.py").read_text(encoding="utf-8")   # the probe only ever stops a question
+    assert setup.count("_terminal()") == 2 and "if ask is input and not _terminal():" in setup

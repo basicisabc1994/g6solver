@@ -71,8 +71,21 @@ def _contracts() -> dict[str, dict]:
 def test_the_layer_contract_names_every_package_but_mcp_and_the_meta_harness() -> None:
     packages = {f"g6.{p.name}" for p in SRC.iterdir() if p.is_dir() and (p / "__init__.py").is_file()}
     layer = _contracts()["the meta-harness is a layer on top: MCP and CLI consent entry points"]
-    assert set(layer["source_modules"]) == packages - {"g6.mcp", "g6.metaharness"}
-    assert layer["ignore_imports"] == ["g6.cli -> g6.metaharness.surface"]
+    # g6.distill sits above the layer beside g6.mcp, each of its edges into the meta-harness named (since 64c4db67)
+    assert set(layer["source_modules"]) == packages - {"g6.mcp", "g6.metaharness", "g6.distill"}
+    assert layer["ignore_imports"] == [
+        "g6.cli -> g6.metaharness.surface",
+        "g6.distill.acceptance_gate -> g6.metaharness.gate",
+        "g6.distill.acceptance_gate -> g6.metaharness.evaluate",
+        "g6.distill.acceptance_gate -> g6.metaharness.schema",
+        "g6.distill.meta.policy_gate -> g6.metaharness.api",
+        "g6.distill.meta.policy_gate -> g6.metaharness.evaluate",
+        "g6.distill.meta.policy_gate -> g6.metaharness.gate",
+        "g6.distill.meta.policy_gate -> g6.metaharness.schema",
+        "g6.distill.meta.policy_gate -> g6.metaharness.select",
+        "g6.distill.meta.policy_gate -> g6.metaharness.tick_rca",
+        "g6.harness.library_review_gate -> g6.distill.acceptance_gate",
+    ]
     assert "g6.metaharness" in _contracts()["core is the kernel: it imports no component"]["forbidden_modules"]
 
 

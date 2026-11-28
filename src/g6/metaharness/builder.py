@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -151,8 +153,8 @@ class Builder:
         cases = []
         for line in (llm.complete("Draft development examples. JSON lines only.", prompt) or "").splitlines():
             try:
-                row = json.loads(line)
-            except ValueError:
+                row = _decode_json(line)
+            except (ValueError, RecursionError, MemoryError):
                 continue
             if isinstance(row, dict) and isinstance(row.get("input"), str) and "expected" in row:
                 cases.append(SuiteCase(f"draft{len(cases)}", row["input"], row["expected"]))

@@ -135,16 +135,19 @@ G6_CHILD, SANDBOX, PROGRAM = "g6", "sandbox", "program"
 CHILDREN = {
     ("mcp/improve.py", "_spawn", "subprocess.Popen"): G6_CHILD,                      # the runner, in the loop's folder
     ("mcp/improve.py", "_run_act", "subprocess.Popen"): G6_CHILD,                    # a person's act, in the loop's folder
-    ("metaharness/executor.py", "execute", "g6.core.sandbox.run_script"): SANDBOX,
-    ("metaharness/lora.py", "sandbox_trainer", "g6.core.sandbox.run_script"): SANDBOX,
-    ("metaharness/steps.py", "run_shown", "g6.core.sandbox.run_script"): SANDBOX,
+    # b076aa08: the three sandbox runs go through guidance_builders.script_run, which calls sandbox.run_script and marks
+    # the program's output as external text
+    ("metaharness/executor.py", "execute", "g6.core.guidance_builders.script_run"): SANDBOX,
+    ("metaharness/lora.py", "sandbox_trainer", "g6.core.guidance_builders.script_run"): SANDBOX,
+    ("metaharness/steps.py", "run_shown", "g6.core.guidance_builders.script_run"): SANDBOX,
     ("mcp/mission.py", "register", "subprocess.run"): PROGRAM,                       # git, in G6's copy
     ("mcp/mission.py", "register", "g6.core.git_env.safe_git"): PROGRAM,             # git's own checks
     ("mcp/__init__.py", "describe_reply", "g6.core.discovery.describe"): PROGRAM,    # outside programs' version probes
     # g6_invoke builds the person's configured model for a component that takes one, which may be their own claude or
     # codex (door.person_model, through llm.provider_from_env and host_models.CALLERS): found since the inventory
-    # follows a name bound to a table of callers
-    ("mcp/__init__.py", "invoke_reply", "g6.core.door.invoke_checked"): PROGRAM,
+    # follows a name bound to a table of callers; since 0b400900 through guidance_builders.invoke_checked, which calls
+    # door.invoke_checked with the component ingress that marks the component's result
+    ("mcp/__init__.py", "invoke_reply", "g6.core.guidance_builders.invoke_checked"): PROGRAM,
     # codex app-server: read_limits runs it through _ran, the one place its result is read (the refusals follow-up)
     ("self_maintenance/usage.py", "_ran", "g6.core.component_process.run_process"): PROGRAM,
     # the watched hosts the loop sends through, each built on the consent line's caller for its host (ConsentClaude and
@@ -153,6 +156,12 @@ CHILDREN = {
     ("self_maintenance/usage.py", "WatchedCodex", "g6.core.consent_callers.ConsentCodex"): PROGRAM,   # codex
     ("self_maintenance/usage.py", "_complete_host", "g6.core.host_models._run"): PROGRAM,   # claude or codex, one request
     ("self_maintenance/usage.py", "_launch", "g6.core.host_models._run"): PROGRAM,          # a session's own claude
+    # _OWNED_HOST_CLASSES (ce2daf65): the exact identities of G6's own watched host classes, built at import from the
+    # four callers and the two watched classes above; the same claude and codex, started by the same launch
+    ("self_maintenance/usage.py", "<module>", "g6.core.host_models.ClaudeCodeCaller"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.host_models.CodexCaller"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.consent_callers.ConsentClaude"): PROGRAM,
+    ("self_maintenance/usage.py", "<module>", "g6.core.consent_callers.ConsentCodex"): PROGRAM,
 }
 #: The packages whose children the inventory reads.
 PACKAGES = ("mcp", "metaharness", "self_maintenance")
@@ -278,7 +287,7 @@ def test_each_g6_child_starts_on_the_interpreter_and_the_import_path_the_server_
     ``_environment``, read from the code; a sandbox run starts isolated in a folder of G6's own; another program is not
     G6's Python."""
     for (rel, owner, _), kind in CHILDREN.items():
-        body = ast.unparse(_functions(rel)[owner])
+        body = (SRC / rel).read_text(encoding="utf-8") if owner == "<module>" else ast.unparse(_functions(rel)[owner])
         if kind == G6_CHILD:
             [start] = [n for n in ast.walk(_functions(rel)[owner]) if isinstance(n, ast.Call)
                        and ast.unparse(n.func) == "subprocess.Popen"]
@@ -1189,8 +1198,10 @@ AROUND = {
     ("metaharness/runner.py", "act.unchanged", "return None"): ("after", HANDED),
     ("metaharness/runner.py", "act.unchanged",
      "return _blocked(TERMS_CHANGED, f\"what the person read is no longer what stand"): ("after", HANDED),
+    # the same handler, which f702f18e widened to the decoder's limits (RecursionError, MemoryError)
     ("metaharness/runner.py", "act_main",
-     "except (ValueError, KeyError, TypeError) around request = json.loads(sys.stdin.read())"): ("after", NOT_KNOWN),
+     "except (ValueError, KeyError, TypeError, RecursionError, MemoryError) around request = _decode_json(sys.stdin.read())"):
+        ("after", NOT_KNOWN),
     ("metaharness/runner.py", "act_main",
      "return 1 if reply['completion_state'] == 'blocked-escalated' else 0"): ("after", HANDED),
     ("metaharness/runner.py", "as_recorded",
@@ -1259,6 +1270,8 @@ AROUND.update({
     ('mcp/improve.py', 'start', 'return _start_as_recorded(root, ident, {**_watch(root, _spawn(root, settings)'): ("after", "_start_as_recorded"),
     ('mcp/improve.py', 'stop', 'except BaseException around record_stop(root, why, at=utc(datetime.n'): ("after", "_stop_read_back"),
     ('mcp/improve.py', 'stop', 'except Exception around denial = _begin_stop(folder)'): ("after", NOT_KNOWN),
+    # 333bb3a4: a network or device folder is refused on its words, after the denial, before the stop is asked
+    ('mcp/improve.py', 'stop', 'return away'): ("before", ""),
     ('mcp/improve.py', 'stop', "return _blocked(STOP_FAILED, f'the stop could not be written: {type(exc).__na"): ("after", NOT_KNOWN),
 })
 # (end of the merged rows)
@@ -1907,6 +1920,18 @@ THE_RULE, BY_RULE, FROM_RULE, MADE_WHOLE, RUN_FOLDER, BOUND, PRINTED, WORDS, NOT
 #: Each place under ``src/g6`` that names one of the four, by module and innermost function or class, with how many
 #: times it names them, what it is, and why. Any other, or a count that moves, fails the inventory.
 PATH_PLACES = {
+    # the distill merges and the stdin placeholder (cf654f3b, 5fbc2bc2, c9d212f2, fef7645e, de9ce646, 61e71811, decd7a04):
+    # each refuses or checks a path a record, a configuration or the environment names; none builds an import path
+    ("distill/acceptance_gate.py", "_chronology"): (NOT_IMPORT, 1, "a registration and concept path in git history, refused "
+                                                                    "when absolute"),
+    ("distill/acceptance_gate.py", "_registration"): (NOT_IMPORT, 1, "the owner registration anchor path, refused when absolute"),
+    ("distill/held_out/case_gate.py", "python_path"): (NOT_IMPORT, 1, "a held-out case's relative Python source path"),
+    ("distill/ledger.py", "_intent_target"): (NOT_IMPORT, 1, "an intent target, read only under the state home"),
+    ("distill/missions.py", "build_mission"): (NOT_IMPORT, 2, "a mission's worktree, home and sign-in mount paths, checked "
+                                                               "by their words"),
+    ("distill/rectify_gate.py", "_pinning"): (NOT_IMPORT, 1, "a pinning test's repository path, refused when absolute"),
+    ("mcp/stdio.py", "_placeholder_path"): (NOT_IMPORT, 1, "the stdin placeholder's temporary folder, which must be "
+                                                              "absolute"),
     ("mcp/improve.py", "_stands_alone"): (THE_RULE, 2, "names the two predicates it does not use, and why"),
     ("mcp/improve.py", "_import_path"): (BY_RULE, 1, "the server's one root as an absolute argument"),
     ("mcp/improve.py", "<module>"): (FROM_RULE, 3, "the bootstrap inserts the exact roots from its list argument"),
@@ -1915,13 +1940,19 @@ PATH_PLACES = {
     ("metaharness/runner.py", "_g6_terms"): (WORDS, 1, "what a pinned interpreter's act names as its G6"),
     ("cegis/runner.py", "<module>"): (MADE_WHOLE, 2, "the cegis child (-I) appends the folder of the server's g6, "
                                                      "resolved in the parent"),
+    # the agentic kernel merge (334c6254): its confined child is built as the cegis child is
+    ("_agentic/_child.py", "<module>"): (MADE_WHOLE, 1, "the override kernel's child (-I) appends the folder of the "
+                                                         "server's g6, resolved in the parent"),
     ("workforce/truth.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the repository first, resolved in "
                                                         "the parent"),
     ("workforce/truth.py", "run_isolated"): (WORDS, 1, "says the test's child runs -I"),
     # 4 since the 0.3 merges: the three in the child's script, and a report field's check that a copy's Python names are
     # relative (``python_sources``), which is no import path
-    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 4, "a repository's tests (-I) put the resolved repository's "
-                                                             "folders first, after dropping '' and their own folder"),
+    ("workforce/repo_tests.py", "<module>"): (MADE_WHOLE, 8, "a repository's tests (-I) put the resolved repository's "
+                                                             "folders first, after dropping '' and their own folder; "
+                                                             "the collect-only bootstrap text records the runtime's "
+                                                             "sys.path before any repository path and refuses absolute "
+                                                             "or parent-relative collected definition paths"),
     # since the certificate issuance window before 0.3.0 (review-cfu3, finding 1): no longer BOUND. The three are in
     # the bootstrap, the loop children's own text; its environment names no import path
     ("core/promotion_custody.py", "<module>"): (MADE_WHOLE, 3, "the evaluator child (-I) inserts the roots of its list "
@@ -1949,6 +1980,7 @@ PATH_PLACES = {
     ("code/_build.py", "write_files"): (NOT_IMPORT, 1, "a folder a build writes into"),
     ("code/_roots.py", "parse"): (NOT_IMPORT, 1, "a configured root folder"),
     ("code/_roots.py", "_given"): (NOT_IMPORT, 1, "a configured root folder"),
+    ("code/_roots.py", "_lexically_outside"): (NOT_IMPORT, 1, "a path under a configured root, read by its words"),
     ("core/component_certificate.py", "inside"): (NOT_IMPORT, 1, "a file a certificate names"),
     ("core/confine.py", "child_environment"): (NOT_IMPORT, 1, "a confined child's home and tool folders, never its "
                                                               "import path"),
@@ -1964,9 +1996,10 @@ PATH_PLACES = {
     ("self_training/persistence.py", "_resolve_store_dir"): (NOT_IMPORT, 1, "a scorecard store folder"),
     ("sources/australian_legal_corpus/block.py", "_register"): (NOT_IMPORT, 1, "a downloaded file"),
     ("sources/ctx_git/config.py", "parse"): (NOT_IMPORT, 1, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "repository"): (NOT_IMPORT, 2, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "_common"): (NOT_IMPORT, 1, "a git repository's own paths"),
-    ("sources/ctx_git/config.py", "_alternates"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    # 65eb0260 and the storage follow-ups moved the metadata entries' checks into _metadata_entry and _includes
+    ("sources/ctx_git/config.py", "repository"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_metadata_entry"): (NOT_IMPORT, 1, "a git repository's own paths"),
+    ("sources/ctx_git/config.py", "_includes"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("sources/ctx_git/config.py", "destination"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("sources/ctx_git/config.py", "inside"): (NOT_IMPORT, 1, "a git repository's own paths"),
     ("workforce/bench.py", "_inside"): (NOT_IMPORT, 1, "a file inside a repository copy"),
@@ -1994,6 +2027,11 @@ PATH_PLACES = {
     ("_context_engine/_scope.py", "inside"): (NOT_IMPORT, 1, "a path a caller asks to index, held inside a listed root"),
     ("mcp/workflow.py", "_project"): (NOT_IMPORT, 1, "the repository a workflow's project is named by: a full path to a "
                                                      "folder, or there is no project"),
+    ('workforce/_collection_compile.py', 'compile_sources'): (RUN_FOLDER, 4, 'isolated compiler removes repository import paths, then adds only installed pytest runtime paths'),
+    ('workforce/repo_tests.py', '_compile_collection_sources'): (NOT_IMPORT, 2, 'collection compiler requires an absolute interpreter and bounds installed runtime paths outside repository source'),
+    ('workforce/repo_tests.py', '_read_collection'): (NOT_IMPORT, 1, 'normalize an absolute collected definition path within the reviewed repository'),
+    ('workforce/_collection_effects.py', '<module>'): (WORDS, 7, 'installed collection lookup table and source-policy comments name import paths; no child path is built'),
+    ('workforce/_collection_effects.py', '__init__'): (NOT_IMPORT, 1, 'reject an absolute declared repository import root in the static source reader'),
 }
 #: Each place that builds a G6 child's import path or names its interpreter, which decides by the rule.
 RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"),
@@ -2001,7 +2039,9 @@ RULED = (("mcp/improve.py", "_import_path"), ("mcp/improve.py", "_pinned_python"
 #: How each child's import path built from a folder made whole is made, read from the code: the function, and what in it
 #: makes the folder whole before any child sees it.
 MADE = {
-    ("cegis/runner.py", "<module>"): [("cegis/runner.py", "_call", "Path(g6.__file__).resolve()")],
+    # SubprocessRunner's, named by its class: 2e3cc2ae added the kernel child's in-process runner, with a _call of its own
+    ("cegis/runner.py", "<module>"): [("cegis/runner.py", "SubprocessRunner", "Path(g6.__file__).resolve()")],
+    ("_agentic/_child.py", "<module>"): [("_agentic/_child.py", "launch", "Path(g6.__file__).resolve()")],
     ("workforce/truth.py", "<module>"): [("workforce/truth.py", "run_isolated", "Path(repo).resolve()"),
                                          ("workforce/truth.py", "run_suite", "Path(repo).resolve()")],
     ("workforce/repo_tests.py", "<module>"): [("workforce/repo_tests.py", "checked_repo", "given.resolve()"),

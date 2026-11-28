@@ -57,8 +57,12 @@ shares its process with pytest and its report. Shares the process control (``g6.
 invoked here.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refusal, confine_refused, confine_summary
+
+from g6.core.decoder_limits import decode, json_value as _decode_json
 
 import ast
+import base64
 import configparser
 import fnmatch
 import hashlib
@@ -74,8 +78,10 @@ import sys
 import tempfile
 import time
 import tomllib
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -294,8 +300,8 @@ def probe_observations(output: str) -> list[dict] | None | str:
         if len(line) > MAX_OBSERVATION_CHARS:
             return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
         try:
-            item = json.loads(line, object_pairs_hook=_report_object)
-        except (ValueError, RecursionError):
+            item = _decode_json(line, object_pairs_hook=_report_object)
+        except (ValueError, RecursionError, MemoryError):
             return f"an observation is not JSON: {line[:80]!r}"
         if not (type(item) is dict and set(item) == {"input", "output"}):
             return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
@@ -791,15 +797,19 @@ def read_observation(raw: object) -> dict | None:
             and all(name in found for name, required in OBSERVATION_FIELDS.items() if required)
             and found["verdict"] == OBSERVED_VERDICTS[found["g6_observation"]["result"]]):
         return None
-    return json.loads(json.dumps(found, allow_nan=False))
+    try:
+        return _decode_json(json.dumps(found, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class RepoRefused(ValueError):
     """The repository or the request cannot be run; ``code`` is its stable ``G6_E_*`` code."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, isolation: dict[str, object] | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.isolation = dict(isolation or {})
 
 
 #: Before every git command: no index refresh (``--no-optional-locks``); paths are paths, never patterns
@@ -843,7 +853,7 @@ def _argument(value: str | bytes) -> str | bytes:
 
 
 def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
-         index: Path | None = None) -> bytes:
+         index: Path | None = None, isolated_config: bool = False) -> bytes:
     """One read-only git command in ``repo`` (``_GIT``'s options first), in ``git_env.safe_git_env``'s clean
     environment (none of git's own redirections such as GIT_DIR, no transport, no lazy fetch) with every config key
     that would start a program switched off, the drivers any config defines included (one ``git_env.DRIVER_QUERY``
@@ -854,15 +864,20 @@ def _git(repo: Path, *args: str | bytes, ok: tuple[int, ...] = (0,), timeout_s: 
     if find_program("git") is None:
         raise RepoRefused("G6_E_GIT_MISSING_BINARY", SAID["no_git"])
     args = tuple(_argument(arg) for arg in args)
+    def environment(scratch, drivers=()):
+        env = git_env.safe_git_env(Path(scratch), drivers)
+        if isolated_config:
+            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_GLOBAL=os.devnull)
+        return env
     try:
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors, \
                 tempfile.TemporaryDirectory(prefix="g6-git-") as scratch:
             with component_process.window(timeout_s):
                 code = component_process.run_process([git_env.git_program(), "-C", str(repo), *git_env.DRIVER_QUERY],
-                                                     env=git_env.safe_git_env(Path(scratch)), stdout=output,
+                                                     env=environment(scratch), stdout=output,
                                                      stderr=errors)
                 output.seek(0)
-                env = git_env.safe_git_env(Path(scratch), git_env.driver_settings(code, output.read()))
+                env = environment(scratch, git_env.driver_settings(code, output.read()))
                 if index is not None:
                     env["GIT_INDEX_FILE"] = str(index)
                 output.seek(0)
@@ -1062,13 +1077,22 @@ def _index_path(repo: Path, rel: str, linked: dict[Path, bool] | None = None) ->
 
 
 def checked_repo(path: str | Path) -> Path:
-    """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top."""
+    """The repository's top folder, or a refusal: a full path, a folder, a git work tree, and its top. A network or
+    device path is refused on its words, before anything asks the file system about it (``storage._elsewhere``, the
+    rule every path entry point applies first): asking Windows about a share opens it over the network. The folder it
+    resolves to is held to the same rule."""
+    from g6.core.storage import _elsewhere
+
+    if why := _elsewhere(str(path)):
+        raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     given = Path(str(path))
     if not given.is_absolute():
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["not_absolute"])
     if not given.is_dir():
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["not_a_folder"])
     repo = given.resolve()
+    if why := _elsewhere(str(repo)):
+        raise RepoRefused("G6_E_INPUT_VALIDATION", why)
     try:
         top = _git(repo, "rev-parse", "--show-toplevel").decode("utf-8", "replace").strip()
     except RepoRefused as refused:
@@ -2211,6 +2235,84 @@ sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
+# Ordinary execution keeps its original bootstrap and progress schema. Only
+# the isolated collect-only child writes this separate advisory report.
+_COLLECTION_BOOT = _BOOT.replace('import pytest\n', '''import pytest
+# Runtime context captured before any repository path or code is admitted.
+_g6_compiler_runtime = {"python": sys.executable, "paths": list(sys.path)}
+''', 1).replace('args = sys.argv[9:]\n', '''_g6_collection_repo = sys.argv.pop(9)
+args = sys.argv[9:]
+''').replace('        status = getattr(session, "exitstatus", None)\n', '''        status = getattr(session, "exitstatus", None)
+        import os, types, pytest
+        from _pytest.unittest import TestCaseFunction
+        # The parent supplies the reviewed repository explicitly. pytest may
+        # choose an ancestor root, and hooks may change the working directory.
+        repository = globals().get("_g6_collection_repo")
+        report_root = repository or self.rootdir
+        names = {}
+        for item in session.items:
+            node = item.nodeid
+            if repository:
+                path, separator, selection = node.partition("::")
+                path = os.path.relpath(os.path.realpath(os.path.join(self.rootdir, path)),
+                                       repository).replace(os.sep, "/")
+                if path == ".." or path.startswith("../") or os.path.isabs(path):
+                    report_root = ""  # an unreadable selection cannot establish absence
+                node = path + separator + selection
+            names[item.nodeid] = node
+        def identity(code):
+            import hashlib
+            def pack(value):
+                if isinstance(value, types.CodeType):
+                    return ["code", [pack(getattr(value, field, b"")) for field in (
+                        "co_code", "co_consts", "co_names", "co_varnames", "co_freevars", "co_cellvars",
+                        "co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals",
+                        "co_stacksize", "co_flags", "co_name", "co_qualname", "co_exceptiontable")]]
+                if isinstance(value, (tuple, frozenset)):
+                    items = [pack(item) for item in value]
+                    if isinstance(value, frozenset):
+                        items.sort(key=lambda item: json.dumps(item, ensure_ascii=True))
+                    return [type(value).__name__, items]
+                return [type(value).__name__, repr(value)]
+            return hashlib.sha256(json.dumps(pack(code), ensure_ascii=True).encode("utf-8")).hexdigest()
+        bodies, codes = {}, {}
+        for item in session.items:
+            try:
+                if type(item) not in (pytest.Function, TestCaseFunction):
+                    continue
+                obj = getattr(item, "obj", None)
+                if type(obj) is types.MethodType:
+                    obj = obj.__func__
+                if type(obj) is not types.FunctionType:
+                    continue
+                # No unwrapping: __wrapped__ may name a body pytest never calls.
+                if obj.__name__ != getattr(item, "originalname", None):
+                    continue
+                code = obj.__code__
+                if not os.path.isabs(code.co_filename):
+                    continue
+                file = os.path.realpath(code.co_filename)
+                if repository:
+                    file = os.path.relpath(file, repository).replace(os.sep, "/")
+                    if file == ".." or file.startswith("../") or os.path.isabs(file):
+                        continue
+                # A standalone producer can retain an absolute identity; only
+                # the reader, given the reviewed root, may make it relative.
+                bodies[names[item.nodeid]] = {"file": file, "line": code.co_firstlineno}
+                codes[names[item.nodeid]] = identity(code)
+            except Exception:
+                pass
+        report = {"nodes": list(names.values()), "root": report_root,
+                  "exit": int(status) if status is not None else None}
+        if globals().get("_g6_compiler_runtime"):
+            report["compiler_runtime"] = _g6_compiler_runtime
+        if bodies:
+            report["bodies"] = bodies
+            report["codes"] = codes
+        with open(counted + ".collection.json", "w", encoding="utf-8") as handle:
+            json.dump(report, handle)
+''')
+
 
 def _untracked(repo: Path) -> list[str]:
     """The files git lists as untracked and not ignored (a nested repository as its folder)."""
@@ -2454,8 +2556,8 @@ def _repo_env() -> dict[str, str]:
     if not raw.strip():
         return {}
     try:
-        found = json.loads(raw)
-    except ValueError:
+        found = _decode_json(raw)
+    except (ValueError, RecursionError, MemoryError):
         found = None
     if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str)
                                               for key, value in found.items()):
@@ -2811,8 +2913,8 @@ def _progress(counts: dict[str, int], counted: Path) -> dict:
     typed identity hints survive so unknown observations can reach issuance.
     """
     try:
-        raw = json.loads(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
-    except (OSError, ValueError, RecursionError):
+        raw = _decode_json(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+    except (OSError, ValueError, RecursionError, MemoryError):
         raw = None
     # Progress has no process verdict yet. An incomplete diagnostic reads its
     # dispositions without pretending the process has already failed.
@@ -2841,9 +2943,9 @@ def _loaded(path: Path) -> tuple[dict[str, str], bool]:
     try:
         if path.stat().st_size > LOADED_BYTES:
             return {}, False
-        found = json.loads(path.read_text(encoding="utf-8"))
+        found = _decode_json(path.read_text(encoding="utf-8"))
         return {str(name): str(file) for name, file in found["modules"].items()}, found["complete"] is True
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError):
         return {}, False
 
 
@@ -3018,6 +3120,354 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
                 require_isolation=require_isolation)
 
 
+def collect(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = 10,
+            sources: dict[str, str] | None = None) -> dict:
+    """Advisory collection only, always confined, with the repository's config and hooks.
+
+    No receipt or test verdict is produced. Interpreter and environment preflight
+    refuse exactly as ``run`` does, before copying or entering the work window.
+    Collection failure and missing isolation leave collection uncertain, and
+    never authorise a fallback without isolation.
+    """
+    root = checked_repo(repo)
+    python = interpreter(root)
+    _repo_env()
+
+    def run_collection():
+        if sources:
+            deadline = time.monotonic() + timeout_s
+            with repository_copy(root, deadline=deadline, before=sources) as copy:
+                return _run(copy, tests, roots=roots, timeout_s=timeout_s, network=False,
+                            python=python, require_isolation=True, collect_only=True, copied=True,
+                            scratch_dir=copy.parent, deadline=deadline)
+        return _run(root, tests, roots=roots, timeout_s=timeout_s, network=False,
+                    python=python, require_isolation=True, collect_only=True)
+
+    try:
+        found = within(timeout_s, run_collection)
+        return found if found is not None else {"status": "uncertain", "reason": "pytest collection timed out"}
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except RepoRefused as exc:
+        return {"status": "uncertain", "reason": f"pytest collection refused ({exc.code})"}
+    except Exception as exc:
+        return {"status": "uncertain", "reason": f"pytest collection unavailable ({type(exc).__name__})"}
+
+
+_COLLECTION_INVENTORIES = ContextVar("collection_copy_inventories", default={})
+
+
+class _CollectionSources(dict):
+    """Source bytes plus omissions carried to the collection answer."""
+    def __init__(self):
+        super().__init__()
+        self.not_read = []
+
+
+def _collection_source_passive(tree, modules):
+    """Compatibility entry for a single module's visible collection effects."""
+    from g6.workforce._collection_effects import CollectionEffects
+
+    return CollectionEffects({"__entry__.py": tree}, modules=modules).passive("__entry__.py")
+
+
+def _collection_config_passive(path):
+    """Only parsed options that cannot select or replace collected bodies."""
+    from g6.harness.change_map import MAX_FILE_BYTES
+
+    if _linked(path) or path.stat().st_size > MAX_FILE_BYTES:
+        return False
+    text = path.read_text(encoding="utf-8-sig")
+    try:
+        if path.suffix == ".toml":
+            data = tomllib.loads(text)
+            data = data.get("tool", {}).get("pytest", {}) if path.name == "pyproject.toml" else data.get("pytest", {})
+            values = data.get("ini_options", data)
+        else:
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.read_string(text)
+            section = "tool:pytest" if path.name == "setup.cfg" else "pytest"
+            values = dict(parser[section]) if parser.has_section(section) else {}
+        if not isinstance(values, dict):
+            return False
+        allowed = {"minversion", "markers", "filterwarnings", "xfail_strict", "console_output_style", "required_plugins",
+                   "python_functions"}
+        for key, value in values.items():
+            component_process.checkpoint()
+            if key == "addopts":
+                # Only function-name overrides: they select existing bodies,
+                # without changing class holders, imports or plugin loading.
+                if not isinstance(value, str):
+                    return False
+                options = value.split()
+                if len(options) != 2 or options[0] not in ("-o", "--override-ini"):
+                    return False
+                name, separator, pattern = options[1].partition("=")
+                if name != "python_functions" or not separator or not pattern:
+                    return False
+                continue
+            if key not in allowed and not key.startswith(("log_", "junit_")):
+                return False
+            if not (isinstance(value, (str, bool, int, float)) or
+                    isinstance(value, list) and all(isinstance(item, str) for item in value)):
+                return False
+            if key == "xfail_strict" and not (isinstance(value, bool) or
+                    isinstance(value, str) and value.lower() in ("true", "false", "yes", "no", "1", "0")):
+                return False
+        return True
+    except (ValueError, TypeError, AttributeError, configparser.Error):
+        return False
+
+
+def _collection_evidence(repo: Path, *, roots=(), selections=()):
+    """Bounded pre-launch source read for honest collection, not hostile authority."""
+    from g6.harness import change_map
+    from g6.workforce._collection_effects import CollectionEffects, module_names
+
+    sources = _CollectionSources()
+    try:
+        paths = _COLLECTION_INVENTORIES.get().get(repo.resolve())
+        if paths is None:
+            paths = _paths(_git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        files = {file for file in paths if file.endswith(".py")}
+        if len(files) > change_map.MAX_FILES:
+            return sources, False
+        directories = {repo}
+        for file in sorted(files):
+            component_process.checkpoint()
+            path = _disk(repo, file)
+            if path is None:
+                return sources, False
+            directory = path.parent
+            while directory != repo:
+                component_process.checkpoint()
+                if not _within(repo, directory):
+                    return sources, False
+                directories.add(directory)
+                directory = directory.parent
+        # Ignoring context in git does not stop pytest reading it. Conftest
+        # bytes use the same path, link, size and effect checks as listed files.
+        for directory in sorted(directories):
+            component_process.checkpoint()
+            config = _config_file(directory)
+            if config is not None and not _collection_config_passive(config):
+                return sources, False
+            if os.path.lexists(directory / "conftest.py"):
+                files.add((directory / "conftest.py").relative_to(repo).as_posix())
+        if len(files) > change_map.MAX_FILES:
+            return sources, False
+        total = 0
+        trees, invalid = {}, set()
+        for file in sorted(files):
+            component_process.checkpoint()
+            path = repo / _test_id(repo, file, "collection source")
+            if _linked(path) or not path.is_file() or path.stat().st_size > change_map.MAX_FILE_BYTES:
+                return sources, False
+            data = path.read_bytes()
+            total += len(data)
+            if len(data) > change_map.MAX_FILE_BYTES or total > change_map.MAX_TOTAL_CHARS:
+                return sources, False
+            sources[file] = data
+            try:
+                trees[file] = ast.parse(data)
+            except (SyntaxError, ValueError):
+                invalid.add(file)
+        explicit = {selection.partition("::")[0] for selection in selections}
+        collection_files = {file for file in files if file in explicit or PurePosixPath(file).name == "conftest.py" or
+                            any(fnmatch.fnmatch(PurePosixPath(file).name, pattern) for pattern in ("test_*.py", "*_test.py"))}
+        reader = CollectionEffects.from_trees(trees, roots=roots, files=files, collection_files=collection_files)
+        imported = set()
+        for file, tree in trees.items():
+            pending = deque([tree])
+            while pending:
+                component_process.checkpoint()
+                node = pending.popleft()
+                if isinstance(node, ast.Import):
+                    imported.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    module = reader.import_module(file, node)
+                    imported.add(module)
+                    imported.update(".".join(part for part in (module, alias.name) if part) for alias in node.names)
+                pending.extend(ast.iter_child_nodes(node))
+        imported_modules = {".".join(parts[:end]) for dependency in imported for parts in [dependency.split(".")]
+                            for end in range(1, len(parts) + 1)}
+        for file in sorted(invalid):
+            component_process.checkpoint()
+            names = module_names(file, roots)
+            # Collection-changing naming configuration was already refused;
+            # only pytest's defaults can reach this point.
+            package = _disk(repo, file)
+            if package is None:
+                return sources, False
+            package = package.parent
+            loaded = (file in collection_files or
+                      PurePosixPath(file).name == "__init__.py" and any(
+                          (candidate_path := _disk(repo, candidate)) is not None and _within(package, candidate_path)
+                          for candidate in collection_files) or
+                      bool(names & imported_modules))
+            if loaded:
+                return sources, False
+            del sources[file]
+            sources.not_read.append({"file": file, "reason": "source does not parse and is not loaded by collection"})
+        return sources, reader.passive_all()
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except (OSError, ValueError, SyntaxError, TypeError, RecursionError, RepoRefused):
+        return sources, False
+
+
+def _compile_collection_sources(repo, sources, runtime, python=None):
+    """Compile our source bytes in an isolated owned process using the test runtime.
+
+    Runtime hints are diagnostic collection data within the same-process limit;
+    the production runner supplies the chosen executable independently.
+    """
+    component_process.checkpoint()
+    runtime = runtime if isinstance(runtime, dict) else {}
+    executable = python or runtime.get("python") or interpreter(repo)
+    if (not isinstance(executable, str) or not Path(executable).is_absolute() or
+            not _PYTHON_NAME.fullmatch(Path(executable).name) or not Path(executable).is_file()):
+        raise ValueError("repository compiler interpreter unavailable")
+    if not python and _within(repo.resolve(), Path(executable).resolve()):
+        # A report cannot choose a repository executable. Only the ordinary
+        # interpreter preflight can authorize the repository's environment.
+        if executable != interpreter(repo):
+            raise ValueError("repository compiler interpreter not selected by G6")
+    paths = runtime.get("paths", [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise ValueError("repository compiler pytest paths unavailable")
+    environments = tuple(Path(folder).resolve() for folder in _environment_of(executable))
+    paths = [path for path in paths if Path(path).is_absolute() and
+             (not _within(repo.resolve(), Path(path).resolve()) or any(
+                 _within(folder, Path(path).resolve()) and Path(path).name in ("site-packages", "dist-packages")
+                 for folder in environments))]
+    remaining = component_process.checkpoint()
+    seconds = min(10., remaining) if remaining is not None else 10.
+    request = {"seconds": seconds, "repository": str(repo.resolve()), "paths": paths, "sources": {
+        file: {"bytes": base64.b64encode(data).decode("ascii"),
+               "filename": str(repo / _test_id(repo, file, "collection source"))} for file, data in sources.items()}}
+    worker = Path(__file__).with_name("_collection_compile.py")
+    with component_process.window(seconds):
+        completed = component_process.run_contained(
+            [executable, "-I", "-B", "-X", "utf8", str(worker)], cwd=worker.parent,
+            env={key: value for key, value in os.environ.items() if key in _KEEP},
+            input_bytes=json.dumps(request).encode("utf-8"))
+    if completed.returncode != 0:
+        raise ValueError(f"repository compiler exited {completed.returncode}")
+    try:
+        response = decode(completed.stdout)
+    except json.JSONDecodeError:
+        raise
+    except ValueError:   # past the decoder's limits (decode raises nothing else here): never a usable identity
+        raise ValueError("repository compiler response exceeds decoder limits") from None
+    if response.get("error"):
+        raise ValueError(response["error"])
+    if type(response.get("compiled")) is not dict or set(response["compiled"]) != set(sources):
+        raise ValueError("repository compiler returned incomplete source identities")
+    return response["compiled"]
+
+
+def _read_collection(counted: Path, code: int | None, repo: Path, *, evidence=None, python=None) -> dict:
+    """Read structured selected ids, never terminal output or a partial collection."""
+    if code not in (0, 5):
+        reason = "timed out" if code is None else f"errors (exit {code})"
+        return {"status": "uncertain", "reason": f"pytest collection {reason}"}
+    try:
+        if counted.stat().st_size > 2_000_000:
+            raise ValueError("collection report size limit")
+        raw = _decode_json(counted.read_text(encoding="utf-8"), object_pairs_hook=_report_object)
+        nodes, rootdir = raw["nodes"], raw["root"]
+        if (type(raw.get("exit")) is not int or raw["exit"] != code or
+                type(nodes) is not list or len(nodes) > 10_000 or not isinstance(rootdir, str) or
+                not rootdir or not _within(repo.resolve(), Path(rootdir).resolve())):
+            raise ValueError("incomplete collection report")
+        prefix = _root(repo, rootdir)
+        result = []
+        for node in nodes:
+            component_process.checkpoint()
+            if (not isinstance(node, str) or shape_problem(node, "collected node") or
+                    "::" not in node or ".." in node.partition("::")[0].split("/")):
+                raise ValueError("invalid collected node")
+            result.append(f"{prefix}/{node}" if prefix else node)
+        answer = {"status": "available", "nodes": sorted(set(result))}
+        source_evidence = _collection_evidence(repo) if evidence is None else evidence
+        not_read = getattr(source_evidence[0], "not_read", ())
+        if not_read:
+            answer["not_read"] = list(not_read)
+        if "bodies" in raw:
+            bodies = raw["bodies"]
+            selected = set(nodes)
+            if type(bodies) is not dict or any(node not in selected for node in bodies):
+                raise ValueError("invalid collected callable identities")
+            mapped = {}
+            for node, body in bodies.items():
+                component_process.checkpoint()
+                if type(body) is not dict or set(body) != {"file", "line"}:
+                    raise ValueError("invalid collected callable identity")
+                file, line = body["file"], body["line"]
+                if (not isinstance(file, str) or _control(file) or
+                        (not Path(file).is_absolute() and shape_problem(file, "collected callable file")) or
+                        ".." in file.replace("\\", "/").split("/") or
+                        type(line) is not int or line < 1):
+                    raise ValueError("invalid collected callable location")
+                location = (repo / file).resolve()
+                if not _within(repo.resolve(), location):
+                    raise ValueError("invalid collected callable location")
+                file = location.relative_to(repo.resolve()).as_posix()
+                if shape_problem(file, "collected callable file"):
+                    raise ValueError("invalid collected callable location")
+                mapped[f"{prefix}/{node}" if prefix else node] = {"file": file, "line": line}
+            if mapped:
+                answer["bodies"] = mapped
+                sources, authoritative = source_evidence
+                codes, unresolved, admitted_codes = raw.get("codes", {}), [], {}
+                wanted = {body["file"] for body in mapped.values() if body["file"] in sources}
+                compiled = {}
+                if authoritative and wanted:
+                    try:
+                        compiled = _compile_collection_sources(repo, {file: sources[file] for file in wanted},
+                                                               raw.get("compiler_runtime"), python)
+                    except component_process.ExecutionInterrupted as exc:
+                        if exc.stopped:
+                            raise
+                        component_process.checkpoint()  # an enclosing allowance still reaches the Door
+                        return {"status": "uncertain", "reason": "pytest collection compilation time limit reached"}
+                    except (OSError, ValueError, TypeError, KeyError, RecursionError, ImportError) as exc:
+                        return {"status": "uncertain", "reason": f"pytest collection compilation unavailable ({exc})"}
+                tables = {file: {(name, line): values for name, line, values in item["codes"]}
+                          for file, item in compiled.items()}
+                call_tables = {file: {tuple(key) for key in item["calls"]} for file, item in compiled.items()}
+                for node, body in mapped.items():
+                    component_process.checkpoint()
+                    original = node.removeprefix(prefix + "/") if prefix else node
+                    file = body["file"]
+                    try:
+                        if not authoritative or type(codes) is not dict or file not in compiled:
+                            raise ValueError("collection producer authority unavailable")
+                        selection = original.partition("::")[2]
+                        name = selection.split("[", 1)[0].rsplit("::", 1)[-1]
+                        key = (name, body["line"])
+                        expected = tables[file].get(key, ())
+                        if not isinstance(codes.get(original), str) or codes[original] not in expected:
+                            raise ValueError("collected code differs from G6 compilation")
+                        if key in call_tables[file]:
+                            admitted_codes[node] = codes[original]
+                    except (ValueError, TypeError):
+                        unresolved.append(node)
+                if unresolved:
+                    answer["unresolved"] = unresolved
+                if admitted_codes:
+                    answer["codes"] = admitted_codes
+                    answer["compilations"] = compiled
+        if not nodes:
+            _, authoritative = source_evidence
+            if not authoritative:
+                return {"status": "uncertain", "reason": "pytest collection producer authority unavailable"}
+        return answer
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, MemoryError):
+        return {"status": "uncertain", "reason": "pytest collection report unavailable or incomplete"}
+
+
 def _test_id(repo: Path, test: str, what: str = "test") -> str:
     """A test (or, ``what``, a module) as pytest, which opens it, is given it: a file git listed (``GitName``) as the system
     is given it (``_on_disk``), its shape judged on the name and inside by ``_within``, the one containment rule (repair 3,
@@ -3036,7 +3486,8 @@ def _test_id(repo: Path, test: str, what: str = "test") -> str:
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None) -> dict:
+         require_isolation: bool = False, links: dict | None = None, observation: dict | None = None,
+         collect_only: bool = False) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
     unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
@@ -3050,6 +3501,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             raise RepoRefused("G6_E_INPUT_VALIDATION", "an observation needs one copied, isolated, offline run")
         return behaviour_runner.run(repo, observation, tests[0], timeout_s=timeout_s,
                                     deadline=deadline if deadline is not None else time.monotonic() + timeout_s)
+    if collect_only and (not require_isolation or receipt or mutant is not None):
+        raise ValueError("collection requires isolation and cannot produce test evidence")
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [_test_id(repo, test) for test in tests]
@@ -3073,7 +3526,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     began = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip() if receipt else ""
     command = f"pytest {len(ids)} test id(s) in place"
-    isolation = confine.summary([])
+    isolation = confine_summary([])
     own_config: list[str] = []   # the arguments of the empty configuration G6 names when the repository has none
 
     def result(verdict: str, counts: dict | None, output: str, moved: list[str]) -> dict:
@@ -3107,6 +3560,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     # tests collected, the output, the mutant's source and an empty config.
     # Both in one folder G6 makes, so a confined run can see where its report goes (pytest creates the report's folder,
     # and checks each folder above it, before writing).
+    collection_evidence = _collection_evidence(repo, roots=roots, selections=ids) if collect_only else None
     scratch_dir = outside_temp(repo, scratch_dir)
     with confine.run_folder(prefix="g6_repo_run_", dir=scratch_dir, ignore_cleanup_errors=True) as top:
         work, own = Path(top) / "home", Path(top) / "report"
@@ -3128,11 +3582,15 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         own_config[:] = _config_args(repo, ids, own)
-        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
+        cmd = [python, "-I", "-B", "-X", "utf8", "-c", _COLLECTION_BOOT if collect_only else _BOOT,
+               json.dumps(entries), "1" if network else "0",
+               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT),
+               *([str(repo)] if collect_only else []), *ids, "-q",
                "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
+        if collect_only:
+            cmd.append("--collect-only")
         mine = confine.owned(repo)
         reads = confine.interpreter_paths(python)
         environment = tuple(path for path in _environment_of(python) if not any(
@@ -3141,12 +3599,12 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             read_write=(str(work), str(own), *([str(repo)] if mine else [])),
             read_only=(*reads, *environment, *([] if mine else [str(repo)]), top), network=network),
             python)
-        isolation = confined.record()
-        said = confine.refused(confined)
+        isolation = confine_record(confined)
+        said = confine_refused(confined)
         if not said and require_isolation and not isolation.get("backend"):
-            said = confine.refusal(confined)
+            said = confine_refusal(confined)
         if said:
-            raise RepoRefused(ISOLATION_UNAVAILABLE, said)
+            raise RepoRefused(ISOLATION_UNAVAILABLE, said, isolation=isolation)
         try:
             if deadline is not None:
                 bound = min(bound, _copy_remaining(deadline))
@@ -3155,8 +3613,10 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except OSError as exc:
+            if collect_only:
+                return {"status": "uncertain", "reason": f"pytest collection could not start ({type(exc).__name__})"}
             if isinstance(exc, confine.NotStarted):
-                isolation = confine.not_started(isolation, exc)
+                isolation = confine_not_started(isolation, exc)
             found = result("could_not_start", None, "", [])
             return {**found, "said": SAID["could_not_start"].format(error=type(exc).__name__)}
         finally:
@@ -3164,6 +3624,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             if left:
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
+        collection = (_read_collection(Path(str(counted) + ".collection.json"), code, repo,
+                                       evidence=collection_evidence, python=python) if collect_only else None)
         progress = _progress(counts or {}, counted)
         seen[:] = _loaded(own / "loaded.json")
         if counts is not None:
@@ -3171,12 +3633,22 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     try:
         after = take_snapshot()
     except CopyNotRun as exc:
+        if collect_only:
+            return {"status": "uncertain", "reason": "pytest collection snapshot timed out"}
         return {**result("timed_out", progress, output, []), "said": str(exc)}
     except RepoRefused:  # git cannot read the repository after the run (review I5): nothing the tests said is believed
+        if collect_only:
+            return {"status": "uncertain", "reason": "pytest collection could not read closing snapshot"}
         moved = [SAID["git_unreadable_name"]]
         return {**result(CHANGED, counts, output, moved), "said": SAID["git_unreadable"]}
     moved = _moved(before, after)
     component_process.checkpoint()
+    if collect_only:
+        if moved:
+            return {"status": "uncertain", "reason": "pytest collection changed tracked files"}
+        if not isolation.get("backend"):
+            return {"status": "uncertain", "reason": "pytest collection has no isolation"}
+        return collection
     verdict = _judge(code, counts, output, moved)
     found = {**result(verdict, progress, output, moved),
              "completed": code in (0, 5) and progress.get("expected") is not None
@@ -3872,7 +4344,12 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
                                                                                for rel, data in generated.items()}),
                                                          ("generated_left_out", generated_left)) if value})
         _copy_caps(*tally, deadline)
-        yield copy
+        token = _COLLECTION_INVENTORIES.set({**_COLLECTION_INVENTORIES.get(),
+                                             copy.resolve(): tuple(dict.fromkeys([*known, *before]))})
+        try:
+            yield copy
+        finally:
+            _COLLECTION_INVENTORIES.reset(token)
 
 
 def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, str]:

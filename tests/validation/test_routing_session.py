@@ -106,7 +106,7 @@ def test_the_parsers_raise_on_nothing_an_event_can_hold(client: str) -> None:
     for raw in (b"", b"\xff\xfe\x00", b"not json\n{]\n", b"[" * 200000, b'{"type": "result"}' * 3, b"7\nnull\n[]\n\"x\""):
         assert run.reading(client, raw, 0)["state"] == "interrupted"
     assert run.reading(client, None, 0) == {"state": "interrupted", "code": run.UNFINISHED, "calls": (),
-                                           "final_text": "", "cost_usd": None, "questions": 0}
+                                           "final_text": "", "cost_usd": None, "questions": 0, "timeline": ()}
 
 
 def test_finished_is_the_clients_one_success_event_and_exit_code_zero() -> None:
@@ -357,13 +357,20 @@ def test_every_file_a_session_reads_is_bound_by_a_digest(guidance: SimpleNamespa
             owners.setdefault(path, set()).add(route_id)
     files = sorted(path for folder in (guidance.package, guidance.fixtures) for path in folder.rglob("*") if path.is_file())
     assert len(files) > 15
+    # since 2f356dcb only the development tasks' fixtures join what every session reads; a fixture only the moment
+    # cohort names is bound by the moment pins' fixtures digest instead
+    development = set(run.development_fixtures())
+    moment_only = run.fixtures_digest()
     for path in files:
         if path == guidance.root:
             continue                                         # line by line, below
         kept = path.read_bytes()
         path.write_bytes(kept + b"\nchanged\n")
         inside = path.relative_to(guidance.package).as_posix() if guidance.package in path.parents else ""
-        assert _moved(guidance) == owners.get(inside, {run.EVERY_ROUTE}), path.name
+        if guidance.fixtures in path.parents and path.relative_to(guidance.fixtures).parts[0] not in development:
+            assert _moved(guidance) == set() and run.fixtures_digest() != moment_only, path.name
+        else:
+            assert _moved(guidance) == owners.get(inside, {run.EVERY_ROUTE}), path.name
         path.write_bytes(kept)
     assert _moved(guidance) == set()
     extra = guidance.package / "skills" / "using-g6" / "references" / "new.md"

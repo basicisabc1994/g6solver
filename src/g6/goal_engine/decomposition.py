@@ -6,9 +6,10 @@ built by g6.goal_engine.build_plan_tree; goal and criteria remain caller claims.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 from collections import deque
 from dataclasses import dataclass, replace
-import json
 from collections.abc import Callable, Iterable
 
 from g6.goal_engine.plan import PlanTree, build_plan_tree
@@ -160,8 +161,10 @@ def _parse(raw: str | list[str]) -> list[str]:
         if len(raw) > 40000:
             raise ValueError("proposal output exceeds 40000 characters")
         try:
-            raw = json.loads(raw)
-        except (ValueError, TypeError) as exc:
+            raw = _decode_json(raw)
+        except (ValueError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise ValueError("subgoal proposal must be a JSON array of strings") from exc
     if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
         raise ValueError("subgoal proposal must be a JSON array of strings")

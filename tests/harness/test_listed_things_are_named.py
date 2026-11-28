@@ -442,6 +442,13 @@ JOINED = {
                                            "(shape and containment by repo_tests.inside), or one derive_tests gave, which "
                                            "keeps only names the disk rule gave a path for"),
     "g6.workforce.verify: Path(rel)": "a pure path, for a file's name, stem or pattern: no disk is looked at",
+    # f7639fc9, ruled on (rc-030 fix round, from the code): capture_sources' callers pass patch_review's present, derived,
+    # passing and failing names, the same names as patch_review's root / rel entry (a subset each: present is the
+    # caller's ids that exist, passing of those, derived from derive_tests, failing of derived), and completion_loop's
+    # critic file, a name G6 made in its own session folder. The bytes read only bind the card's source identity, held
+    # beside a verdict; an identity that cannot be read is empty (unknown), never a verdict.
+    "g6.harness.workflow.evidence: top / file": ("capture_sources: the names patch_review's root / rel entry covers, or "
+                                                 "G6's own critic file; a source identity only, never a verdict"),
     "g6.workforce.verify: Path(workdir) / rel": ("run_set: a candidate test file searched for a changed module's name; "
                                                  "repo_tests.derive_tests, its one caller with names git listed, keeps "
                                                  "of what it returns only names the disk rule gave a path for"),

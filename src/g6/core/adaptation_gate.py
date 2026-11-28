@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from g6.core.external_data import exception_text
 from g6.core.ledger import digest
 
 PROPOSAL_STATUSES = ("proposed", "local_validated", "shadow_approved", "rejected", "blocked")
@@ -175,7 +176,7 @@ def validate_locally(proposal: AdaptationProposal, guard: Callable[[Any], bool],
                              "case_digest": case_digest})
         except Exception as exc:  # noqa: BLE001 - a guard that cannot run is unknown, never a pass
             outcomes.append({"control": control.name, "kind": control.kind, "result": "unknown",
-                             "error": f"{type(exc).__name__}: {exc}", "case_digest": case_digest})
+                             "error": f"{type(exc).__name__}: {exception_text(exc)}", "case_digest": case_digest})
     results = [o["result"] for o in outcomes]
     if "unknown" in results:
         reasons.append("a control could not be evaluated")

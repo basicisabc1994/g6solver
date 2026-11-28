@@ -32,7 +32,10 @@ def test_a_candidates_run_is_planned_by_confine_and_the_result_says_how_it_ran(m
     # fails if SubprocessRunner starts its child without a confine plan, or the result drops the plan's record
     assert result.status == "no_counterexample_in_domain"
     assert result.boundary["isolation"]["backend"] is None and result.boundary["isolation"]["why"] == OFF
-    assert result.boundary["isolation"]["warning"] == confine.UNCONFINED_WARNING
+    # The setup command and key file are no longer named: commit 0b400900, lead ruling 2026-11-21 (rc-wrp).
+    warning = result.boundary["isolation"]["warning"]
+    assert "G6 refuses to run untrusted code" in warning and "your own rights" in warning
+    assert "g6 setup" not in warning and ".env" not in warning
     assert result.to_envelope()["evidence"][0]["isolation"]["why"] == OFF
 
 

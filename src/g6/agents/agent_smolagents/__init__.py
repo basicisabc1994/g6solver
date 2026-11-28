@@ -60,3 +60,17 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = ["AgentSmolagentsBlock", "AgentSmolagentsInput", "AgentSpec", "SmolagentsRuntime"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_AGENT_SMOLAGENTS_AGENT_REQUIRED": "input",
+    "G6_E_AGENT_SMOLAGENTS_CHECKED": "none",
+    "G6_E_AGENT_SMOLAGENTS_CODE_REFUSED": "none",
+    "G6_E_AGENT_SMOLAGENTS_NO_MODEL": ("tool:g6_select", "no_model"),
+    "G6_E_AGENT_SMOLAGENTS_TOOL_MISSING": "none",
+    "G6_E_LLM_DISABLED": ("tool:g6_select",
+        "No model is configured for G6. Do the step yourself, then ask for the op that checks it."),
+    "G6_E_AGENT_SMOLAGENTS_AGENT_FAILED": "person",
+    "G6_E_AGENT_SMOLAGENTS_NOT_INSTALLED": "person",
+}

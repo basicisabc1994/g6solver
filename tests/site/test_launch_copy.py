@@ -14,7 +14,7 @@ import pytest
 from g6.cli import setup
 
 OSS = Path(__file__).resolve().parents[2]
-STATUS = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
+STATUS = ("Beta. Individual capabilities have been tested; general application-level improvements have not "
           "yet been established.")
 PAGES = ("/get-started/", "/faq/", "/security/", "/developers/")
 #: The first journey, as setup itself says it: the command for each client, the existing entry, the review.
@@ -182,8 +182,10 @@ def test_the_home_pages_quick_start_first_makes_g6s_own_environment_and_links_ge
 def test_the_release_notes_say_what_ships_what_does_not_and_name_the_version_the_owner_set():
     import g6
     notes = shipped()["docs/releases/launch.md"]
-    assert notes.startswith(f"# G6 {g6.__version__}: ")   # the owner set it, 2026-10-29
+    assert notes.startswith(f"# G6 {g6.__version__}: ")   # the owner set it, 2026-10-29; 0.3.0 on 2026-11-16
     assert "VERSION-TO-BE-SET" not in notes
-    for part in ("## What ships", "## What does not ship", "## Limits", "G6's own model calls", "V9 and V10",
-                 "plugins and hooks", "Venture", "continuous integration check", "macOS", "Python first"):
+    for part in ("## What ships", "## What does not ship", "## Limits", "## Not yet measured",
+                 "Consent before any cloud model", "G6's own model calls", "V9 and V10", "Section 15",
+                 "Venture", "continuous integration check", "macOS", "Python first", "not yet tagged",
+                 "(v0.3.0.md)", "(v0.3.0-known-limits.md)"):
         assert part in notes, part

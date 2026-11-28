@@ -11,11 +11,13 @@ is ready; the answer's ``isolation`` says which.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import secrets
 from typing import Any
 
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 TESTS_FILE = "_g6_tests.py"
 _RUNNER = '''
@@ -55,7 +57,10 @@ def run_tests(source: str, tests: str, module: str, *, timeout_s: float) -> dict
     for line in reversed(ran.stdout.splitlines()):
         if line.startswith(mark):
             try:
-                report = json.loads(line[len(mark):])
+                try:
+                    report = _decode_json(line[len(mark):])
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             except json.JSONDecodeError:
                 report = None
             break

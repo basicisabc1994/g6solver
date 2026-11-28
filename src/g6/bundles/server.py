@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import html
 import json
 import os
@@ -44,8 +46,8 @@ def settings_path():
 def load_settings() -> dict[str, str]:
     path = settings_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = _decode_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError, MemoryError):
         return {"provider": "none", "model": ""}
     if not isinstance(data, dict):
         data = {}
@@ -262,10 +264,12 @@ def make_handler(bundle: Bundle, token: str, llm: Any = None) -> type[BaseHTTPRe
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > _MAX_BODY:
                     return self._json(413, {"error": "input too large"})
-                body = json.loads(self.rfile.read(length) or b"{}")
+                body = _decode_json(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("body must be a JSON object")
-            except ValueError as exc:
+            except (ValueError, RecursionError, MemoryError) as exc:
+                if isinstance(exc, (RecursionError, MemoryError)):
+                    exc = ValueError("a JSON record exceeds decoder limits")
                 return self._json(400, {"error": f"bad request: {exc}"})
             if self.path == "/api/isolation":   # the person's click on the first-run question, and nothing else
                 if not bundle.runs_untrusted_code:

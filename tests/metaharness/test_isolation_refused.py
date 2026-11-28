@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from g6.core import confine
+from tests.guidance_expectations import UNCONFINED_WARNING, isolation_record, no_setup
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.metaharness import adapt, gate, steps
 from g6.metaharness.api import judging_sha256
@@ -80,7 +81,9 @@ def test_an_evaluation_that_ran_code_says_how_it_ran(tmp_path, monkeypatch) -> N
     report = mh.evaluate(proposal)["report"]
     # fails if the report drops how the code ran
     assert not report.partial and report.n == 30
-    assert report.to_dict()["isolation"]["why"] == OFF and report.isolation["warning"] == confine.UNCONFINED_WARNING
+    assert report.to_dict()["isolation"]["why"] == OFF and report.isolation["warning"] == UNCONFINED_WARNING
+    isolation_record(report.isolation)
+    no_setup(report.to_dict())
 
 
 def test_a_model_only_evaluation_carries_no_isolation(tmp_path) -> None:

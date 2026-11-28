@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-17",
+  "before_any_arm": true,
+  "reasons": [
+    "research audit",
+    "lead scoring rulings",
+    "reply delivery merged"
+  ],
+  "reason": "2026-11-17 before any arm: research audit; lead scoring rulings; reply delivery merged. Replace seven tasks, revise four, isolate cue-free fixtures, bind provenance and unchanged-test checks; count only post-edit failures, allow selector before refusal remedy, report attempted beside recovery. All routing and outcome bars remain unchanged.",
+  "previous_pins": {
+    "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+    "tasks_digest": "1976b25f8d885fcb60086adbacd48d7f9bea0c85db79e88a159ab5f235933a75",
+    "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+    "checks_digest": "6787d535ad8440824a72c81a25c75f8538e1f9141c5ff9c7f7d82ea2fcba05be",
+    "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+    "fixtures_digest": "4084d2f1097198d53d304f83ff1a5113fcf8534083b320a05586922c351bab76"
+  },
+  "pins": {
+    "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+    "tasks_digest": "e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973",
+    "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+    "checks_digest": "55fa5cd21cb6e932eba67df80c9b5bd5ffb64b0615814a93a0674abb64409a8e",
+    "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+    "fixtures_digest": "4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff"
+  },
+  "retired": {
+    "moment_tasks.json": "moment_tasks.retired-1976b25f8d88.json",
+    "moment_frozen.json": "moment_frozen.retired-e491cf6fec23.json"
+  },
+  "source_index": "moment_sources.md",
+  "rulings": [
+    "The documented 10% fee cap stands; the stale test stays unchanged.",
+    "Cosmetic Python edits remain negative tasks.",
+    "No fourth completion kind."
+  ],
+  "development_fixtures": "The frozen development task inventory binds its fixtures; moment-only additions do not join that inventory.",
+  "fix_pass": {
+    "date": "2026-11-17",
+    "reason": "2026-11-17 before any arm, audit fix pass: central fixture path roles shared by held-out checks, outcome reader and probes; lazy fixture imports; replace obsolete right/wrong mutation data. No bar, task, withheld overlay, development binding or fixture byte changes in this fix pass.",
+    "previous_audit_pins": {
+      "bars_digest": "9aa0237097e7dd22f013664850d3008513ac750834f577d793cab6f28556de59",
+      "tasks_digest": "e2168da8cc01efa41c19f736d54c91b92fc9fbaac068e500099ed27842051973",
+      "outcome_bars_digest": "bbdb333860ee44545b5b337213319e0780572f1fbd3fa24b8bc6abfe837dd1f8",
+      "checks_digest": "d3c43ff90b62c650d7f1b5b0aadca78db40eb43c9712cf157a03f093905b3c8d",
+      "withheld_digest": "9c031f4cfab260cd8101a1ff9efcc975f7c831b1eeae375c5da5661dfdb8e4a2",
+      "fixtures_digest": "4ba390a5443a5beb6446dfe1b0652b5d54e71d8e2c48990d2d4f7deec05307ff"
+    },
+    "retired_audit_pins": "moment_frozen.retired-772a6d3b5b09.json",
+    "select_draft": "amendments/2026-11-17/select_tasks.unbound.json",
+    "route_rebind": "Deferred to the integration line after using-g6 split and phase C; no route digest bound here.",
+    "grant_ruling": "A grant-based refusal hit requires a positive grant status, with or without a retry. A job placeholder or cancelled grant cannot count; a final instruction naming what the person must allow still qualifies if the refused call is never repeated."
+  }
+}

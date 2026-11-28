@@ -41,6 +41,9 @@
     "_import_roots": [
       "tuple(dict.fromkeys(found))"
     ],
+    "_failure_excerpt": [
+      "mask_paths(scrub(' '.join(verification_search._failure(ran, check).split())))[:MAX_FAILURE_EXCERPT]"
+    ],
     "_confined/branches": [
       "if 'isolation' in ran and (not isolation.get('backend'))",
       "raise _Refused(ISOLATION_UNAVAILABLE, f\"G6 assesses a patch only from test runs inside an operating-system boundary, and none confined this one ({isolation.get('why') or 'no backend'}), so its results are not used. {BOUNDARY_HELP} Run g6 doctor: it says what this computer needs.\")"
@@ -81,9 +84,6 @@
     "_patch_imports_missing": [
       "[]",
       "sorted((name for name in missing if any((name == mine or mine.startswith(name + '.') or name.startswith(mine + '.') for mine in added if not mine.startswith('.')))))"
-    ],
-    "_collection_errors": [
-      "set(repo_tests.read_report(ran).collection_errors)"
     ],
     "_names": [
       "any((path == head or path.startswith(head + '/') for path in files))"
@@ -133,11 +133,50 @@
     "_covers": [
       "repo_tests.report_covers(check, node)"
     ],
-    "_not_found": [
-      "check in {report.full(node) for node in report.data.get('not_found_ids', ())}"
+    "_listing/branches": [
+      "if type(key) is not str or key not in LISTINGS",
+      "if type(value) in (dict, list)"
+    ],
+    "_listing": [
+      "([], False)",
+      "(sorted((report.full(node) for node in nodes)), report.valid)"
+    ],
+    "_failed_ids": [
+      "set(repo_tests.read_report(ran).failed)"
+    ],
+    "phases_of": [
+      "dict(repo_tests.read_report(ran).phases)"
+    ],
+    "_whole": [
+      "repo_tests.read_phases(phases).valid"
+    ],
+    "body_of": [
+      "repo_tests.read_phases(phases).body()"
+    ],
+    "observation": [
+      "ERROR if found.get('observation') is not None else str(found.get('verdict'))"
+    ],
+    "observation/branches": [
+      "if found.get('observation') is not None"
+    ],
+    "at_base_observations/branches": [
+      "if named is not None and (not isinstance(named, dict))"
+    ],
+    "at_base_observations": [
+      "{str(check): observation({'verdict': said, 'observation': (named or {}).get(check)}) for check, said in outcomes.items()}"
     ],
     "_in_repository": [
       "repo_tests.read_report(ran).full"
+    ],
+    "_not_found": [
+      "check in {report.full(node) for node in report.data.get('not_found_ids', ())}"
+    ],
+    "_collection_errors": [
+      "set(repo_tests.read_report(ran).collection_errors)"
+    ],
+    "_observed/branches": [
+      "if not report.valid or (not report.has_phase_data and report.verdict != 'not_run')",
+      "if report.collection_errors_for(check)"
     ],
     "_observed": [
       "dict.fromkeys(checks, ERROR)",
@@ -171,6 +210,8 @@
       "found"
     ],
     "_record/branches": [
+      "if sources is not None",
+      "if sources is not None or report.phases",
       "if ran.get('loaded_complete') is False"
     ],
     "_record": [
@@ -192,12 +233,12 @@
       "{**out, 'status': NOT_ESTABLISHED, 'reason': 'stated checks did not run to a pass: ' + ', '.join(unrun), 'suggested_test': f'make those checks run here, or add {test}: {req.text}'}",
       "{**out, 'status': PASSED_ON_CHECKS, 'reason': 'passed on its stated checks: ' + ', '.join((c['id'] for c in checks))}"
     ],
-    "_unquoted/branches": [
-      "except ValueError"
-    ],
     "_unquoted": [
       "repo_tests.unquoted_name(raw.rstrip('\\n').removesuffix('\\t'))",
       "''"
+    ],
+    "_unquoted/branches": [
+      "except ValueError"
     ],
     "_diff_name": [
       "'' if name == '/dev/null' else name[2:] if name[:2] in ('a/', 'b/') else name"
@@ -281,6 +322,80 @@
       "raise *",
       "except Exception"
     ],
+    "_map_collection/branches": [
+      "if hasattr(p, 'model_dump')"
+    ],
+    "_map_collection": [
+      "change_map.collect_checks(change, stated_checks, proposed, roots, collector=collector, deadline=deadline)"
+    ],
+    "_change_neighbourhood/branches": [
+      "if deadline <= time.monotonic()",
+      "if not any((p.endswith('.py') for p in change.files))",
+      "if collector is None",
+      "if end <= time.monotonic()",
+      "except LETS_THROUGH",
+      "raise *",
+      "except Exception",
+      "if isinstance(exc, TimeoutError)",
+      "if record is None or time.monotonic() >= end"
+    ],
+    "_change_neighbourhood": [
+      "record",
+      "record",
+      "record",
+      "change_map.json_record(record, deadline=end)"
+    ],
+    "_change_neighbourhood.checkpoint/branches": [
+      "if time.monotonic() >= end",
+      "raise TimeoutError('change map time budget is spent')"
+    ],
+    "_change_neighbourhood.read/branches": [
+      "if p.endswith('.py')",
+      "if len(paths) > change_map.MAX_FILES",
+      "if path is None or rel in change.outside_links or repo_tests._linked(path)",
+      "raise ValueError('source path is unavailable or linked')",
+      "if path.is_file()",
+      "if raw is None",
+      "raise ValueError('not a regular file inside the repository')",
+      "if len(raw) > change_map.MAX_FILE_BYTES",
+      "if rel.endswith('.py')",
+      "if len(text) > change_map.MAX_FILE_CHARS",
+      "if path.exists()",
+      "raise ValueError('not a regular source file')",
+      "if entry and entry[0] in ('100644', '100755') and (entry[1] == 'blob')",
+      "if int(entry[3]) > change_map.MAX_FILE_BYTES",
+      "if rel not in change.files and rel in patch",
+      "if len(raw) > change_map.MAX_FILE_BYTES",
+      "if rel.endswith('.py')",
+      "if len(text) > change_map.MAX_FILE_CHARS",
+      "if entry",
+      "raise ValueError('not a regular source blob')",
+      "except (*LETS_THROUGH, TimeoutError)",
+      "raise *",
+      "except Exception",
+      "if rel in texts",
+      "if texts[rel] not in seen",
+      "if total > change_map.MAX_TOTAL_CHARS",
+      "if hasattr(p, 'model_dump')"
+    ],
+    "_change_neighbourhood.read": [
+      "omitted",
+      "omitted",
+      "record"
+    ],
+    "_python_source/branches": [
+      "if lines.startswith(b'\\xef\\xbb\\xbf')"
+    ],
+    "_python_source": [
+      "raw.decode(encoding).replace('\\r\\n', '\\n').replace('\\r', '\\n')"
+    ],
+    "_change_map_text/branches": [
+      "if not stat.S_ISREG(os.fstat(fd).st_mode) or not repo_tests._within(root.resolve(), repo_tests._where(fd))"
+    ],
+    "_change_map_text": [
+      "None",
+      "handle.read(limit + 1)"
+    ],
     "_assess.reason/branches": [
       "if node"
     ],
@@ -313,6 +428,7 @@
       "if unusable(1, first)",
       "if not ids",
       "if verdicts[check]['verdict'] in DEFECTS",
+      "if raised",
       "if verdicts[check]['verdict'] != 'passed' and check not in stated_ids",
       "if config is not None and config['propose']",
       "if any((r['stage'] == 'integrity' for r in reasons))",
@@ -383,13 +499,16 @@
       "if found['verdict'] == 'not_run'",
       "if not any((run.get('passed', 0) + run.get('failed', 0) for run in runs))",
       "if self_checked",
+      "except LETS_THROUGH",
+      "raise *",
+      "except Exception",
       "if missing",
       "if self_checked",
       "if proposals",
       "if confirmed is not None"
     ],
     "_assess": [
-      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None)"
+      "_reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons, artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects, first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else '', prepared=prepared, adequacy=adequacy, config=config, counts={'template_instances': len(instances), 'proposed_checks': len(proposed), 'model_calls': proposals.calls if proposals else 0}, roots=roots, stopped=stopped, proposer=proposals, neighbourhood=neighbourhood, issuer_inputs={'check_sha': check_sha, 'written': lambda check: written.get(check, True), 'again': again, 'observed': observed}, confirmed=(confirmed, enforced) if confirmed is not None else None)"
     ],
     "_authored": [
       "_written(check, change, root)",
@@ -455,6 +574,7 @@
       "if not passing or not change.files",
       "if any((r['stage'] in ('integrity', 'tier_1', 'tier_2') for r in reasons))",
       "if _left(deadline) < 1",
+      "if getattr(change, 'repo', None) is not None",
       "if 'isolation' in ran",
       "if elsewhere",
       "if ran.get('verdict') not in _READABLE_AT_BASE",
@@ -520,47 +640,14 @@
       "if 'evidence' in stages",
       "if first_action and outcome == INSUFFICIENT",
       "if unknowns",
+      "if run.get('provenance') == 'library'",
+      "if neighbourhood is not None",
       "if issuer_inputs is not None",
-      "if confirmed is not None"
+      "if confirmed is not None",
+      "if library_block"
     ],
     "_reply": [
-      "{**envelope_fields(reliability_label='qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
-    ],
-    "_listing/branches": [
-      "if type(key) is not str or key not in LISTINGS",
-      "if type(value) in (dict, list)"
-    ],
-    "_listing": [
-      "([], False)",
-      "(sorted((report.full(node) for node in nodes)), report.valid)"
-    ],
-    "_failed_ids": [
-      "set(repo_tests.read_report(ran).failed)"
-    ],
-    "phases_of": [
-      "dict(repo_tests.read_report(ran).phases)"
-    ],
-    "_whole": [
-      "repo_tests.read_phases(phases).valid"
-    ],
-    "body_of": [
-      "repo_tests.read_phases(phases).body()"
-    ],
-    "observation": [
-      "ERROR if found.get('observation') is not None else str(found.get('verdict'))"
-    ],
-    "observation/branches": [
-      "if found.get('observation') is not None"
-    ],
-    "at_base_observations/branches": [
-      "if named is not None and (not isinstance(named, dict))"
-    ],
-    "at_base_observations": [
-      "{str(check): observation({'verdict': said, 'observation': (named or {}).get(check)}) for check, said in outcomes.items()}"
-    ],
-    "_observed/branches": [
-      "if not report.valid or (not report.has_phase_data and report.verdict != 'not_run')",
-      "if report.collection_errors_for(check)"
+      "{**envelope_fields(reliability_label='blocked-escalated' if library_block else 'qualified-draft', warning_card=card, evidence=evidence, request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]), 'ok': True, 'assessment': assessment, 'merge': {'status': 'requires_separate_approval', 'reason': MERGE_REASON, 'reasons': merge_reasons}, 'gate': gate, 'grounding': _grounding(claim, sources), 'artifact_digest': artifact}"
     ]
   },
   "src/g6/harness/patch_report.py": {
@@ -619,10 +706,11 @@
       "if found.get('code') == 'confirmed_expectation_failed'",
       "if found.get('code') == 'derived_test_regressed'",
       "if found.get('result') == 'counterexample'",
-      "if str(reproduction.get('at_base', 'not run')).startswith('not run')"
+      "if str(reproduction.get('at_base', 'not run')).startswith('not run')",
+      "if item"
     ],
     "_findings": [
-      "items"
+      "[[item[0] + ' Not labelled by you.', *item[1:]] if item else [] for item in items]"
     ],
     "_missing": [
       "[[f\"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: {code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}\" + _issuer(assessment, item.get('requirement'))] for item in (assessment.get('completion') or {}).get('not_established', [])]"
@@ -726,6 +814,7 @@
       "if one.get('left_out')",
       "if critic is None",
       "if critic.get('error')",
+      "if critic is not None",
       "if failing"
     ],
     "_loop_lines": [
@@ -733,6 +822,22 @@
     ],
     "_times": [
       "{1: 'once', 2: 'twice'}.get(count, f'{count} times')"
+    ],
+    "legacy_review_notes/branches": [
+      "if result == 'failed' and (not run.get('observations', {}).get(file))"
+    ],
+    "legacy_review_notes": [
+      "{file: list(cases.values()) for file, cases in notes.items()}"
+    ],
+    "_note_lines": [
+      "[f\"- **Note:** {code(note.get('case') or file, 200)} ({code(file)}): {code(note.get('reason', ''), 300)}.\" for file, cases in notes.items() for note in cases]"
+    ],
+    "admitted_cases/branches": [
+      "if not observed.get('patch') or not observed.get('parent')"
+    ],
+    "admitted_cases": [
+      "set()",
+      "reviewer_cases(ProbeRun(**observed['patch']), ProbeRun(**observed['parent']))[0]"
     ],
     "findings/branches": [
       "if reviews"
@@ -745,11 +850,14 @@
     ],
     "_review_lines/branches": [
       "if reviews",
+      "if reviews",
       "if loop.get('ending')",
       "if count",
+      "if any((cases for cases in notes.values()))",
       "if loop.get('left')",
       "if loop.get('no_clean')",
       "if reviews",
+      "if loop.get('reason') == 'a review failed'",
       "if error",
       "if len(reviews) != 1",
       "if reviews",
@@ -757,8 +865,10 @@
       "if one.get('verdict') == 'defect' and one not in (*fixed, *still)",
       "if said == NOT_JUDGED",
       "if said == 'did not run' and one.get('unrun')",
+      "if said == 'notes only'",
       "if said == 'passed'",
       "if said is None",
+      "if said == 'notes only'",
       "if masked",
       "if masked != 1",
       "if loop.get('boundary')"
@@ -766,11 +876,108 @@
     "_review_lines": [
       "[*lines, '', '## What this loop does not show', *LOOP_LIMITS]"
     ],
-    "completion_report": [
-      "'\\n'.join([*(_loop_lines(loop) if loop.get('reviews') is None else _review_lines(loop)), '', review])"
-    ],
     "completion_report/branches": [
+      "if len(body) >= 6 and body[1].startswith('- **Checked:**')",
       "if loop.get('reviews') is None"
+    ],
+    "completion_report": [
+      "'\\n'.join([lines[0], *card_lines(card(assessment, loop)), *lines[1:], '', *body])"
+    ],
+    "with_card/branches": [
+      "if len(lines) >= 5 and all((lines[i].startswith(f'- **{label}:**') for i, label in enumerate(labels)))",
+      "if lines and lines[0].startswith('- **Checked:**')",
+      "if separator"
+    ],
+    "with_card": [
+      "headline + '\\n' + '\\n'.join(card_lines(value)) + (separator + body if separator else '')"
+    ],
+    "model_relation.family/branches": [
+      "if re.search('(?:^|[/:_-])(?:claude|opus|sonnet|haiku)(?:$|[\\\\d._:-])', name)",
+      "if re.search('(?:^|[/:_-])(?:codex|gpt|o[134])(?:$|[\\\\d._:-])', name)"
+    ],
+    "model_relation.family": [
+      "'anthropic'",
+      "'openai'",
+      "''"
+    ],
+    "model_relation": [
+      "'another model family' if left and right and (left != right) else 'a second model'"
+    ],
+    "model_relation/branches": [
+      "if left and right and (left != right)"
+    ],
+    "card/branches": [
+      "if loop and any((e['kind'] == 'loop_ended' for e in events))",
+      "if not unchecked_reason",
+      "if 'selected_run' in held",
+      "if 'selected_run' not in held and len({e['run'] for e in observed}) > 1",
+      "if selected",
+      "if not one",
+      "if kind == 'loop_ended'",
+      "if known",
+      "if not evidence.checked(rows if kind == 'loop_ended' else [Event.from_body(one)])",
+      "if kind == 'loop_ended'",
+      "if known and kind == 'loop_ended' and (not unchecked_reason)",
+      "if data.get('reviews')",
+      "if data.get('reviews')",
+      "if data.get('reviews')",
+      "if known and kind == 'review_finished'",
+      "if data.get(key)",
+      "if runs",
+      "if data.get('proposer')",
+      "if data.get('person_checks')",
+      "if raw_base and evidence.sha256(raw_base) == one.get('baseline_sha256')",
+      "if known",
+      "if known",
+      "if kind == 'loop_ended' and data.get('reviews') or (kind == 'review_finished' and len(observed) > 1)",
+      "if known",
+      "if known and kind == 'loop_ended' and data.get('reviews')",
+      "if known and kind == 'review_finished'",
+      "if known and any(((e.get('data') or {}).get('source_incomplete_sha256') for e in events))",
+      "if kind == 'loop_ended' and one.get('event_id') in labelled",
+      "if not known and (not reason)",
+      "if known",
+      "if known",
+      "if known",
+      "if known",
+      "if known and data.get('left_by_agent')",
+      "if known",
+      "if known",
+      "if known",
+      "if known",
+      "if reproduced",
+      "if known and runs"
+    ],
+    "card": [
+      "{'checked': {'runs': runs, 'by': by, 'artifact': one.get('artifact_sha256', ''), 'base': base, 'record_status': status, 'unchecked': bool(unchecked_reason), 'reason': reason, 'model_relation': model_relation(data.get('agent', ''), data.get('reviewer', '')), 'model_calls': data.get('model_calls') if known else None}, 'caught': {'reproduced': reproduced, 'integrity': data.get('integrity_reasons') if known else None, 'unconfirmed': data.get('unconfirmed') if known else None}, 'repaired': repaired, 'open': open_count, 'labels': labels, 'unlabelled_open': unlabelled, 'identities_incomplete': bool(known and check_counts['identities_incomplete']), 'left_by_agent': data.get('left_by_agent', 0) if known else None, 'agent_reason': loop.get('left', '') if known and data.get('left_by_agent') else '', 'not_checked': {'not_established': data.get('not_established') if known else None, 'skipped': data.get('checks_skipped') if known else None, 'standing': list(assessment.get('not_checked') or [])}, 'needs_you': {'merge': True, 'questions': data.get('questions') if known else None, 'unknowns': data.get('unknowns') if known else None, 'open_findings': open_count}, 'ending': data.get('ending') or ('open' if reproduced else 'clean' if known and runs else 'untested'), 'justification': [{'event_id': e['event_id'], 'kind': e['kind'], 'sha256': evidence.digest(e)} for e in events]}"
+    ],
+    "card_lines/branches": [
+      "if checked.get('unchecked')",
+      "if value.get('identities_incomplete')",
+      "if checked.get('reason')",
+      "if status == 'off'",
+      "if status == 'write_failed'",
+      "if value['justification']",
+      "if checked.get('unchecked')",
+      "if any((r['by'].startswith('reviewer:') for r in runs))",
+      "if checked.get('model_calls') == 0",
+      "if value['repaired'] is None",
+      "if any((r['what'] == 'model probes' or (r['what'] == 'reviews' and r['count'] > 1) for r in runs))",
+      "if value.get('identities_incomplete')",
+      "if value['agent_reason']",
+      "if value.get('labels')",
+      "if value.get('unlabelled_open', bool(value['open']))"
+    ],
+    "card_lines": [
+      "['- **Checked:** nothing this turn. ' + checked['reason'] + (' Check identities are incomplete; omitted findings remain unresolved.' if value.get('identities_incomplete') else '')]",
+      "['- **Checked:** ' + ('nothing this turn. ' if checked.get('unchecked') else 'not recorded. ') + checked['reason'], '- **Caught:** not recorded.', '- **Repaired:** not observed. Open: not recorded. Left by the agent: not recorded.', '- **Not checked:** no event counts available; the standing list below.', '- **Needs you:** merging. ' + note]",
+      "[f\"- **Checked:** {named or 'no test run recorded'}, on patch {code(checked['artifact'][:12])} against base {code(checked['base'][:12])}.{model}\", f\"- **Caught:** {count(caught['reproduced'])} reproduced findings (tests failed on the patch); {count(caught['integrity'])} signs of weakened tests; {count(caught['unconfirmed'])} unconfirmed.\", f\"- **Repaired:** {repaired}. Open: {count(value['open'])}. Left by the agent: {count(value['left_by_agent'])}.\" + (' Check identities are incomplete; open counts are lower bounds and omitted findings remain unresolved.' if value.get('identities_incomplete') else '') + (f\" Its reason: {code(value['agent_reason'])}.\" if value['agent_reason'] else '') + (' ' + ' '.join((f\"Person label by {code(label['by'])}: {code(label['note'])} (event {code(label['event_id'])}).\" for label in value.get('labels') or [])) if value.get('labels') else '') + (' Not labelled by you.' if value.get('unlabelled_open', bool(value['open'])) else ''), f\"- **Not checked:** {count(missing['not_established'])} requirements not established; {count(missing['skipped'])} runs skipped; the standing list below.\", f\"- **Needs you:** merging; {count(needs['questions'])} questions; {count(needs['unknowns'])} unknowns. Record events: {cited}.\"]"
+    ],
+    "card_lines.count": [
+      "'not recorded' if number is None else str(number)"
+    ],
+    "card_lines.count/branches": [
+      "if number is None"
     ],
     "safe_render": [
       "render(assessment)",
@@ -799,6 +1006,23 @@
       "None",
       "str(path)"
     ],
+    "record/branches": [
+      "except (OSError, ValueError, TypeError, AttributeError)"
+    ],
+    "record": [
+      "None"
+    ],
+    "carried/branches": [
+      "if not all((stat.S_ISREG(os.lstat(one).st_mode) for one in (path, side)))",
+      "if not isinstance(entry, dict) or entry.get('version') != SOURCES or entry.get('reply_sha256') != hashlib.sha256(path.read_bytes()).hexdigest() or (expected_sha256 is not None and entry.get('reply_sha256') != expected_sha256) or (not isinstance(entry.get('sources'), list)) or (not entry['sources'])",
+      "except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, MemoryError)"
+    ],
+    "carried": [
+      "None",
+      "None",
+      "tuple((cloud.Source(one['source'], one['item'], one['content'], one['recorded']) for one in entry['sources']))",
+      "None"
+    ],
     "_shorten/branches": [
       "if isinstance(value, str)",
       "if len(value) <= chars",
@@ -808,13 +1032,15 @@
     ],
     "_shorten": [
       "value",
-      "value[:chars - 3] + '...'",
+      "shortened(value, value[:chars - 3] + '...')",
       "[_shorten(one, items, chars, where, cut) for one in value[:items]]",
       "{key: _shorten(one, items, chars, where, cut) for key, one in value.items()}",
       "value"
     ],
     "compact/branches": [
       "if not isinstance(assessment, dict)",
+      "if 'card' in assessment",
+      "if 'card' in reply",
       "if saved",
       "if len(json.dumps(shown, ensure_ascii=False)) - kept <= BUDGET"
     ],
@@ -827,8 +1053,12 @@
     ],
     "finish/branches": [
       "if not isinstance(reply, dict) or not isinstance(reply.get('assessment'), dict)",
+      "if callable(custody)",
+      "except (RecursionError, MemoryError)",
+      "raise json.JSONDecodeError('a JSON record exceeds decoder limits', '', 0)",
       "if refs is not None",
-      "if saved"
+      "if saved",
+      "if recorded is not None"
     ],
     "finish": [
       "reply",

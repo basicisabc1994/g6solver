@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "a7c5e8f6d7e05668d47681a0d4510536bb531c935d047795be672a4f3aa1d8bd"
+  },
+  "reason": "2026-11-21 before any arm: the select route's development tasks, written on development fixtures (shop, rules); the 2026-11-17 drafts use moment fixtures and stay unextracted. The bars are unchanged; the task-list pin follows the new list.",
+  "digest": "814d2b62d100b891109c38d8f1ee61ffad27aeb9a5dcecd8b36499b6a9bcfc4c"
+}

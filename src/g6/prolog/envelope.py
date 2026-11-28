@@ -25,7 +25,9 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.core.outside import OutsideProgram
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.guidance_builders import ISOLATION_ACTION
+
 from g6.core.reliability_envelope import WarningCard
 from g6.prolog.schema import PrologResult
 
@@ -146,8 +148,9 @@ def finish(operation: str, *, swipl_ran: bool = False, swipl_version: str = "", 
            succeeded: bool | None = None, stopped_by: str = "", predicates: list[dict[str, Any]] | None = None,
            problems: list[dict[str, Any]] | None = None, recheck: dict[str, Any] | None = None, code: str = "",
            reason: str = "", extra: dict[str, Any] | None = None, elapsed_s: float = 0.0, request_id: str = "",
-           run_id: str = "") -> PrologResult:
-    """``operation``'s outcome labelled: state, warning card, evidence and ids. Never ``verified``."""
+           run_id: str = "", isolation: dict[str, Any] | None = None) -> PrologResult:
+    """``operation``'s outcome labelled: state, warning card, evidence and ids. Never ``verified``. ``isolation``: the
+    record of a run refused before SWI-Prolog started, kept in the evidence as the other outside programs keep it."""
     answers = None if answers is None else list(answers)
     predicates = None if predicates is None else list(predicates)
     problems = list(problems or [])
@@ -172,6 +175,8 @@ def finish(operation: str, *, swipl_ran: bool = False, swipl_version: str = "", 
         "elapsed_s": elapsed_s,
     }
     evidence |= extra or {}
+    if isolation is not None:
+        evidence["isolation"] = isolation
     if code:
         evidence |= {"code": code, "reason": reason}
         card = WarningCard(code=code, message=reason, severity="blocked",

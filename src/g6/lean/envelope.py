@@ -20,7 +20,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.guidance_builders import ISOLATION_ACTION
+
 from g6.core.reliability_envelope import WarningCard
 from g6.lean.schema import LeanResult
 
@@ -73,7 +75,7 @@ INSTALL_LEAN = (f"Install Lean 4 with elan, Lean's toolchain manager, as the Lea
 
 _ACTIONS = {
     ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
-    LEAN_MISSING: INSTALL_LEAN,
+    LEAN_MISSING: "Tell the person Lean is unavailable on this machine. Setting it up is the person's decision.",
     SOURCE_REFUSED: "Remove the control and invisible characters at the places named: a person reading the proof must "
                     "see what Lean reads.",
     SORRY: "Finish the proof: sorry, admit and stop leave a goal unproved, and Lean accepts them with only a warning.",

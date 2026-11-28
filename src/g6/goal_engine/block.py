@@ -10,7 +10,6 @@ accepts it; nothing here executes a goal.
 """
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -65,8 +64,10 @@ def _subgoals(raw: Any) -> list[str]:
     if start < 0:
         raise ValueError("the reply holds no JSON object")
     try:
-        found, _ = json.JSONDecoder().raw_decode(raw, start)
-    except ValueError as exc:
+        from g6.core.decoder_limits import json_value
+
+        found, _ = json_value(raw, partial=True, start=start)
+    except (ValueError, RecursionError, MemoryError) as exc:
         raise ValueError("the reply's first JSON object does not parse") from exc
     items = found.get("subgoals") if isinstance(found, dict) else None
     if not isinstance(items, list) or not all(isinstance(s, dict) and isinstance(s.get("goal"), str) for s in items):

@@ -107,7 +107,10 @@ def test_an_access_rule_refusal_lists_the_form_it_was_given(tmp_path):
 
 
 def test_the_skill_gives_one_valid_instance_of_each_template_it_names():
-    named = set(re.findall(r"`([a-z_]+\.v\d+)`", SKILL))
+    # The root routes to the delivery instructions; the template examples remain a separate, linked file.
+    delivery = (GUIDE / "references" / "deliver.md").read_text(encoding="utf-8")
+    assert "references/deliver.md" in SKILL
+    named = set(re.findall(r"`([a-z_]+\.v\d+)`", delivery))
     assert named == set(templates.REGISTRY)
     assert "references/templates.md" in SKILL
     examples = _instances_in(EXAMPLES_FILE.read_text(encoding="utf-8"))

@@ -209,7 +209,10 @@ def test_a_tool_that_runs_code_stays_behind_the_hosts_permission(rig, monkeypatc
     got = rig.call(tool, **arguments)
     assert got["completion_state"] == "blocked-escalated" and check_envelope(got) == []
     assert got["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
-    assert "workforce.mission" in got["error"] and "G6_MCP_SENSITIVE" in got["error"]
+    # the refusal says the person decides and names no setting (d155c90e, 04b191cc: no way past the block reaches
+    # the agent)
+    assert "workforce.mission" in got["error"] and "The person must allow it themselves" in got["error"]
+    assert "G6_MCP_SENSITIVE" not in got["error"]
 
 
 def test_the_component_says_which_op_the_person_allows():

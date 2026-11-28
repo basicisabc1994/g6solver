@@ -24,6 +24,7 @@ empty or a wrong answer. ``isolation`` says how the code the evaluation ran was 
 when it ran none).
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
 
 import functools
 import hashlib
@@ -274,7 +275,7 @@ def evaluate(workflow: Workflow, base: Profile, candidate: Profile, factory: Exe
         report = _evaluate(workflow, base, candidate, factory, split=split, theories=theories, clock=clock,
                            reuse_index=reuse_index, budget=budget, artifacts=artifacts)
     if runs:
-        report.isolation = confine.summary(runs)
+        report.isolation = confine_summary(runs)
     return report
 
 

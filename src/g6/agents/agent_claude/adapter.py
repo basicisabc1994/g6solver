@@ -71,6 +71,7 @@ from g6.agents._runtime import (
 )
 from g6.agents._runtime.cli import OUTPUT_LOG
 from g6.core import stop as core_stop
+from g6.core.decoder_limits import decode, is_undecodable_record, shaped
 from g6.core.model_calls import note_model_call
 from g6.agents._runtime.consent import consent_run, register_program
 from g6.core.outside import OutsideProgram
@@ -116,19 +117,34 @@ _HALF_CHANGED = (" Claude Code had leave to edit the workspace and its run did n
                  "half-changed: look at what changed (git status, git diff) before you go on.")
 
 
+#: The fields of Claude Code's result that decide a run's outcome, with their exact types (``RESULT_FIELDS`` when
+#: present): a result without them is not known.
+RESULT_SHAPE = {"type": str, "is_error": bool}
+RESULT_FIELDS = {"result": str, "subtype": str}
+
+
 def _result(text: str) -> dict[str, Any] | None:
     """The result Claude Code printed last (``--output-format json``): the last line that is a JSON object of type
-    ``result``, whatever it printed before it."""
+    ``result``, whatever it printed before it. ``None`` when a line after it that opens an object cannot be read
+    (malformed, cut off, or past the decoder's limits), or when the last result is not in its shape (``RESULT_SHAPE``):
+    either may be the result it printed last, and no earlier one stands in for it."""
     for line in reversed(text.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
         try:
-            found = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(found, dict) and found.get("type") == "result":
-            return found
+            found = decode(line)
+        except ValueError as exc:
+            if not (is_undecodable_record(exc) or isinstance(exc, json.JSONDecodeError)):
+                raise
+            return None
+        # A missing or mistyped discriminator cannot establish that this is a non-result event.
+        if not shaped(found, {"type": str}):
+            return None
+        if found["type"] == "result" or "is_error" in found or "result" in found:
+            if not shaped(found, RESULT_SHAPE, RESULT_FIELDS):
+                return None
+            return found if found["type"] == "result" else None
     return None
 
 

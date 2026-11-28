@@ -27,7 +27,8 @@ with ``knowledge_fetcher`` before relying on it.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -176,11 +177,13 @@ class SearxngSearcher:
             return SearchResult(self.name, query, _service_outcome(exc), reason=exc.message[:500],
                                 evidence={"status": exc.status})
         try:
-            data = json.loads(reply.body)
+            data = _decode_json(reply.body)
             raw = data["results"]
             if not isinstance(raw, list):
                 raise TypeError("results is not a list")
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return SearchResult(self.name, query, "parse_failed", reason=f"SearXNG's reply is not its JSON: {exc}")
         failed = [[_plain(e[0], 80), _plain(e[1], 200)] for e in data.get("unresponsive_engines") or []
                   if isinstance(e, (list, tuple)) and len(e) >= 2]
@@ -346,8 +349,10 @@ class BraveSearcher:
             return SearchResult(self.name, query, outcome, reason=(why + str(exc)).replace(key, "***")[:500],
                                 evidence={"gate": decided, "status": exc.status})
         try:
-            raw = brave_results(json.loads(reply.body))
-        except (ValueError, TypeError) as exc:
+            raw = brave_results(_decode_json(reply.body))
+        except (ValueError, TypeError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return SearchResult(self.name, query, "parse_failed", reason=f"Brave's reply is not its JSON: {exc}",
                                 evidence={"gate": decided})
         items = [(_plain(re.sub(r"<[^>]+>", "", r["title"]), 500), _web_address(r["url"]),

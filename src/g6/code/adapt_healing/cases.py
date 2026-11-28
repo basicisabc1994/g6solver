@@ -12,6 +12,8 @@ process: a patch that alters the runner can forge a pass. A test of any other fo
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import json
 import secrets
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from g6.code._types import CodeRefused
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 BAD_TEST = "G6_E_HEAL_BAD_TEST"
 SOLUTION = "solution.py"
@@ -190,7 +192,10 @@ def _run(template: str, code: str, cases: list[str], timeout_s: float) -> dict[s
     for line in reversed(ran.stdout.splitlines()):
         if line.startswith(mark):
             try:
-                report = json.loads(line[len(mark):])
+                try:
+                    report = _decode_json(line[len(mark):])
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             except json.JSONDecodeError:
                 report = None
             break

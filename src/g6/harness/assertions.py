@@ -2,6 +2,8 @@
 """JSON assertions as existing Check builders; no module loading or bundled scenarios."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import operator
 from collections.abc import Mapping, Sequence
@@ -60,12 +62,12 @@ class _FieldPredicate:
 
     def __call__(self, output: Any) -> bool:
         try:
-            value = json.loads(output) if isinstance(output, str) else output
+            value = _decode_json(output) if isinstance(output, str) else output
             actual = resolve_field(value, self.field, default=_MISSING)
             if actual is _MISSING:
                 return False
-            return _compare(actual, self.op, json.loads(self.expected_json))
-        except (TypeError, ValueError, OverflowError):
+            return _compare(actual, self.op, _decode_json(self.expected_json))
+        except (TypeError, ValueError, OverflowError, RecursionError, MemoryError):
             return False
 
 

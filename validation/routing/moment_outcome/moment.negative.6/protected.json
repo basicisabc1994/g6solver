@@ -1,0 +1,6 @@
+{
+  "protected": [
+    "classify.py"
+  ],
+  "why": "cases.json is renamed and README.md updated to match: the code stays as it is."
+}

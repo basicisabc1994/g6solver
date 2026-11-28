@@ -54,6 +54,7 @@ a copy).
 The answer is an envelope the single reader judges: a refusal is ``ok: false`` with the reason.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
 
 import hashlib
 import importlib.util
@@ -159,7 +160,13 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
     if op not in OPS:
         return _refused(f"the bench has no op {op!r} (it has {sorted(OPS)})")
     if op == IN_PLACE:
-        return _in_place(params, venture)
+        try:
+            return _in_place(params, venture)
+        finally:
+            # Report construction, refusal guidance and scratch cleanup also
+            # belong to the owner's allowance, including exceptional exits.
+            # A pending control must survive an answer-construction error.
+            component_process.checkpoint()
     if "regression" in params:
         from g6.workforce import patch_checks
 
@@ -191,7 +198,7 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
                 truth.LAST_RUN.clear()
                 results[nodeid] = truth.run_isolated(nodeid, copy)
                 if truth.LAST_RUN.get("refused"):  # no backend, and unconfined runs not allowed: nothing ran
-                    return _refused(truth.LAST_RUN["refused"])
+                    return _refused(truth.LAST_RUN["refused"], isolation=truth.LAST_RUN["isolation"])
                 kind, why = _attributed(nodeid)
                 if kind == "failed":  # completed local timeout: an executed failure
                     causes[nodeid] = why
@@ -219,7 +226,7 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
         return _refused(NOT_STARTED.format(why=unstarted))
     found = {"passed": not unstarted and all(results.values()) and (suite or {}).get("status") != "fail",
              "tests": results, "applied": sorted(files), "integrity": {"test_files_unchanged": True, "test_files": compared},
-             "isolation": confine.summary(runs)}
+             "isolation": confine_summary(runs)}
     if suite is not None:
         found["suite"] = suite
     if causes:
@@ -340,7 +347,7 @@ def _in_place(params: dict, venture: str | None) -> dict:
             found = repo_tests.run(repo, list(tests), roots=tuple(roots),
                                    timeout_s=int(params.get("timeout_s") or repo_tests.DEFAULT_TIMEOUT_S))
         except repo_tests.RepoRefused as refused:
-            return _refused(f"{refused} (code {refused.code})")
+            return _refused(f"{refused} (code {refused.code})", isolation=refused.isolation or None)
         report = repo_tests.read_report(found)
         found = report.wire()
         passed = (repo_tests.established(report, repo=repo).of() == repo_tests.PASSED   # the one statement of a pass
@@ -351,10 +358,13 @@ def _in_place(params: dict, venture: str | None) -> dict:
                                    "counts": {key: found[key] for key in ("passed", "failed", "not_passed", "total")},
                                    "said": found["said"], "seconds": found["seconds"],
                                    "interpreter_source": found["interpreter_source"],
-                                   "isolation": found.get("isolation") or confine.summary([])}}
+                                   "isolation": found.get("isolation") or confine_summary([])}}
 
 
-def _refused(why: str) -> dict:
+def _refused(why: str, *, isolation: dict | None = None) -> dict:
+    if isolation is not None:
+        from g6.core.guidance_builders import blocked_reply
+        return {**blocked_reply(why), "isolation": isolation}
     return {"ok": False, "error": why}
 
 

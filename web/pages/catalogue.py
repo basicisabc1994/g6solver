@@ -78,6 +78,10 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                "Has named roles, such as a proposer and a critic, argue a question in turn, and reports how far they "
                "agree",
                "taking one model's first answer unchallenged"),
+    "distill": ("Method distillation",
+                "Keeps failure records, proposes methods from training cases, and admits library methods through "
+                "a separate acceptance gate",
+                "weak tests and methods that do not help"),
     "distillation": ("Tested shortcuts",
                      "Checks a small function that stands in for repeated model calls: it runs it in a bounded child "
                      "process and tests it on new cases before anyone relies on it",
@@ -91,7 +95,7 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                  "every gap named",
                  "work called verified when the evidence does not support it"),
     "formal": ("The logic checker",
-               "Settles small logic questions exactly with a solver, and labels each answer for what it is",
+               "Settles small logic questions exactly with a solver and reports the solver operation's own answer labels",
                "reasoning slips a model would state with confidence"),
     "goal_engine": ("Goal plans",
                     "Holds the subtasks you declare as a tree and checks them against what your executor reports",
@@ -122,6 +126,10 @@ PLAIN: dict[str, tuple[str, str, str]] = {
     "learning": ("Learned hints",
                  "Learns hints from an agent's failures, and keeps one only when side-by-side runs show it helps",
                  "repeating the same mistake, or lessons that sound right and do not help"),
+    "self_model": ("The self-model",
+                   "Reads explicitly measured state with freshness limits and predicts action risks without "
+                   "executing actions or granting authority",
+                   "stale observations and risks overlooked before acting"),
     "metaharness": ("The self-tuning loop",
                     "Tunes how G6 runs a task you repeat: it proposes changes, tests each one on cases it has not seen, "
                     "and keeps one only when you approve",
@@ -176,7 +184,8 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # one in the single column that says what it is for. A test fails when a registered core component is in no column, or
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis", "self_maintenance", "cognitive_bridge")),
+    ("Learn", ("metaharness", "learning", "distillation", "distill", "self_model", "abstraction", "cegis",
+               "self_maintenance", "cognitive_bridge")),
     ("Know", ("context", "grounding", "causal", "graph_reasoning", "complexity")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
                 "solver", "debate", "algorithm_design")),

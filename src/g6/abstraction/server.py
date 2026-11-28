@@ -34,6 +34,8 @@ import path, so the project's own packages never replace G6's)
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import inspect
 import json
 import math
@@ -264,10 +266,12 @@ def propose_abstraction(spec_json: str, domain: str = "domain") -> str:
     spec over-claims (lipschitz too small -> bound violations; radius too
     large -> regret risk). Iterate, or evaluate and CEGAR-refine."""
     try:
-        abstraction = from_spec(json.loads(spec_json))
+        abstraction = from_spec(_decode_json(spec_json))
         report = run_gate(abstraction, _dom(domain))
         return _j({"spec": abstraction.spec(), "gate": report.to_dict()})
-    except (SpecError, ValueError, KeyError) as exc:
+    except (SpecError, ValueError, KeyError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return _err(exc)
 
 
@@ -289,12 +293,14 @@ def evaluate_abstraction(spec_json: str, domain: str = "domain",
 
     Unsound or degenerate entries have blp_score clamped to <= 0."""
     try:
-        abstraction = from_spec(json.loads(spec_json))
+        abstraction = from_spec(_decode_json(spec_json))
         entry = _library.evaluate(abstraction, _dom(domain),
                                   budget=budget, notes=notes)
         _autosave()
         return _j(entry.to_dict())
-    except (SpecError, ValueError, KeyError) as exc:
+    except (SpecError, ValueError, KeyError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return _err(exc)
 
 
@@ -375,7 +381,7 @@ def advise_pruning(entry_id: str, candidates_json: str,
     try:
         entry = _library.get(entry_id)
         result = _advise(_library, entry_id, _dom(entry.domain_name),
-                         json.loads(candidates_json), incumbent)
+                         _decode_json(candidates_json), incumbent)
         result.pop("may_prune", None)
         return _j(result)
     except Exception as exc:
@@ -391,7 +397,7 @@ def record_evaluation(domain: str, config_json: str, objective: float) -> str:
     knows when revalidation is due."""
     try:
         dom = _dom(domain)
-        rec = dom.append(json.loads(config_json), objective)
+        rec = dom.append(_decode_json(config_json), objective)
         _autosave()
         stale = [e.entry_id for e in _library.entries.values()
                  if e.domain_name == domain and e.staleness(dom) > STALE_WARN]
@@ -527,7 +533,7 @@ def self_debug(max_rounds: int = 3, budget: int | None = None) -> str:
                 fn = {"refine_abstraction": refine_abstraction,
                       "tighten_abstraction": tighten_abstraction,
                       "revalidate": revalidate}[tool]
-                res = json.loads(getattr(fn, "fn", fn)(
+                res = _decode_json(getattr(fn, "fn", fn)(
                     entry_id=eid, budget=budget))
                 new = res.get("new_entry") or {}
                 actions.append({

@@ -23,6 +23,8 @@ passage text and no passage ids. A log of chosen actions alone is not training d
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 import time
@@ -152,8 +154,8 @@ def _typed(reply: Any) -> dict[str, Any] | None:
     query document."""
     try:
         text = str(reply)
-        proposal = json.loads(text[text.index("{"):text.rindex("}") + 1])
-    except ValueError:
+        proposal = _decode_json(text[text.index("{"):text.rindex("}") + 1])
+    except (ValueError, RecursionError, MemoryError):
         return None
     if not isinstance(proposal, dict) or not isinstance(proposal.get("query"), str) or not proposal["query"].strip():
         return None

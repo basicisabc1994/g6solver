@@ -56,7 +56,7 @@ def test_d1_low_contrast_pair_is_refused():
 
 
 def test_page_without_css_needs_no_css_checker(monkeypatch):
-    original = _build.sandbox.run_script
+    original = _build.script_run
 
     def no_tinycss2(source, *args, **kwargs):
         prefix = ("import builtins\n_g6_import = builtins.__import__\n"
@@ -67,11 +67,12 @@ def test_page_without_css_needs_no_css_checker(monkeypatch):
                   "builtins.__import__ = _missing\n")
         return original(prefix + source, *args, **kwargs)
 
-    monkeypatch.setattr(_build.sandbox, "run_script", no_tinycss2)
+    monkeypatch.setattr(_build, "script_run", no_tinycss2)
     out = run("run_checks", files={"index.html": "<p>Text</p>"},
               pairs=[{"foreground": "#aaaaaa", "background": "#bbbbbb"}], dry_run=False)
     skipped = {c["name"]: c for c in out["checks_not_run"]}
-    assert "no CSS" in skipped["css"]["reason"]
+    assert "css" in skipped, json.dumps(out, indent=2)
+    assert "no CSS" in skipped["css"]["reason"], out
     assert out["code"] == "G6_E_WEB_CONTRAST"
 # Removal: the "no CSS found" NotRun ahead of the tinycss2 import in css_script.
 
@@ -125,7 +126,7 @@ def test_adapt_webpage_03_no_vendored_assets():
 def test_dry_run_never_calls_sandbox(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("dry run executed code")
-    monkeypatch.setattr(_build.sandbox, "run_script", forbidden)
+    monkeypatch.setattr(_build, "script_run", forbidden)
     out = run("run_checks", files={"index.html": "<p>Text</p>"})
     assert out["dry_run"] is True and not out["checks_run"]
 # Removal: dry_run branch in AdaptWebpageBlock.infer.
@@ -164,7 +165,7 @@ def test_component_fragments_load_their_css():
     ("playwright", "render", "G6_E_OUTSIDE_PROGRAM_MISSING"),
 ])
 def test_requested_check_missing_package_blocks(monkeypatch, package, extra, code):
-    original = _build.sandbox.run_script
+    original = _build.script_run
 
     def missing(source, *args, **kwargs):
         prefix = (
@@ -177,12 +178,12 @@ def test_requested_check_missing_package_blocks(monkeypatch, package, extra, cod
         )
         return original(prefix + source, *args, **kwargs)
 
-    monkeypatch.setattr(_build.sandbox, "run_script", missing)
+    monkeypatch.setattr(_build, "script_run", missing)
     # Only the CSS case sends CSS, so the render case does not depend on whether tinycss2 is installed.
     files = {"index.html": "<p>Text</p>"} | ({"style.css": "p { color: black; }"} if package == "tinycss2" else {})
     out = run("run_checks", files=files, render=package == "playwright", dry_run=False)
     assert out["completion_state"] == "blocked-escalated"
-    assert out["code"] == code
+    assert out["code"] == code, json.dumps(out, indent=2)
     assert "not installed" in out["warning_card"]["message"]
     assert f'g6[{extra}]' in out["warning_card"]["message"]
     assert any(c["passed"] is False and c["code"] == code for c in out["checks_run"])
@@ -190,7 +191,7 @@ def test_requested_check_missing_package_blocks(monkeypatch, package, extra, cod
 
 
 def test_requested_render_missing_browser_uses_outside_require(monkeypatch):
-    original = _build.sandbox.run_script
+    original = _build.script_run
 
     def missing_browser(source, *args, **kwargs):
         prefix = (
@@ -208,11 +209,11 @@ def test_requested_render_missing_browser_uses_outside_require(monkeypatch):
         )
         return original(prefix + source, *args, **kwargs)
 
-    monkeypatch.setattr(_build.sandbox, "run_script", missing_browser)
+    monkeypatch.setattr(_build, "script_run", missing_browser)
     out = run("run_checks", files={"index.html": "<p>Text</p>"}, render=True, dry_run=False)
     render = next(c for c in out["checks_run"] if c["name"] == "render")
     assert out["completion_state"] == "blocked-escalated"
-    assert out["code"] == "G6_E_OUTSIDE_PROGRAM_MISSING"
+    assert out["code"] == "G6_E_OUTSIDE_PROGRAM_MISSING", json.dumps(out, indent=2)
     assert render["passed"] is False
     assert render["evidence"]["outside_detect_called"] == "Playwright Chromium"
     assert "python -m playwright install chromium" in render["reason"]

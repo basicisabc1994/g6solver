@@ -76,7 +76,8 @@ def test_withheld_review_job_names_its_reviewer_provider(tmp_path, monkeypatch):
     received = asyncio.run(call())
     result = data(received)['result']
     assert result['ending'] == 'untested' and result['action'] == 'stop'
-    assert 'anthropic:api' in result['report'] and 'g6_cloud_grant' in result['report']
+    # since 3d45b793 the report tells the agent to tell the person, and the repair block names the dialog's tool
+    assert 'anthropic:api' in result['report'] and result['repair']['call']['tool'] == 'g6_cloud_grant'
     assert 'PLANTED_REVIEW' not in str(received)
 
 

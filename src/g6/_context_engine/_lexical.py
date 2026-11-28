@@ -23,6 +23,8 @@ row its membership does not list, whatever an interrupted earlier step left behi
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import heapq
 import json
 import math
@@ -135,10 +137,13 @@ class ScopedLexical(SqliteIndex):
                 if time.monotonic() > deadline:
                     ended.append(True)
                     raise sqlite3.OperationalError("interrupted")
-                if self.excluded and json.loads(row["source"]).get("uri") in self.excluded:
-                    if len(left_out) < LEFT_OUT:
-                        left_out.append(row["id"])
-                    continue   # a file observed changed is denied: it takes no place among the hits
+                try:
+                    if self.excluded and _decode_json(row["source"]).get("uri") in self.excluded:
+                        if len(left_out) < LEFT_OUT:
+                            left_out.append(row["id"])
+                        continue   # a file observed changed is denied: it takes no place among the hits
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 words = _tokens(row["text"])
                 counts = Counter(words)
                 score = 0.0

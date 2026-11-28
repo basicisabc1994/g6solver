@@ -12,3 +12,26 @@ __g6_outside__ = ()
 __g6_extras__ = {}
 
 __all__ = ["HATOrchestratorBlock", "HATOrchestratorInput"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_GATE_ERROR": "person",
+    "G6_E_HAT_AGENT_MISSING": "none",
+    "G6_E_HAT_AUTHORITY_DECLARED": "person",
+    "G6_E_HAT_AUTHORITY_ESCALATED": ("person", "wait"),
+    "G6_E_HAT_DRY_RUN": "none",
+    "G6_E_HAT_DUPLICATE": "none",
+    "G6_E_HAT_GATE_HELD": "person",
+    "G6_E_HAT_INFO": "none",
+    "G6_E_HAT_NO_MATCH": "none",
+    "G6_E_HAT_PARTICIPANT_REFUSED": "none",
+    "G6_E_HAT_RECORDED": "none",
+    "G6_E_HAT_REPORT": "none",
+    "G6_E_HAT_REPORT_REFUSED": "none",
+    "G6_E_HAT_ROSTER_MISSING": "none",
+    "G6_E_HAT_STATE_BUSY": "retry",
+    "G6_E_HAT_STATE_FAILED": "none",
+    "G6_E_HAT_SYNC_MISSING": "none",
+    "G6_E_HAT_TASK_MISSING": "none",
+}

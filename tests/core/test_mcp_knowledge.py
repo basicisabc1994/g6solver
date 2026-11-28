@@ -320,7 +320,10 @@ def test_no_roots_named_means_nothing_can_be_added(tmp_path, monkeypatch):
     monkeypatch.chdir(made.project)
     dialog = Dialog()
     reply = call(build_server(), "g6_knowledge_add", {"path": str(made.folder)}, dialog).data
-    assert reply["ok"] is False and "G6_KNOWLEDGE_ROOTS" in reply["error"] and dialog.questions == []
+    # The setting is no longer named to the agent: commit 0b400900, lead ruling 2026-11-21 (rc-wrp). With no root
+    # listed, the refusal says so (g6._context_engine._scope.inside since ff7a375b), not that the path is outside one.
+    assert reply["ok"] is False and "G6_KNOWLEDGE_ROOTS" not in reply["error"] and dialog.questions == []
+    assert reply["error"].startswith("[G6_E_KNOWLEDGE_SCOPE]") and "no permitted root is listed" in reply["error"]
 
 
 @pytest.mark.parametrize("answer", ["decline", "cancel", "nameless", None])

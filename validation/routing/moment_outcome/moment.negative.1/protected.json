@@ -1,0 +1,4 @@
+{
+  "protected": [],
+  "why": "The notes repository holds only README.md, which the task asks to correct, so no fixture file is protected here; a change to it is asked for."
+}

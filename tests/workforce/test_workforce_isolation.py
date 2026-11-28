@@ -20,6 +20,7 @@ import pytest
 from g6.core import confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.workforce import bench, repo_tests, truth
+from tests.guidance_expectations import ISOLATION_ACTION, isolation_record, no_setup
 
 WINDOWS = sys.platform == "win32"
 windows_only = pytest.mark.skipif(not WINDOWS, reason="the AppContainer backend is Windows's")
@@ -119,12 +120,17 @@ def test_with_no_backend_and_no_allowance_each_runner_refuses_and_runs_nothing(m
         assert not marker.exists()
         # fails if truth.run_suite runs the suite unconfined without the person's allowance
         assert found["ran"] is False and found["why"].startswith(f"[{ISOLATION_UNAVAILABLE}]")
-        assert "g6 setup" in found["why"]
+        assert ISOLATION_ACTION in found["why"]
+        isolation_record(found["isolation"])
+        no_setup(found)
         return
     reply = bench.run(op, PROBE)
     # fails if truth.run_isolated or repo_tests.run runs the tests unconfined without the person's allowance
     assert reply["ok"] is False and reply["error"].startswith(f"[{ISOLATION_UNAVAILABLE}]")
-    assert "g6 setup" in reply["error"]
+    assert ISOLATION_ACTION in reply["error"]
+    assert reply["completion_state"] == "blocked-escalated"
+    isolation_record(reply["isolation"])
+    no_setup(reply)
 
 
 def test_the_benchs_copy_does_not_follow_links_out_of_the_repository(tmp_path, monkeypatch) -> None:
@@ -231,10 +237,9 @@ def test_a_repository_under_the_home_folder_is_never_answered_with_a_grant_on_ho
     home = tmp_path / "home"
     _stand_in_home(monkeypatch, home, home / ".g6")
     repo = _git_repo(home / "proj", PASSING)
-    found = repo_tests.run(repo, ["tests/test_calc.py"])
+    person = _refused_grant(repo, monkeypatch)
     # fails if repo_tests still puts the folder holding the repository among the read paths
-    assert found["isolation"]["backend"] is None and found["verdict"] == repo_tests.PASSED
-    assert _granted(found["isolation"]["why"]) == [os.path.realpath(repo)], found["isolation"]["why"]
+    assert _granted(person) == [os.path.realpath(repo)], person
 
 
 @windows_only
@@ -248,13 +253,43 @@ def test_a_repository_that_holds_g6s_folder_is_refused_with_the_reason(confined_
     assert found["isolation"]["backend"] is None and "icacls" not in why and "key file" in why, why
 
 
+def _refused_grant(repo, monkeypatch):
+    from g6.cli import doctor
+
+    planned = []
+    original = confine.plan
+
+    def plan(*args, **kwargs):
+        found = original(*args, **kwargs)
+        planned.append(found)
+        return found
+
+    monkeypatch.setattr(confine, "plan", plan)
+    # the refusal is the case where nobody allowed unconfined runs; the Windows CI job allows them for the whole job
+    monkeypatch.delenv(confine.ALLOW, raising=False)
+    monkeypatch.setattr(repo_tests, "_bounded", lambda *a, **k: pytest.fail("refused tests started"))
+    with pytest.raises(repo_tests.RepoRefused) as caught:
+        repo_tests.run(repo, ["tests/test_calc.py"])
+    assert caught.value.code == ISOLATION_UNAVAILABLE
+    assert ISOLATION_ACTION in str(caught.value)
+    isolation_record(caught.value.isolation)
+    no_setup(str(caught.value))
+    assert len(planned) == 1 and planned[0].backend is None
+    # The same plan's full setup instructions reach the person through doctor.
+    monkeypatch.setattr(confine, "backend", lambda *a, **k: (None, planned[0].why))
+    person = doctor._isolation()
+    assert person.status == "warn" and "icacls" in person.fix
+    assert "g6 setup" in person.detail
+    return person.fix
+
+
 @windows_only
-def test_the_printed_grant_names_only_the_repository_and_the_interpreter_folders(tmp_path) -> None:
+def test_the_printed_grant_names_only_the_repository_and_the_interpreter_folders(tmp_path, monkeypatch) -> None:
     folders = confine.interpreter_paths(sys.executable)
     if confine._readable_all(folders):
         pytest.skip("the owner has granted this interpreter to the container")
     repo = _git_repo(tmp_path / "projects" / "repo", PASSING)
-    why = repo_tests.run(repo, ["tests/test_calc.py"])["isolation"]["why"]
+    why = _refused_grant(repo, monkeypatch)
     # Environmental: the grant names only the folders the container cannot read yet (one the owner has granted is left
     # out), and with an editable install interpreter_paths includes the folder holding g6's source (S5), which a
     # machine whose interpreter folders are granted now names on its own.

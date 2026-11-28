@@ -9,8 +9,10 @@ for a task, their rounds, the questions it asked, its tool calls and their times
 suggestions and any feedback you give. It is your data. It is kept on this computer, under
 `$G6_HOME/workflow/<project-id>/`, and nowhere else.
 
-The record is **off until you turn it on**: set `G6_WORKFLOW_RECORD=on` where the G6 server is registered.
-`G6_WORKFLOW_RECORD=off`, or any other value, keeps it off. An agent cannot set it. While it is off, G6 adds nothing
+The record is **on by default** (owner ruling, 2026-11-25): to turn it off, set `G6_WORKFLOW_RECORD=off` where the
+G6 server is registered. `G6_WORKFLOW_RECORD=on` keeps it on; any other value turns it off. An agent cannot set it. The
+optional view of a task after a review report is shown only when you set `G6_WORKFLOW_RECORD=on` or name a level in
+`G6_WORKFLOW_VIEW`. While the record is off, G6 adds nothing
 to any part of the record, feedback included; you can still look at and delete what is already held, and it still
 expires.
 
@@ -33,7 +35,7 @@ period; an older entry in a file still in use is not read once it is past its pe
 | `annotations`: your corrections | 180 days | `tasks/<task-id>/annotations.jsonl` |
 | `decisions`: suggestions you adopted, dismissed or reopened | 365 days | `decisions.jsonl`, `tasks/<task-id>/decisions.jsonl` |
 | `feedback`: opt-in, invitations and what you answered | 180 days | `feedback.jsonl` |
-| `exports`: the inspection file | 30 days | `inspection.json` |
+| `exports`: the inspection and readable files | 30 days | `inspection.json`, `RECORD.md` |
 | `receipts`: that something was deleted or expired | 365 days | `receipts.jsonl` |
 
 Beside a file G6 may keep a `.head` (the last entry's hash), a `.lock` and, for a moment while writing, a `.part`.

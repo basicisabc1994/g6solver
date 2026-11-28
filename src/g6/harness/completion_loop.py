@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The completion loop: when a coding agent says it has finished, test the work with checks it never saw, send failures
+"""The Stop hook checks each Python change by default with the model-free patch review, after its boundary check.
+With no approved reviewer it only shows the report, records the digest, and ends the turn; the reviewer loop is opt-in.
+
+The completion loop: when a coding agent says it has finished, test the work with checks it never saw, send failures
 back in the same session until the work holds or the stop rule fires, and say what was tested and what remains unknown.
 
 Two loops share this module. Once a critic is approved it is the worked examples' arm K (``reviews_until_clean`` in
 ``validation/worked_examples/run.py``), the review-until-clean loop: another model family reads the finished patch without the
-agent's reasoning, and must state a rule, reasons and a test. If that test fails on the patch, the three go back in the same
+agent's reasoning, and must state a rule, reasons and a test. Only a case that fails at both parent and patch goes back in the same
 session, and a fresh review reads the new patch, up to ``MAX_REPAIRS`` repairs. The agent may reject a finding by leaving the
 code as it was. No scout and no probe: ``advance`` needs the boundary and the critic and nothing else, and a review that fails
 or cannot be read ends the loop with no clean review. Each review's test stays beside the earlier ones (``critic_file``) to
@@ -12,7 +15,7 @@ catch a repair that undoes it, and runs alone, so one that will not run hides no
 defect no test could show ends the loop with no clean review, where K calls it clean. A run that ends leaves a row in
 ``FAILURES`` for the next cycle of the self-improvement loop.
 
-``MODE_LINE`` in the person's key file, or no critic, gives the other loop, described from here on.
+``MODE_LINE`` in the person's key file, or no critic, gives the other loop if scouts are approved, described from here on.
 
 It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved into the product. Its text is data
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
@@ -46,6 +49,8 @@ code as it was. L9's runner waits for the agent inside the loop, and a hook cann
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import bisect
 import difflib
 import json
@@ -68,6 +73,7 @@ from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call
+from g6.core.model_calls import counting
 from g6.core import cloud_consent as cloud, consent_callers as consent
 from g6.core.consent_callers import provider_from_env
 from g6.core.storage import state_path
@@ -161,11 +167,11 @@ REFUSED = "\n\nThe runner checked your work and refused it:\n- {wrong}\n{did}Put
 NO_BOUNDARY = ("G6's completion loop did not run: no operating-system boundary can confine model-written tests here "
                "({why}), so G6 ran none of them and asked no model. Nothing was tested. g6 doctor says what this computer "
                "needs for a boundary.")
-NOT_APPROVED = ("G6's completion loop did not run: its scouts use your Claude Code sign-in, and nothing in your key file "
-                "approves that. Add the line G6_LLM_PROVIDER=claude_code to {path} to turn it on. Nothing was tested.")
-NOT_ON = ("G6's completion loop did not run: nothing in your key file approves a reviewer. Add the line "
-          f"{CRITIC_LINE}=codex to {{path}} to turn on the review-until-clean loop, on your Codex sign-in. The line "
-          "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead. Nothing was tested.")
+NOT_APPROVED = ("The reviewer loop did not run: its scouts need approval. Add G6_LLM_PROVIDER=claude_code to {path} "
+                "to turn on the scouts' loop on your Claude Code sign-in.")
+NOT_ON = ("The reviewer loop did not run: no reviewer is approved. Add "
+          f"{CRITIC_LINE}=codex to {{path}} to turn on the review-until-clean loop on your Codex sign-in; "
+          "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead.")
 NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
            "against. Nothing was tested.")
 #: The lines a hook shows where a loop did not run and so no report came: one for each reason.
@@ -194,6 +200,44 @@ _PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
 #: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
 Host = Callable[[str, Path, Path, float], str]
 _SOURCE_STATE: contextvars.ContextVar[cloud.Capture | None] = contextvars.ContextVar('g6_completion_sources', default=None)
+#: One step's consent latch (``_advance``): each refusal G6's own consent guard told of (``cloud.telling_refusals``),
+#: and the count of model requests the step made. A consent refusal is read from here, never from a reviewer's error
+#: text, which is the provider's words (wire-typed-fu-4, e74d2b9d).
+_CONSENT: contextvars.ContextVar[tuple[list, Callable[[], int]] | None] = contextvars.ContextVar('g6_completion_consent',
+                                                                                                default=None)
+#: The sharing state could not be read after a request of this loop had gone out (``G6_E_CLOUD_CONSENT_STATE`` says
+#: nothing was shared, which a sent request makes untrue; efa43a2a).
+CONSENT_STATE_AFTER_SEND = "G6_E_CLOUD_CONSENT_STATE_AFTER_SEND"
+
+
+def _consent_code(error: BaseException) -> str:
+    """The consent code of a refusal G6's guard raised (its words lead with it), or ``""``."""
+    text = str(error)
+    return next((code for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE) if text.startswith(code)), "")
+
+
+def _consent_mark() -> int:
+    latch = _CONSENT.get()
+    return len(latch[0]) if latch is not None else 0
+
+
+def _consent_told(mark: int = 0) -> BaseException | None:
+    """The latest consent refusal G6's guard told of in this step since ``mark``, or None."""
+    latch = _CONSENT.get()
+    return next((one for one in reversed(latch[0][mark:]) if _consent_code(one)), None) if latch is not None else None
+
+
+def _latched(error: BaseException) -> BaseException | None:
+    """The refusal the guard told of that ``error`` is, or was raised from or within; None for any other error."""
+    latch = _CONSENT.get()
+    told = latch[0] if latch is not None else []
+    seen, failed = set(), error
+    while failed is not None and id(failed) not in seen:
+        seen.add(id(failed))
+        if any(failed is one for one in told) and _consent_code(failed):
+            return failed
+        failed = failed.__cause__ or failed.__context__
+    return None
 
 
 def literal(text: str) -> str:
@@ -216,7 +260,10 @@ class Harness:
 
 def harness(path: Path = HARNESS) -> Harness:
     """The harness in ``path``. Training can only add to a part's instructions: anything else in ``trained`` is refused."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = _decode_json(path.read_text(encoding="utf-8"))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     added = data.get("trained") or {}
     odd = sorted(set(added) - set(TRAINED))
     if odd:
@@ -349,9 +396,9 @@ def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, ran
     elif exit_code == 0:
         wrong.append("every probe passes on the unfixed code, so none fails: reproduce the issue's symptom")
     try:
-        dimensions = json.loads(raw).get("dimensions") or {}
+        dimensions = _decode_json(raw).get("dimensions") or {}
         domain = InputDomain.of(dimensions, max_inputs=MAX_CROSS)
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, RecursionError, MemoryError):
         dimensions, domain = {}, None
     if domain is None or len(dimensions) < 2:
         wrong.append('tree.json needs "dimensions" with at least two dimensions')
@@ -403,6 +450,8 @@ class ToolSession(consent.ConsentClaude):
 
 def scout_host() -> Host | None:
     """The scouts' session, when the key file's own ``G6_LLM_PROVIDER`` line approves Claude Code; else None."""
+    if (keys.get("G6_LLM_PROVIDER") or "").strip().lower() != "claude_code":
+        return None
     caller = proposer._backend(provider_from_env())
     return ToolSession(caller.model).run if isinstance(caller, host_models.ClaudeCodeCaller) else None
 
@@ -464,7 +513,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         # The frozen bytes are what is read, but their JSON form makes a tuple or a set a list: a report that is not
         # valid as the run gave it stays unknown, and is never made valid by its serialisation.
         given = repo_tests.read_report(ran)
-        report = repo_tests.read_report(json.loads(body)) if given.valid else given
+        try:
+            report = repo_tests.read_report(_decode_json(body)) if given.valid else given
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         ran = report.wire()
         boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
@@ -494,7 +546,10 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
 def _snapshot_probe(value):
     body, refs, _ = cloud.freeze_output(value)
     refs = refs or (cloud.UNKNOWN,)
-    return cloud.bind_output(ProbeRun(**json.loads(body)), refs), refs
+    try:
+        return cloud.bind_output(ProbeRun(**_decode_json(body)), refs), refs
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
@@ -889,6 +944,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     pack = _pack(change, shown, task, proof)
     sent, hidden = _masked_pack(change, shown, task, proof)
     masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
+    returned = False
     try:
         refs = tuple(cloud.Source.text(cloud.repository_source(change.repo), rel, sent)
                      for rel in (*change.sources, "candidate.patch"))
@@ -897,8 +953,9 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         if told:
             refs += told_sources or (cloud.UNKNOWN,)
         with cloud.request_sources(refs):
-            found = critic_report(consent.guard(caller).complete(
-                system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
+            response = consent.guard(caller).complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told)
+            returned = True
+            found = critic_report(response, proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if hidden and found["verdict"] == "none":
@@ -906,7 +963,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
+    return {**found, "reviewer": _named(caller), "review_returned": returned, **({"masked": masked} if masked else {})}
 
 
 def _read_whole(patch: str, task: str) -> bool:
@@ -923,6 +980,39 @@ def _unrun(got: ProbeRun) -> str:
     said = [text for case, text in got.texts.items() if got.results.get(case, "unknown") == "unknown"]
     text = "\n".join(part for part in (got.tail, *said) if part)
     return mask_paths(_seen(text).masked())[-MAX_CASE_CHARS:] or "no case of it ran to a result"
+
+
+def reviewer_cases(now: ProbeRun, base: ProbeRun) -> tuple[set[str], list[dict]]:
+    """The parent rule (study record, 2091): only body failures at parent AND patch are findings.
+    Everything else with a failure or an unavailable observation is a note, never defect feedback.
+    Both runs must be usable; a partial or untrusted run cannot admit a case even if it carries 'failed'."""
+    found, notes = set(), []
+    for case in sorted(now.results.keys() | base.results.keys()):
+        after, before = now.results.get(case), base.results.get(case)
+        if now.usable and base.usable and after == before == "failed":
+            found.add(case)
+            continue
+        if not now.usable:
+            reason = "patch run did not reach a usable result: " + _unrun(now)
+        elif not base.usable:
+            reason = "parent run did not reach a usable result: " + _unrun(base)
+        elif after == "passed" and before in ("passed", "failed"):
+            continue
+        else:
+            reason = f"parent case: {before or 'not run'}; patch case: {after or 'not run'}; both must fail"
+        notes.append({"case": case, "parent": before or "not run", "patch": after or "not run", "reason": reason})
+    if not now.results and not base.results:
+        notes.append({"case": "", "parent": "not run", "patch": "not run",
+                      "reason": "parent: " + _unrun(base) + "; patch: " + _unrun(now)})
+    return found, notes
+
+
+def _reviewer_base(change: repo_tests.Change, where: Path, deadline: float, only: str = "") -> ProbeRun:
+    """An unavailable parent run is a note. This uses the same confined runner and deadline as the patch."""
+    try:
+        return run_set(change, where, at_base=True, deadline=deadline, only=only)
+    except (repo_tests.RepoRefused, OSError) as exc:
+        return ProbeRun(None, {}, {}, f"{type(exc).__name__}: {exc}")
 
 
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
@@ -942,7 +1032,9 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
     A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
-    diagnostics = {}
+    sources = {}
+    diagnostics, notes, observations = {}, {}, {}
+    mark = _consent_mark()                  # the consent latch, read after this round's critic calls
     read, kept, mine = repo_tests.diff_read(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     patch = read.text
     kept.parent.mkdir(parents=True, exist_ok=True)
@@ -951,15 +1043,23 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     said = run_critic(change, task, critic, shipped.critic, where, n, patch=read, whole=True, system_sources=shipped.sources)
 
     def run(name: str) -> None:
+        from g6.harness.workflow.evidence import capture_sources
+
+        sources.update(capture_sources(where, [name]))
         got, diagnostics[name] = _snapshot_probe(run_set(change, where, at_base=False, deadline=deadline, only=name))
         cloud.record_sources(diagnostics[name])
-        found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
-        failing.update(found)
-        failed[name] = sorted(case.removeprefix("critic:") for case in found)
+        before, origins = _snapshot_probe(_reviewer_base(change, where, deadline, name))
+        cloud.record_sources(origins)
+        observations[name] = {"patch": asdict(got), "parent": asdict(before)}
+        found, notes[name] = reviewer_cases(got, before)
+        notes[name] = [{**note, "test_path": str(where / name)} for note in notes[name]]
+        failing.update(f"critic:{case}" for case in found)
+        failed[name] = sorted(found)
         owed = {case for one in reviews for case in one["failed"].get(name, ())}
         results[name] = ("failed" if found else "did not run" if not got.usable else
                          patch_report.NOT_PASSED if any(got.results.get(case) != "passed" for case in owed) else
-                         patch_report.NOT_JUDGED if "unknown" in got.results.values() else "passed")
+                         patch_report.NOT_JUDGED if "unknown" in got.results.values() else
+                         "notes only" if any(v in ("failed", "error") for v in got.results.values()) else "passed")
         said["boundary"] = got.boundary or said.get("boundary", "")
         owner = next((one for one in reviews if one["file"] == name), said)
         if results[name] in SHOWED_NOTHING:
@@ -978,13 +1078,19 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
                                told_sources=diagnostics[mine]), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
-    if any(code in said.get("error", "") for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
-        raise LLMError(said["error"])
-    said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
+    # A round the critic could not answer ends as the consent refusal the guard told of during it (the latch), never by
+    # reading its error text, which is the provider's words (wire-typed-fu-4, e74d2b9d).
+    told = _consent_told(mark) if said.get("error") else None
+    if told is not None:
+        raise told
+    said.update(n=n, patch=digest(patch), file=mine, test_path=str(where / mine), results=results, failed=failed,
+                notes=notes, observations=observations, check_sources=sources)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
-    return failing, review_note(next(one for one in reversed(reviews) if results.get(one["file"]) == "failed"), shipped)
+    return failing, (review_note(next(one for one in reversed(reviews) if results.get(one["file"]) == "failed"), shipped)
+                     + "\n\nOnly these cases are defects (each fails at parent and patch):\n"
+                     + "\n".join(sorted(failing)))
 
 
 # --- the loop --------------------------------------------------------------------------------------------------------------
@@ -1041,7 +1147,7 @@ class Step:
     """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
     ``WAIT``, when this step did nothing, as another of the session was running or the person must answer first. ``code``: the
     stable code of a call that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no
-    report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run.
+    loop report, the message a hook shows the person in its place, including a model-free default review.
     ``ending``: on a stop, how the run ended, one of ``patch_report.ENDINGS``."""
     action: str
     text: str = ""
@@ -1056,10 +1162,10 @@ def _load(session: Path) -> dict:
         return {}
     try:
         expected = (session / 'state.sha256').read_text(encoding='ascii')
-        state = json.loads(cloud.read_retained(path, expected))
+        state = _decode_json(cloud.read_retained(path, expected))
         if not isinstance(state, dict):
             raise ValueError('retained state is not an object')
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         # Neither content nor control fields from unbound state are reusable.
         state = {'done': True, 'code': cloud.REQUIRED, 'ending': 'untested', 'stop': cloud.WITHHELD,
                  'consent_sources': [asdict(cloud.UNKNOWN)]}
@@ -1129,23 +1235,52 @@ def _scouts_chosen() -> bool:
     return (keys.get(MODE_LINE) or "").strip().lower() == "scouts"
 
 
+class _ReviewText(str):
+    """The report with its decided fields kept for the additive card; still a string to every existing caller."""
+
+    def __new__(cls, text: str, assessment: dict):
+        value = super().__new__(cls, text)
+        value.assessment = assessment
+        return value
+
+
 def _final_review(root: Path, task: str, base: str) -> str:
     """The patch review of what stopped the loop, on the task's text alone: what the loop ran is not given to it."""
     reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
                          timeout_s=REVIEW_S)
-    return (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
-        (reply.get("warning_card") or {}).get("message", ""), 300))
+    assessment = reply.get("assessment") or {}
+    return _ReviewText(assessment.get("report") or ("The patch review gave no report: " + patch_report.code(
+        (reply.get("warning_card") or {}).get("message", ""), 300)), assessment)
 
 
-def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
+def _record_report(root: Path, task: str, base: str, session: Path, state: dict, step: Step, review: str) -> None:
+    """Capture task observations before card rendering; no missing write can support a count."""
+    from g6.harness.workflow import adapters, evidence as workflow_evidence
+    from g6.harness.workflow.record import now as recorded_now, workflow_source
+
+    state["final_assessment"] = getattr(review, "assessment", {})
+    note = adapters.observe_loop(root, task, session, state, step, at=recorded_now(), base=base)
+    state["workflow_evidence"] = workflow_evidence.read(root, task, note=note,
+                                                       origin_kind="loop_session", origin_id=session.name)
+    if state["workflow_evidence"]["justification"]:
+        project, _ = adapters.identities(root, task)
+        cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+            state["workflow_evidence"], sort_keys=True)),))
+
+
+def _report(root: Path, task: str, base: str, state: dict, reason: str, session: Path | None = None) -> str:
     """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
     review = _final_review(root, task, base)
+    if session is not None:
+        _record_report(root, task, base, session, state, Step(STOP), review)
     rounds, ran = state.get("rounds") or [], state.get("ran") or {}
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
         "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
-        "boundary": state.get("boundary"),
+        "boundary": state.get("boundary"), "reviewer_notes": state.get("reviewer_notes") or {},
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": getattr(review, "assessment", {}),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -1198,8 +1333,8 @@ def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cau
 def _row_of(line: str, session: Path) -> bool:
     """Whether ``line`` is a whole row of this session. A line a killed hook tore does not parse, so it is no row."""
     try:
-        return json.loads(line).get("session") == session.name
-    except (ValueError, AttributeError):
+        return _decode_json(line).get("session") == session.name
+    except (ValueError, AttributeError, RecursionError, MemoryError):
         return False
 
 
@@ -1306,6 +1441,9 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
         _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
+    # Record the observed ending before rendering its justification. The later
+    # hook/MCP adapter replays these same native ids and adds nothing.
+    _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), review)
     return _finish(session, state, _reviews_report(state, reason, code, ending, review), code, ending, patch=now)
 
 
@@ -1315,6 +1453,8 @@ def _reviews_report(state: dict, reason: str, code: str, ending: str, review: st
     return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
+        "agent": state.get("agent", ""), "workflow_evidence": state.get("workflow_evidence"),
+        "assessment": state.get("final_assessment") or getattr(review, "assessment", {}),
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
 
 
@@ -1451,9 +1591,14 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         if said.strip():
             cloud.record_sources((cloud.Source.text(cloud.input_source(said), 'agent-reason', ' '.join(said.split())),))
         token = _SOURCE_STATE.set(capture)
+        told: list[BaseException] = []
         try:
-            with cloud.request_sources(capture.sources):
-                return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+            with cloud.request_sources(capture.sources), cloud.telling_refusals(told.append), counting() as counted:
+                latch = _CONSENT.set((told, counted))
+                try:
+                    return _advance_inner(repo, task, base, session, scout, critic, said, answered, agent)
+                finally:
+                    _CONSENT.reset(latch)
         finally:
             _SOURCE_STATE.reset(token)
 
@@ -1462,6 +1607,10 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
              said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
+    if patch_report.legacy_review_notes(state.get("reviews") or []):
+        reason = state["stop"] = "saved reviewer failures lack parent observations; no checks ran in this call"
+        report = _reviews_report(state, reason, NO_CLEAN_REVIEW, "untested", "")
+        return _finish(session, state, report, NO_CLEAN_REVIEW, "untested", patch=state.get("ended_patch", ""))
     if state.get("done"):
         if "row_due" in state:
             _write_row(session, state)
@@ -1480,6 +1629,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviews or untested:
             return _finish(session, state, text, code, "untested", patch=now)
         ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
+        _record_report(root, task, base, session, state, Step(STOP, code=code, ending=ending), "")
         return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending, patch=now)
 
     if not change.sources:
@@ -1489,18 +1639,29 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return Step(STOP, note=ALREADY_READ)
     if not task.strip():
         return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
-    critic = critic or critic_host()
-    reviewing = critic is not None and not _scouts_chosen()
     why = proposer.boundary(root)
     if why:
         cloud.record_sources((cloud.Source.text('host:execution-boundary', 'diagnostic', why),))
         return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
+    scouts_selected = _scouts_chosen()
+    critic = critic or (None if scouts_selected else critic_host())
+    reviewing = critic is not None and not scouts_selected
     if not reviewing:
         scout = scout or scout_host()
         if scout is None:
             path = keys.path()
             cloud.record_sources((cloud.Source.text('host:configuration', 'configuration-path', str(path)),))
-            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path), keys.KEY_MISSING, UNAPPROVED)
+            reviewed = digest(repo_tests.diff_text(change))
+            started = _clock()
+            report = _final_review(root, task, base)
+            seconds = _clock() - started
+            report += (f"\n\nThe model-free patch review ran in {seconds:.1f} seconds (limit {REVIEW_S} seconds). "
+                       "No reviewer loop ran; loop ending: untested.\n"
+                       + (NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=path))
+            state["reviewed"] = reviewed
+            _finish(session, state, report, ending="untested", patch=reviewed)
+            return Step(STOP, note=report, ending="untested")
+        critic = critic or critic_host()
     shipped = harness()
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
@@ -1514,8 +1675,13 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
+            mark = _consent_mark()
             state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
                                          patch=repo_tests.diff_read(change), system_sources=shipped.sources)
+            told = _consent_told(mark) if state["critic"].get("error") else None
+            if told is not None:    # the latch after the critic's call, never its error text
+                del state["critic"]
+                raise told
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():
@@ -1527,10 +1693,19 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if (state.get("critic") or {}).get("test"):
             got, origins = _snapshot_probe(run_set(change, session / "sets" / "critic", at_base=False, deadline=ends))
             cloud.record_sources(origins)
-            if got.usable:     # a critic's test that will not run says nothing of the patch
-                state["ran"]["critic"] = got.ran
-                seen.append(("critic", got, None))
-        return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
+            before, origins = _snapshot_probe(_reviewer_base(change, session / "sets" / "critic", ends))
+            cloud.record_sources(origins)
+            admitted, notes = reviewer_cases(got, before)
+            state["ran"]["critic"] = got.ran
+            state["reviewer_notes"] = {critic_file(1): [
+                {**note, "test_path": str(session / "sets" / "critic" / critic_file(1))} for note in notes]}
+        else:
+            admitted = set()
+        failing, text = failures_of(seen)
+        failing.update(f"critic:{case}" for case in admitted)
+        if admitted:
+            text += "\n\nOnly these reviewer cases are defects (each fails at parent and patch):\n" + "\n".join(sorted(admitted))
+        return with_critic((failing, text), state.get("critic") or {}, shipped.critic_note)
 
     def tree() -> str:
         return digest(repo_tests.snapshot(root))
@@ -1539,16 +1714,30 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         if not reviewing:
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
-                return _finish(session, state, _report(root, task, base, state, "no probe set could run"),
+                return _finish(session, state, _report(root, task, base, state, "no probe set could run", session),
                                patch=_patch_now(root, base))
         loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except LLMError as exc:
-        if not any(code in str(exc) for code in (cloud.REQUIRED, cloud.STATE_UNAVAILABLE)):
+        # G6's own guard told of it: this error, or one a wrapper (a fallback chain's summary) raised after the guard told
+        # of a refusal in this step. An error that only quotes a code is not one.
+        told = _latched(exc) or _consent_told()
+        if told is None:
             raise
-        state["stop"] = "The review was not sent. " + cloud.WITHHELD
-        code = cloud.STATE_UNAVAILABLE if cloud.STATE_UNAVAILABLE in str(exc) else cloud.REQUIRED
+        code, latch = _consent_code(told), _CONSENT.get()
+        counted = latch[1]() if latch is not None else 0
+        earlier = len(state.get("reviews") or []) + (1 if state.get("critic") else 0)
+        if not counted and not earlier:     # "not sent" only when nothing of the loop was sent (efa43a2a)
+            state["stop"] = "The review was not sent. " + cloud.WITHHELD
+        else:
+            state["requests_sent"] = counted + earlier
+            state["stop"] = ((f"The review stopped part way: {counted} request(s) went out to the reviewer's provider in "
+                              "this step before sharing was refused for the next. " if counted else
+                              "The review stopped part way: this request was not sent, and the loop's earlier reviews "
+                              "had already gone to the reviewer's provider. ") + cloud.WITHHELD)
+            if code == cloud.STATE_UNAVAILABLE:     # its declared words say nothing was shared, which is not so here
+                code = CONSENT_STATE_AFTER_SEND
         return refused(state["stop"], code, "cloud_consent_missing", untested=True)
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
@@ -1566,7 +1755,7 @@ def _advance_inner(repo: str | Path, task: str, base: str, session: Path, scout:
         return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
     reason = loop.why or STOPPED.get(got.status, got.reason)
     if not reviewing:
-        return _finish(session, state, _report(root, task, base, state, reason), patch=_patch_now(root, base))
+        return _finish(session, state, _report(root, task, base, state, reason, session), patch=_patch_now(root, base))
     if got.status == "no_counterexample_in_domain":
         reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":

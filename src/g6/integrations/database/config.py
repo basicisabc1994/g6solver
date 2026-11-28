@@ -33,6 +33,8 @@ them, nor a connection's path, URL or host.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -163,7 +165,10 @@ def from_mapping(mapping: Mapping[str, Any], source: str = "the configuration gi
 def parse(text: str, source: str) -> Connections:
     """Connections from JSON text. Raises :class:`ConfigError`."""
     try:
-        mapping = json.loads(text)
+        try:
+            mapping = _decode_json(text)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     except json.JSONDecodeError as exc:
         raise ConfigError(f"{source} is not JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})") from None
     return from_mapping(mapping, source)

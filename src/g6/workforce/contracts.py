@@ -19,6 +19,8 @@ the producer and asked no model promotes.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -451,8 +453,8 @@ def _blocks(holder: dict) -> str:
 def _nested(value: Any) -> Any:
     if isinstance(value, str) and value.lstrip().startswith("{") and len(value) <= _MAX_PARSED_CHARS:
         try:
-            return json.loads(value)
-        except ValueError:
+            return _decode_json(value)
+        except (ValueError, RecursionError, MemoryError):
             return None
     return value
 
@@ -540,7 +542,10 @@ def _usage_levels(result: Any) -> list[dict] | None:
     if isinstance(result, str):
         if len(result) > _usage_max_parsed_result_chars:
             return None
-        result = json.loads(result)
+        try:
+            result = _decode_json(result)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(result, dict):
         return None
     return [result] + ([result["result"]] if isinstance(result.get("result"), dict) else [])

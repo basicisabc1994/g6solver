@@ -26,6 +26,7 @@ import g6.sources._gate as _gate
 from g6.sources.ctx_git import config as cfg
 from g6.sources.ctx_git import ops, runner
 from g6.sources.ctx_git.config import GitConfig, GitRefused
+from g6.sources.ctx_git import _refusals
 
 COMPONENT = ops.COMPONENT
 ROOTS = "G6_E_GIT_ROOTS"
@@ -163,10 +164,11 @@ class CtxGitBlock(AIBlock[CtxGitInput, dict, dict]):
                     _intend(entry)
                 found = ops.clone(call, outward)
             else:
-                repo, gitdir = cfg.repository(data.repo, config)
+                file_policy: set[str] = set()
+                repo, gitdir = cfg.repository(data.repo, config, file_policy=file_policy)
                 entry["repo"] = str(repo)
                 network = data.op in ops.NETWORK
-                with runner.session(repo, gitdir, network=network) as run:
+                with runner.session(repo, gitdir, network=network, repository_files=tuple(sorted(file_policy))) as run:
                     entry["head_before"] = ops.head(run)
                     _intend(entry)   # before the op changes anything
                     if network:
@@ -190,8 +192,8 @@ def _write(entry: dict[str, Any], phase: str) -> str:
     """Append ``entry`` to the audit log as its ``phase``; what went wrong, or ``""``."""
     try:
         runner.record({**entry, "phase": phase})
-    except OSError as exc:
-        return f"{type(exc).__name__}: {exc}"[:300]
+    except OSError:
+        return _refusals.render("audit_unwritten")
     return ""
 
 
@@ -199,16 +201,15 @@ def _intend(entry: dict[str, Any]) -> None:
     """The call's intent in the audit log; :class:`GitRefused` (``AUDIT``) when the log cannot take it."""
     problem = _write(entry, "intent")
     if problem:
-        raise GitRefused(AUDIT, f"the audit log ({runner.audit_path()}) could not be written ({problem}), so the op was "
-                                "not run: a change ctx_git made would go unrecorded")
+        raise GitRefused(AUDIT, 'block_intend_1')
 
 
 def _unrecorded(reply: dict[str, Any], problem: str) -> dict[str, Any]:
     """``reply`` saying that the audit log could not record the call's outcome (its intent is there)."""
-    said = (f" The audit log could not record this call's outcome ({problem}): its intent is recorded, and "
-            "changes_since will count what it changed as not through ctx_git.")
+    said = _refusals.render("audit_outcome")
     reply["warning_card"]["message"] += said
-    reply["evidence"] = [*reply["evidence"], {"kind": "audit_log", "outcome_written": False, "reason": problem}]
+    reply["evidence"] = [*reply["evidence"], {"kind": "audit_log", "outcome_written": False,
+                                           "reason": _refusals.render("audit_unwritten")}]
     return {**reply, "audit_outcome_written": False}
 
 

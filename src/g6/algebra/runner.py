@@ -26,6 +26,7 @@ worker are not planned. Elsewhere this is a resource bound, not a sandbox: both 
 ops are sensitive.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_not_started, confine_record, confine_refused
 
 import json
 import os
@@ -38,6 +39,7 @@ from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
 from g6.core import component_process, confine
+from g6.core.decoder_limits import ListOf, decode, is_undecodable_record, shaped
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
@@ -79,7 +81,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             stopped = "output" if exc.stopped and too_much() else "time"
         except (OSError, ProcessTreeError) as exc:
             if isinstance(exc, confine.NotStarted) and "isolation" in record:
-                record["isolation"] = confine.not_started(record["isolation"], exc)
+                record["isolation"] = confine_not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"the program could not be run to the end: {exc}"[:500]) from None
         finally:
             if source is not None:
@@ -104,6 +106,31 @@ def _environment(root: Path, keep: tuple[str, ...]) -> dict[str, str]:
                   "HOME": str(root / "home")}
 
 
+_RECHECK = ({"status": str}, {"methods": ListOf(str), "failures": ListOf(str), "why": str, "points": int,
+                              "tolerance": (float, None), "details": dict})
+#: Each stage the worker writes, with the fields ``ops.read_lines`` takes from it and their exact types (required,
+#: then those read when present). A line of a known stage not in its shape is refused, never read as missing.
+STAGES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    "start": ({}, {"sympy_version": str, "mpmath_version": str}),
+    "answer": ({"answer": str}, {"latex": str, "answers": ListOf(dict), "complete": (bool, None), "completeness": str,
+                                 "details": dict}),
+    "partial": ({"recheck": dict}, {}),
+    "recheck": ({"recheck": dict}, {}),
+    "refusal": ({"code": str}, {"reason": str, "refusals": list}),
+    "error": ({}, {"reason": str}),
+    "done": ({}, {}),
+}
+
+
+def _in_shape(line: Any) -> bool:
+    """Whether a worker line is in its stage's shape (``STAGES``; a stage G6 does not know is read by nothing)."""
+    if not shaped(line, {"stage": str}):
+        return False
+    required, optional = STAGES.get(line["stage"], ({}, {}))
+    return shaped(line, required, optional) and (line["stage"] not in ("partial", "recheck")
+                                                 or shaped(line["recheck"], *_RECHECK))
+
+
 def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap: int,
                 record: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
     """Run G6's SymPy worker on ``request``; its JSON lines, and how it was stopped (``""``, ``"time"``, ``"output"``).
@@ -126,13 +153,18 @@ def call_worker(request: dict[str, Any], *, seconds: float, memory_mb: int, cap:
         if not row.strip():
             continue
         try:
-            line = json.loads(row)
+            line = decode(row)
         except json.JSONDecodeError:
             if run.stopped and number == len(rows):
                 break                       # the last line, cut off when the run was stopped
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line that is not JSON") from None
-        if not isinstance(line, dict) or not isinstance(line.get("stage"), str):
+        except ValueError as exc:          # never taken for cut off: the earlier lines would decide in its place
+            if not is_undecodable_record(exc):
+                raise
+            record["output_tail"] = run.output[-_TAIL:]
+            raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line past the decoder's limits") from None
+        if not _in_shape(line):
             record["output_tail"] = run.output[-_TAIL:]
             raise Refusal(OUTPUT_UNRECOGNISED, "G6's worker wrote a line G6 does not read")
         lines.append(line)
@@ -162,8 +194,8 @@ def run_sage(sage: str, arguments: list[str], *, file_name: str = "", file_text:
         if file_text is not None:   # built from the caller's expression: untrusted, so planned (a version run is not)
             reads = confine.program_paths(sage, *(env.get(key, "") for key in ("SAGE_ROOT", "SAGE_LOCAL", "SAGE_VENV")))
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
-            record["isolation"] = confined.record()
-            said = confine.refused(confined)
+            record["isolation"] = confine_record(confined)
+            said = confine_refused(confined)
             if said:
                 raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:

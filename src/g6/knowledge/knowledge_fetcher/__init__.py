@@ -51,3 +51,25 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["CODES", "SENSITIVE_OPS", "SOURCES", "FetchRefused", "FetchRequest", "FetchResult", "KnowledgeFetcherBlock",
            "KnowledgeFetcherInput", "SourceAdapter", "adapters", "fetch", "fetcher"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_FETCHED": "none",
+    "G6_E_KNOWLEDGE_FETCH_ADAPTER": "none",
+    "G6_E_KNOWLEDGE_FETCH_BLOCKED": "person",
+    "G6_E_KNOWLEDGE_FETCH_EMPTY": "none",
+    "G6_E_KNOWLEDGE_FETCH_HTTP_ERROR": "none",
+    "G6_E_KNOWLEDGE_FETCH_INPUT": "input",
+    "G6_E_KNOWLEDGE_FETCH_NOT_FOUND": "none",
+    "G6_E_KNOWLEDGE_FETCH_PARSE_FAILED": "none",
+    "G6_E_KNOWLEDGE_FETCH_RATE_LIMITED": "retry",
+    "G6_E_KNOWLEDGE_FETCH_REFUSED": "none",
+    "G6_E_KNOWLEDGE_FETCH_REJECTED": "none",
+    "G6_E_KNOWLEDGE_FETCH_ROBOTS": "none",
+    "G6_E_KNOWLEDGE_FETCH_SERVER_ERROR": "none",
+    "G6_E_KNOWLEDGE_FETCH_TOO_LARGE": "person",
+    "G6_E_KNOWLEDGE_FETCH_UNREACHABLE": "none",
+    "G6_E_KNOWLEDGE_SOURCES": "none",
+    "G6_E_KNOWLEDGE_UNKNOWN_SOURCE": "input",
+}

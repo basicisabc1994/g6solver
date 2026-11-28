@@ -88,3 +88,27 @@ __g6_extras__: dict[str, tuple[str, ...]] = {"optim": ("ortools",), "optim-nonli
 __all__ = ["OptimResult", "OptimisationBlock", "OptimisationInput", "Refusal", "checks", "finish", "global_search",
            "minimise", "register_backend", "solve_assignment", "solve_cp", "solve_job_shop", "solve_knapsack",
            "solve_lp", "solve_max_flow", "solve_min_cost_flow", "solve_mip", "solve_routing"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_OPTIM_BEST_FOUND": "none",
+    "G6_E_OPTIM_CERTIFICATE_REFUTED": "person",
+    "G6_E_OPTIM_INFEASIBLE": "none",
+    "G6_E_OPTIM_INFEASIBLE_OR_UNBOUNDED": "none",
+    "G6_E_OPTIM_INPUT_INVALID": "input",
+    "G6_E_OPTIM_INPUT_TOO_LARGE": "person",
+    "G6_E_OPTIM_LOCAL_OPTIMUM": "none",
+    "G6_E_OPTIM_MODEL_INVALID": "input",
+    "G6_E_OPTIM_NOT_CHECKED": "none",
+    "G6_E_OPTIM_NOT_CONVERGED": "none",
+    "G6_E_OPTIM_NOT_PROVEN_OPTIMAL": "none",
+    "G6_E_OPTIM_NO_SOLUTION": "none",
+    "G6_E_OPTIM_SCIPY_UNAVAILABLE": "person",
+    "G6_E_OPTIM_SOLVER_ANSWER": "none",
+    "G6_E_OPTIM_SOLVER_ERROR": "none",
+    "G6_E_OPTIM_SOLVER_UNAVAILABLE": "person",
+    "G6_E_OPTIM_TIME_LIMIT": "person",
+    "G6_E_OPTIM_TIME_LIMIT_TOO_LONG": "person",
+    "G6_E_OPTIM_UNBOUNDED": "none",
+}

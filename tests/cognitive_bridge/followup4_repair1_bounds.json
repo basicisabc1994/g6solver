@@ -13687,6 +13687,41 @@
   {
     "source": [
       "snapshot.py",
+      "_nesting",
+      "comparison",
+      "mark in '[{'"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "_nesting",
+      "comparison",
+      "mark in ']}'"
+    ],
+    "disposition": "semantic",
+    "reason": "Kind, schema, identity, format or result relation; not an allocation admission limit.",
+    "probes": []
+  },
+  {
+    "source": [
+      "snapshot.py",
+      "json_reply",
+      "comparison",
+      "_nesting(reply) > 2 * DEPTH"
+    ],
+    "disposition": "resource",
+    "reason": "Raw reply nesting refused before the native parser (twice codes.DEPTH, which plain() refuses anyway), so a reply past what the parser reads keeps the bridge's code on every platform.",
+    "probes": [
+      "reply"
+    ]
+  },
+  {
+    "source": [
+      "snapshot.py",
       "json_reply",
       "comparison",
       "preflight is not None"

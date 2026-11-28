@@ -6,6 +6,8 @@ only the person's option supplied. Missing legacy records require a new dialog b
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from dataclasses import dataclass
@@ -23,7 +25,10 @@ UNAVAILABLE = "G6_E_SCENARIO_UNAVAILABLE"
 
 def _comparison(record: str, option: str) -> dict:
     """The host comparison, derived from the one canonical scenario in a portable check too."""
-    scenario = json.loads(record)
+    try:
+        scenario = _decode_json(record)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if option not in scenario['outcomes']:
         raise ValueError('G6_E_SCENARIO_UNAVAILABLE: an option not in the scenario')
     return {'function': scenario['entrypoint'], 'cases': [
@@ -49,7 +54,10 @@ class Scenario:
     record: bytes
 
     def __post_init__(self):
-        value = json.loads(self.record)
+        try:
+            value = _decode_json(self.record)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (set(value) != FIELDS or canonical(value).encode("ascii") != self.record
                 or value["version"] not in {"example-scenario.v1", "example-scenario.v2"}
                 or value["setup"] != SETUP):
@@ -92,7 +100,10 @@ class Scenario:
     @property
     def presentation(self) -> dict:
         """The executable fields the form displays, read from the same record the child runs."""
-        value = json.loads(self.record)
+        try:
+            value = _decode_json(self.record)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         outcomes = {}
         for label, outcome in value['outcomes'].items():
             if outcome['expect'] == 'returns':
@@ -122,6 +133,7 @@ class Scenario:
     def _wrapper(self, option: str) -> str:
         """A portable reproduction wrapper; G6 itself executes program, without loading this pytest wrapper."""
         import inspect
+        from g6 import _decoder_limits
         from g6.harness import behaviour_runner as runner
 
         helpers = "\n\n".join(inspect.getsource(one) for one in (
@@ -129,7 +141,10 @@ class Scenario:
             runner._unique, runner._encoded, runner._fingerprint, runner._valid_encoding,
             runner._matches_encoding, runner.read_frame, runner.finish))
         prefix, suffix = _program_parts()
-        return ("import hashlib, json, struct, subprocess, tempfile, sys, os\n"
+        # The portable check runs without G6 installed. Carry the same leaf decoder's source, including its imports,
+        # rather than leaving the copied comparison dependent on a host-only name.
+        return (inspect.getsource(_decoder_limits) + "\n_decode_json = json_value\n"
+                + "import hashlib, json, struct, subprocess, tempfile, sys, os\n"
                 "TEMPLATE = 'example.v1'\nBINDINGS = " + ascii({"scenario": self.record.decode("ascii")})
                 + "\nBINDINGS['option'] = " + ascii(option)
                 + "\nMAGIC = b'G6R1\\n'\nMAX_FRAME = 1048576\nBOOTSTRAP = " + ascii(prefix)
@@ -195,7 +210,10 @@ def test_example():
 
     def matches(self, question) -> bool:
         """Correspondence without consulting the live repository or resolving an entry point again."""
-        value = json.loads(self.record)
+        try:
+            value = _decode_json(self.record)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if (value["entrypoint"][1:3] != question.function.rsplit(".", 1)
                 or canonical(value["input"]) != canonical({"args": question.args, "kwargs": question.kwargs})
                 or set(value["outcomes"]) != set(question.outcomes)):
@@ -218,8 +236,11 @@ def test_example():
 
     def require_binding(self) -> None:
         """Legacy scenarios remain readable reproductions, but cannot supply confirmation custody."""
-        if json.loads(self.record)['version'] != 'example-scenario.v2':
-            raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
+        try:
+            if _decode_json(self.record)['version'] != 'example-scenario.v2':
+                raise ValueError(f'{UNAVAILABLE}: confirm the import roots and resolved repository path in a new dialog')
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def save(question, scenario: Scenario) -> None:
@@ -235,7 +256,7 @@ def save(question, scenario: Scenario) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         held = load(question)
-    except ValueError:
+    except (ValueError, RecursionError, MemoryError):
         held = None   # missing, empty, partial or unparseable custody does not reserve the final name
     if held is not None:
         if held.record != scenario.record:
@@ -251,7 +272,7 @@ def load(question) -> Scenario:
         path = state_path("scenarios", question.sha256 + ".json")
         if path.is_symlink():
             raise ValueError("linked record")
-        record = json.loads(path.read_bytes())
+        record = _decode_json(path.read_bytes())
         scenario = Scenario(record["scenario"].encode("ascii"))
         scenario.require_binding()
         expected = {"version": "scenario-binding.v1", "question_sha256": question.sha256,
@@ -261,5 +282,7 @@ def load(question) -> Scenario:
         return scenario
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ValueError(f"{UNAVAILABLE}: the executable scenario is unavailable; ask for confirmation again") from exc

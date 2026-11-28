@@ -19,6 +19,8 @@ asked (:func:`commit`), so a refused op leaves the session as it was.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 import re
@@ -123,7 +125,10 @@ def run(op: str, params: dict[str, Any], *, session: str | None, save: bool, out
         record = {"kind": "program_run", "program": "Blender", "version": found.version, "exit_code": ran.code,
                   "seconds": ran.seconds, "argv": ["blender", *args[:-3], "inside_blender.txt", "--", "job.json"]}
         result_file = call / "result.json"
-        result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else None
+        try:
+            result = _decode_json(result_file.read_text(encoding="utf-8")) if result_file.is_file() else None
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if ran.code != 0 or not isinstance(result, dict) or not result.get("ok"):
             said = (result or {}).get("error") if isinstance(result, dict) else None
             raise MediaError(BACKEND_FAILED, f"Blender failed (exit {ran.code}): {said or ran.text(400) or 'no result'}"

@@ -31,6 +31,8 @@ tests miss (ECHA VLE-1 is unmet).
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import dataclasses
 import hashlib
@@ -148,8 +150,8 @@ def probe_of(theory: Theory | None) -> dict | None:
     if theory is None or theory.failure_code != REGRESSION:
         return None
     try:
-        key, probe = json.loads(theory.trigger), json.loads(theory.instruction)
-    except (TypeError, ValueError):
+        key, probe = _decode_json(theory.trigger), _decode_json(theory.instruction)
+    except (TypeError, ValueError, RecursionError, MemoryError):
         return None
     if not (isinstance(key, dict) and set(key) == set(_KEY) and isinstance(probe, dict) and set(probe) == set(_PROBE)
             and (probe["module"], probe["function"]) == (key["module"], key["function"])):

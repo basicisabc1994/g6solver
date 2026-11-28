@@ -24,13 +24,15 @@ memory cap, no network), so a pattern that backtracks without end is stopped and
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from g6.core.llm import LLMError, extract_json
-from g6.core.sandbox import run_script
+from g6.core.guidance_builders import script_run as run_script
 
 OVERLAP = 400
 #: A field no backend gave a value for. From the model it is ``not_checked``: its null is its word, and nothing looks the
@@ -280,8 +282,8 @@ def run_patterns(text: str, patterns: dict[str, str]) -> tuple[dict[str, FieldRe
         reply: dict[str, Any] = {}
         if done.status == "ok" and "spans.json" in done.outputs:
             try:
-                reply = json.loads(done.outputs["spans.json"].decode("utf-8"))
-            except (UnicodeDecodeError, ValueError):
+                reply = _decode_json(done.outputs["spans.json"].decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, RecursionError, MemoryError):
                 reply = {}
         if done.status == "timeout":
             raise ExtractStopped("G6_E_LANGEXTRACT_PATTERN_TIMEOUT", f"the pattern for {name} did not finish within "

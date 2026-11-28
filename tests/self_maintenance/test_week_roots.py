@@ -818,6 +818,8 @@ _OF_INSTANTS_AND_COUNTS = {
     ("g6.self_maintenance.usage", "limits_reading", "reset <= now"),
     ("g6.self_maintenance.usage", "refresh", "now - self._asked < REFRESH"),
     ("g6.self_maintenance.usage", "_no_reading", "kept.limited_until > now"),
+    # the seconds left before a host launch's deadline (two monotonic instants' difference), no amount
+    ("g6.self_maintenance.usage", "_launch_seconds", "left <= 0"),
     # positions and lengths in a host program's arguments, a path's buffer and a reply's hidden inputs (the refusals
     # follow-up): counts, no amounts
     ("g6.self_maintenance.usage", "_check_observation", "argv.index(option) >= end"),

@@ -191,7 +191,9 @@ For code, checking means running tests. Not just "does it compile?" but "does it
 
 Without checks, you are guessing. With them, you know what passed.
 
-G6 says how far it knows with one of three labels on every result. This is how g6.evidence.issue chooses one. A
+Results of G6's checks and work tools returned over G6's MCP server carry one of three labels saying what their evidence supports.
+These replies carry `completion_state`; discovery replies such as `g6_components` and `g6_find` do not.
+The command line prints the result alone. This is how g6.evidence.issue chooses a label. A
 failed check refutes a result only if that check has shown it can tell a good answer from a bad one. Independent proof
 means every check passed, was written by someone other than the producer, was frozen before the work, and caught a
 planted bad answer.

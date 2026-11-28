@@ -660,7 +660,8 @@ def _disk_sinks(flow: _Flow) -> list[str]:
 
 
 #: The modules a git name starts from: the reader and every module that imports it.
-ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.completion_loop', 'g6.harness.completion_hook',
+ROOTS = ('g6.workforce.repo_tests', 'g6.workforce._collection_effects', 'g6.harness.patch_review', 'g6.harness.change_map',
+         'g6.harness.completion_loop', 'g6.harness.completion_hook',
          'g6.harness.verification_templates', 'g6.harness.verification_search', 'g6.harness.verification_proposer',
          'g6.harness.verification_controller', 'g6.workforce.verify', 'g6.bundles.agent_change', 'g6.mcp.review_loop',
          'g6.mcp.mission', 'g6.metaharness.coding', 'g6.code.swe_diagnostics.block', 'g6.workforce.receipt_store',
@@ -669,7 +670,11 @@ ROOTS = ('g6.workforce.repo_tests', 'g6.harness.patch_review', 'g6.harness.compl
          # importers added on the 0.3 line: a918fd4 (behaviour), f562c31 (confirmed_checks), e15d9ad (behaviour_runner,
          # executable_scenario), 018b67b (workflow.adapters)
          'g6.mcp.behaviour', 'g6.harness.confirmed_checks', 'g6.harness.behaviour_runner',
-         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters')
+         'g6.harness.executable_scenario', 'g6.harness.workflow.adapters',
+         'g6.distill.acceptance_gate', 'g6.harness.library_review_gate',
+         'g6.distill.held_out.oracle', 'g6.distill.held_out.registration_gate',
+         # f7639fc9 (the card's source capture, workflow.evidence) and 1f13bd92 (distill_backend, RepoRefused only)
+         'g6.harness.workflow.evidence', 'g6.mcp.distill_backend')
 
 
 def crossings(roots=ROOTS, allowed: dict[str, str] | None = None) -> list[str]:

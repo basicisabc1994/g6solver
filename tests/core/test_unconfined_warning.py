@@ -51,10 +51,15 @@ def test_a_confined_record_carries_no_warning_and_a_child_that_never_started_doe
 
 
 def test_the_mcp_refusal_of_a_sensitive_op_carries_the_warning() -> None:
-    # Fails if g6.mcp.invoke_reply's denial text stops appending confine.UNCONFINED_WARNING.
+    # Since 04b191cc a denial over MCP drops every sentence of the warning that names a setup command, a setting or the
+    # key file (the agent is told the person decides; the person meets the whole warning in doctor and the docs): what
+    # stays is the person's decision and the warning's last sentence.
     reply = g6.mcp.invoke_reply("llm_router", "pull_model", "{}", allow_sensitive=frozenset())
     assert reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
-    assert "G6_MCP_SENSITIVE" in reply["error"] and _words(confine.UNCONFINED_WARNING) in _words(reply["error"])
+    assert "The person must allow it themselves" in reply["error"]
+    assert _words(confine.UNCONFINED_WARNING.rsplit(". ", 1)[-1]) in _words(reply["error"])
+    for named in ("G6_MCP_SENSITIVE", "g6 setup", ".g6/.env"):
+        assert named not in reply["error"], named
 
 
 def test_doctor_warns_where_no_backend_confines_runs_and_says_what_to_do(monkeypatch) -> None:
@@ -68,7 +73,8 @@ def test_doctor_warns_where_no_backend_confines_runs_and_says_what_to_do(monkeyp
     assert check.fix
 
 
-@pytest.mark.parametrize("where", ["g6.mcp docstring", "discovery.HELP", "AGENT_GUIDE.md", "README.md",
+#: g6_help (discovery.HELP) is the agent's text, not a place a person meets the warning: 04b191cc took the warning out
+@pytest.mark.parametrize("where", ["g6.mcp docstring", "AGENT_GUIDE.md", "README.md",
                                    "g6.core.sandbox docstring", "g6.core.confine docstring"])
 def test_the_same_words_are_where_a_person_meets_them(where: str) -> None:
     # Fails if any of these places drops or rewords the warning (one set of words: confine.UNCONFINED_WARNING).

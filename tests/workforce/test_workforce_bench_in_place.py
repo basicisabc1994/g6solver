@@ -147,9 +147,9 @@ def test_in_place_door_obeys_the_owner_control_during_execution(root, signal):
     result = wcall.Door(worker, contracts=lambda *args: contract, run_id="repository-control",
                         invoke=wcall.venture_invoke("v1"), stop_requested=marker.exists if signal == "stop" else None).call(
         *pair, {"repo": "calc", "tests": ["tests/test_control.py::test_control"], "timeout_s": 10})
-    assert marker.exists(), "The control must reach the running test"
+    assert marker.exists(), ("The control must reach the running test", result)
     assert time.monotonic() - started < 2.7
-    assert result.raised == "timeout" and result.outcome.state == "blocked-escalated" and result.reply is None
+    assert result.raised == "timeout" and result.outcome.state == "blocked-escalated" and result.reply is None, result
     assert result.cost.metadata["execution"]["cleanup_confirmed"] is True
 
 
@@ -188,6 +188,43 @@ def test_in_place_door_checks_control_after_the_final_snapshot(root, monkeypatch
     assert len(calls) == 2 and calls[0] == calls[1]
     assert result.raised == "timeout" and result.outcome.state == "blocked-escalated" and result.reply is None
     assert result.cost.metadata["execution"]["cleanup_confirmed"] is True
+
+
+@pytest.mark.parametrize("signal", ["stop", "deadline"])
+@pytest.mark.parametrize("answer", ["refusal", "report"])
+def test_in_place_door_checks_owner_control_before_publishing_an_answer(root, monkeypatch, signal, answer):
+    from g6.core import component_process
+    from g6.safety_engine.schema import RuntimePolicy
+    from g6.workforce.workers import WorkerSpec
+
+    stopped = []
+
+    def finish(*args, **kwargs):
+        # A control can arrive after the runner's final checkpoint, including
+        # while an admission refusal is being prepared. Keep the real Door and
+        # bench refusal/report handling; only replace the slow repository run.
+        if signal == "stop":
+            stopped.append(True)
+        else:
+            component_process._WINDOW.get().deadline = time.monotonic() - 1
+        if answer == "refusal":
+            raise rt.RepoRefused("G6_E_ISOLATION_UNAVAILABLE", "no backend", isolation={"backend": None})
+        return rt._not_run_report("no test ran")
+
+    monkeypatch.setattr(rt, "run", finish)
+    pair = (bench.COMPONENT, bench.IN_PLACE)
+    contract = wcap.load_contracts()[pair]
+    worker = WorkerSpec(template="doer", purpose="Control repository answers", rung="deterministic",
+                        allowed=(pair,), read_only=True,
+                        policy=RuntimePolicy(max_runtime_seconds=10, max_cost_cents=0, max_shell_commands=0,
+                                             max_files_modified=0, max_lines_changed=0,
+                                             allowed_tools=frozenset({".".join(pair)})))
+    result = wcall.Door(worker, contracts=lambda *args: contract, run_id="repository-answer-control",
+                        invoke=wcall.venture_invoke("v1"), stop_requested=lambda: bool(stopped)).call(
+        *pair, {"repo": "calc", "tests": NODES})
+
+    assert result.raised == "timeout"
+    assert result.outcome.state == "blocked-escalated" and result.reply is None
 
 
 #: A generated test's body by its outcome. "fail_teardown" fails and its fixture's teardown errors too: pytest reports

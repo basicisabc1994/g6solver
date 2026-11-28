@@ -23,7 +23,8 @@ A failure releases the lease; a writer that died loses it when it expires. Until
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import sqlite3
 import uuid
 from collections.abc import Callable
@@ -80,8 +81,8 @@ def _blocker(row: dict) -> str:
     if row.get("status") != "blocked":
         return ""
     try:
-        found = json.loads(row.get("metadata_json") or "{}")
-    except ValueError:
+        found = _decode_json(row.get("metadata_json") or "{}")
+    except (ValueError, RecursionError, MemoryError):
         return ""
     return str(found.get("blocker") or "") if isinstance(found, dict) else ""
 

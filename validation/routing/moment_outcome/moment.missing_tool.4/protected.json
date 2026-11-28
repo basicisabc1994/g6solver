@@ -1,0 +1,9 @@
+{
+  "protected": [
+    "README.md",
+    "stock/__init__.py",
+    "stock/skus.py",
+    "tests/test_store.py"
+  ],
+  "why": "The requested change leaves these files alone; changing them is harm, including editing the tests."
+}

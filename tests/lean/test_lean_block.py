@@ -59,7 +59,12 @@ def test_ops_and_help_answer_over_mcp_inside_the_envelope(op: str) -> None:
     reply = invoke_reply("lean", op, json.dumps({"request_id": "req-1", "run_id": "run-1"}))
     assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "qualified-draft"
     payload = reply["result"]
-    assert (payload["component"], payload["op"]) == ("lean", op) and len(payload[op]) == len(OPS)
+    assert (payload["component"], payload["op"]) == ("lean", op)
+    if op == "help":   # over MCP, help is the agent's text with each op's params template line (04b191cc)
+        templates = [line.split(":")[0] for line in payload[op].splitlines() if ": params_json template " in line]
+        assert sorted(templates) == sorted(f"lean.{name}" for name in OPS)
+    else:
+        assert len(payload[op]) == len(OPS)
 
 
 def test_help_marks_the_lean_ops_sensitive_and_says_how_to_get_lean() -> None:

@@ -12,6 +12,9 @@ same user. Each call's isolation is recorded (``confine.recording``), and a run 
 backend can give is refused before anything starts (:class:`RunnerRefused`).
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_refused
+
+from g6.core.decoder_limits import json_value as _decode_json
 
 import json
 import math
@@ -102,7 +105,7 @@ class SubprocessRunner:
         with confine.run_folder(prefix="g6_cegis_") as cwd:
             confined = confine.plan(confine.Confinement(read_write=(cwd,), read_only=confine.interpreter_paths(python)),
                                     python)
-            said = confine.refused(confined)
+            said = confine_refused(confined)
             if said:
                 raise RunnerRefused(said)
             try:
@@ -123,7 +126,10 @@ class SubprocessRunner:
             tail = done.stderr.decode("utf-8", "replace")[-400:]
             raise RunnerError(f"the candidate run exited with {done.returncode}: {tail}")
         try:
-            reply = json.loads(done.stdout.decode("utf-8"))
+            try:
+                reply = _decode_json(done.stdout.decode("utf-8"))
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RunnerError(f"the candidate run's reply is not JSON: {exc}") from exc
         if not isinstance(reply, dict) or "refused" in reply:
@@ -131,4 +137,40 @@ class SubprocessRunner:
         return reply
 
 
-__all__ = ["Runner", "RunnerError", "RunnerRefused", "RunnerTimeout", "SearchResult", "SubprocessRunner"]
+#: The isolation record of the agentic override kernel's confined child this process is, or None (G6's own process
+#: and every other child). Set only by :func:`inside_kernel_child`, which only ``g6._agentic._child.main`` calls.
+_INSIDE: dict[str, Any] | None = None
+
+
+def inside_kernel_child(isolation: Mapping[str, Any]) -> None:
+    """The runner seam (agentic override kernel design 10.2): this process is the kernel's confined child, so the
+    candidates cegis runs here run in this process, inside that child's boundary, and not in a child of their own
+    (a confined child cannot start another). ``isolation`` is the kernel's record of how the child is confined."""
+    global _INSIDE
+    _INSIDE = dict(isolation)
+
+
+@dataclass(frozen=True)
+class InProcessRunner(SubprocessRunner):
+    """Runs candidates in this process through ``g6.cegis._child``'s own code, only inside the agentic kernel's confined
+    child (:func:`inside_kernel_child`); anywhere else every call is refused. ``isolation`` is that child's record."""
+
+    isolation: dict[str, Any] | None = None
+
+    def _call(self, request: dict) -> dict:
+        if _INSIDE is None:
+            raise RunnerRefused("[G6_E_ISOLATION_UNAVAILABLE] cegis runs candidates in process only inside the agentic "
+                                "kernel's confined child; here each one runs in a confined child of its own")
+        from g6.cegis import _child
+
+        return _child._evaluate(request) if request.get("op") == "evaluate" else _child._search(request)
+
+
+def default_runner() -> Runner:
+    """The runner cegis uses when the caller names none: in process inside the kernel's confined child, else
+    :class:`SubprocessRunner`."""
+    return InProcessRunner(isolation=dict(_INSIDE)) if _INSIDE is not None else SubprocessRunner()
+
+
+__all__ = ["InProcessRunner", "Runner", "RunnerError", "RunnerRefused", "RunnerTimeout", "SearchResult",
+           "SubprocessRunner", "default_runner", "inside_kernel_child"]

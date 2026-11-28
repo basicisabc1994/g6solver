@@ -26,6 +26,8 @@ External action (V3a): judged with the broker's declared side effects, a unit na
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -86,8 +88,8 @@ def unit_floors(data: Any, *, effects: Callable[[str, str], str | None], inherit
     is not changed. What is malformed is left as it is, for ``parse_plan`` to refuse."""
     if isinstance(data, str):
         try:
-            data = json.loads(data)
-        except ValueError:
+            data = _decode_json(data)
+        except (ValueError, RecursionError, MemoryError):
             return data
     if not isinstance(data, dict) or not isinstance(data.get("units"), list):
         return data
@@ -126,8 +128,8 @@ def highest_risk(data: Any) -> str:
     ``parse_plan``)."""
     if isinstance(data, str):
         try:
-            data = json.loads(data)
-        except ValueError:
+            data = _decode_json(data)
+        except (ValueError, RecursionError, MemoryError):
             return "R0"
     units = data.get("units") if isinstance(data, dict) else None
     if not isinstance(units, list):
@@ -634,7 +636,9 @@ def parse_plan(data: dict | str, *, risk_tier: str, budget_cents: int,
         raise ValueError(f"risk tier must be one of {RISK_TIERS}, got {risk_tier!r}")
     if isinstance(data, str):
         try:
-            data = json.loads(data)
+            data = _decode_json(data)
+        except (RecursionError, MemoryError):
+            raise PlanRejected(["plan: not JSON (decoder limits)"]) from None
         except ValueError as exc:
             raise PlanRejected([f"plan: not JSON ({exc.msg})"]) from None
     if not isinstance(data, dict):

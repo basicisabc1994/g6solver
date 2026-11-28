@@ -2,6 +2,7 @@
 """Regression cases for the code-family review; exercise real implementations."""
 import ast
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -83,17 +84,50 @@ def test_paths_reject_before_resolution(tmp_path, monkeypatch, surface, raw):
     def realpath(path, *args, **kwargs):
         calls.append(str(path))
         return str(path)
+    # the declared root is captured, opened and named by its handle, at its own check (e9fa6918), before any path is
+    # named: on Linux that names /proc/self/fd/N and elsewhere resolves the root, neither of them the path under test
+    roots = _roots.Roots((tmp_path,), "test")
     with monkeypatch.context() as patch:
         patch.setattr(Path, "resolve", resolve)
         patch.setattr(os.path, "realpath", realpath)
         with pytest.raises((CodeRefused, config.GitRefused)):
             if surface in ("existing", "destination"):
-                getattr(_roots, surface)(raw, _roots.Roots((tmp_path,), "test"))
+                getattr(_roots, surface)(raw, roots)
             else:
                 fn = config.repository if surface == "repository" else config.destination
                 fn(raw, config.GitConfig((tmp_path,), (), "test"))
     assert calls == []
     # Removing storage.confined_path's lexical checks permits resolution before refusal.
+
+
+@pytest.mark.parametrize("surface", ["existing", "destination", "repository"])
+def test_a_network_path_is_refused_before_the_roots_are_checked_again(tmp_path, monkeypatch, surface):
+    # Linux names an opened root by resolving /proc/self/fd/N (code/_roots._final_path), so a root check made before
+    # the network form is refused resolves first; stood in here on every system by a _final_path that resolves
+    import os
+    from pathlib import Path
+    from g6.code import _roots
+    from g6.code._types import CodeRefused
+    from g6.sources.ctx_git import config
+
+    roots = _roots.Roots((tmp_path,), "test")
+    calls = []
+    real = _roots._final_path
+
+    def linux_like(fd):
+        calls.append(os.path.realpath(f"descriptor-{fd}"))
+        return real(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_roots, "_final_path", linux_like)
+        patch.setattr(Path, "resolve", lambda path, *a, **k: calls.append(str(path)) or path)
+        with pytest.raises((CodeRefused, config.GitRefused)) as refused:
+            if surface == "repository":
+                config.repository("//203.0.113.5/s/x", config.GitConfig((tmp_path,), (), "test"))
+            else:
+                getattr(_roots, surface)("//203.0.113.5/s/x", roots)
+    assert calls == []
+    assert "OUTSIDE_ROOT" in str(refused.value)
 
 
 def design(op, **params):
@@ -309,6 +343,147 @@ def test_patch_reads_confined_and_bounded(tmp_path, monkeypatch, kind, changed):
     assert out["code"] in ("G6_E_CODE_OUTSIDE_ROOT", "G6_E_CODE_PATH_INVALID")
     assert opened == []
     # Removing patch_check's read_file injection opens changed/derived tests outside the bounds.
+
+
+def test_a_read_refuses_a_hard_link_to_a_file_kept_outside_the_root(tmp_path):
+    # containment decides where a name is; a hard link in a declared root is a second name for a file kept elsewhere,
+    # which resolving never shows, so the read checks the file itself (as a workspace read does)
+    import os
+    from g6.code._types import CodeRefused
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.txt"
+    root.mkdir()
+    outside.write_text("kept outside", encoding="utf-8")
+    try:
+        os.link(outside, root / "h.txt")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    (root / "own.txt").write_text("kept here", encoding="utf-8")
+    roots = _roots.Roots((root,), "test")
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "h.txt", 1000, roots=roots)
+    assert _roots.read_text(root / "own.txt", 1000, roots=roots) == "kept here"
+    # there is no default root any more: a read with no checked roots is refused before anything is opened
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "own.txt", 1000, roots=None)
+
+
+def test_a_walk_skips_a_hard_linked_file_as_a_link_so_a_package_with_one_is_still_read(tmp_path):
+    # walk lists only files read_text will read: a hard-linked file is skipped and counted as a link, so one hard link
+    # no longer refuses a whole package in component_creator; read_text keeps refusing it
+    import os
+    import types
+
+    from g6.code._types import CodeRefused
+    from g6.code.component_creator import block
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    outside.write_text("def b():\n    return 2\n", encoding="utf-8")
+    try:
+        os.link(outside, root / "pkg" / "b.py")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    roots = _roots.Roots((root,), "test")
+    walked = _roots.walk(root / "pkg", roots, max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert sorted(p.name for p in walked.files) == ["__init__.py", "a.py"]
+    assert walked.skipped_links == 1
+    modules, _, _ = block._modules(types.SimpleNamespace(source="", path=str(root / "pkg"), module=""), roots)
+    assert "pkg.a" in modules and "pkg.b" not in modules
+    with pytest.raises(CodeRefused):
+        _roots.read_text(root / "pkg" / "b.py", 1000, roots=roots)
+
+
+def test_a_walk_names_the_hard_linked_files_it_skips_and_a_refusal_says_so(tmp_path):
+    # a hard-linked file is counted on its own and named (relative to the folder walked), and an op that is left
+    # with nothing to read says which files were skipped as hard links, not that the package holds no module
+    import os
+    import types
+
+    from g6.code._types import CodeRefused
+    from g6.code.component_creator import block, conformance
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    (root / "pkg" / "sub").mkdir(parents=True)
+    outside.write_text("def a():\n    return 1\n", encoding="utf-8")
+    try:
+        for name in ("__init__.py", "a.py", "sub/__init__.py"):
+            os.link(outside, root / "pkg" / name)
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    roots = _roots.Roots((root,), "test")
+    walked = _roots.walk(root / "pkg", roots, max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert not walked.files and walked.skipped_links == 3 and walked.skipped_hard_links == 3
+    assert walked.hard_links == ["__init__.py", "a.py", "sub/__init__.py"]
+    assert walked.describe()["skipped_hard_links"] == 3
+    with pytest.raises(CodeRefused) as refused:
+        block._modules(types.SimpleNamespace(source="", path=str(root / "pkg"), module=""), roots)
+    words = str(refused.value)
+    assert "no public Python module" not in words
+    assert "3 modules skipped because they are hard links: __init__.py, a.py, sub/__init__.py" in words, words
+    checked = conformance.check_folder(str(root / "pkg"), roots)
+    assert any("3 modules skipped because they are hard links: __init__.py, a.py, sub/__init__.py" in p["message"]
+               for p in checked["problems"]), checked["problems"]
+
+
+def test_a_walk_names_at_most_ten_hard_linked_files(tmp_path):
+    import os
+
+    root, outside = tmp_path.resolve() / "root", tmp_path.resolve() / "outside.py"
+    root.mkdir()
+    outside.write_text("x = 1\n", encoding="utf-8")
+    try:
+        for i in range(12):
+            os.link(outside, root / f"m{i:02}.py")
+    except OSError:
+        pytest.skip("hard links cannot be made here")
+    walked = _roots.walk(root, _roots.Roots((root,), "test"), max_files=100, max_file_bytes=10_000, suffixes=(".py",))
+    assert walked.skipped_hard_links == 12 and walked.hard_links == [f"m{i:02}.py" for i in range(10)]
+    assert walked.hard_links_said().startswith("12 modules skipped because they are hard links: m00.py, ")
+    assert walked.hard_links_said().endswith("m09.py and 2 more")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a file held open with no sharing, and Windows names")
+def test_a_read_refusal_is_in_g6s_words_and_labelled_by_its_own_outside_flag(tmp_path):
+    # read_text's refusals carry G6's words (the file's own name is allowed, never the full path nor the system's
+    # words), and a refusal that is not outside is never called OUTSIDE_ROOT, in read_text or existing
+    import ctypes
+    from ctypes import wintypes
+
+    from g6.code._types import CodeRefused
+    root = tmp_path.resolve() / "root"
+    root.mkdir()
+    (tmp_path / "elsewhere.py").write_text("x = 1\n", encoding="utf-8")
+    held = root / "held-name.py"
+    held.write_text("x = 1\n", encoding="utf-8")
+    roots = _roots.Roots((root,), "test")
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = k32.CreateFileW(str(held), 0x80000000, 0, None, 3, 0x80, None)   # GENERIC_READ, share none
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+    try:
+        with pytest.raises(CodeRefused) as refused:
+            _roots.read_text(held, 10_000, roots=roots)
+    finally:
+        k32.CloseHandle(handle)
+    cases = [(refused.value, "G6_E_CODE_PATH_INVALID")]
+    for path, code in ((root / "a.py:s", "G6_E_CODE_PATH_INVALID"), (root / "con.py", "G6_E_CODE_PATH_INVALID"),
+                       (tmp_path.resolve() / "elsewhere.py", "G6_E_CODE_OUTSIDE_ROOT")):
+        with pytest.raises(CodeRefused) as refused:
+            _roots.read_text(path, 10_000, roots=roots)
+        cases.append((refused.value, code))
+    for error, code in cases:
+        assert error.code == code, error
+        assert str(tmp_path.resolve()) not in str(error) and "Errno" not in str(error), error
+    assert "held-name.py" in str(cases[0][0])
+    with pytest.raises(CodeRefused) as refused:
+        _roots.existing(str(root / "con.py"), roots)
+    assert refused.value.code == "G6_E_CODE_PATH_INVALID", refused.value
+    with pytest.raises(CodeRefused) as refused:
+        _roots.destination(str(root / "a.py:s"), roots)
+    assert refused.value.code == "G6_E_CODE_PATH_INVALID", refused.value
 
 
 def test_pattern_scan_linear_budget():

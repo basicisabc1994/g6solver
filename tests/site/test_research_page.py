@@ -138,7 +138,7 @@ def test_the_theory_is_a_table_of_documents_with_their_key_points_and_no_abbrevi
     text = _text(section)
     assert not re.search(r"\b(?:CSIR|ECHA|AHI|VLE)\b", text)
     table = section.split('<table class="rs-theory">', 1)[1].split("</table>", 1)[0]   # the section's other table: the problems
-    assert len(theory.DOCUMENTS) == 6 and table.count("<tr") == len(theory.DOCUMENTS) + 1     # + the header row
+    assert len(theory.DOCUMENTS) == 7 and table.count("<tr") == len(theory.DOCUMENTS) + 1     # + the header row
     # docs/theory beside oss in the source repository; the export copies it to its own docs/theory (export/ALLOWLIST)
     here = Path(__file__).resolve().parents[2] / "docs" / "theory"
     folder = here if here.is_dir() else Path(__file__).resolve().parents[3] / "docs" / "theory"

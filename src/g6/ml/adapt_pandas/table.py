@@ -14,6 +14,8 @@ data mistake.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import csv
 import io
 import json
@@ -248,10 +250,12 @@ def read_json(text: str) -> Table:
     if len(text) > MAX_TEXT_CHARS:
         raise MLError(TOO_LARGE, f"the JSON text is {len(text):,} characters; at most {MAX_TEXT_CHARS:,} are read")
     try:
-        data = json.loads(text, object_pairs_hook=_once)
+        data = _decode_json(text, object_pairs_hook=_once)
     except MLError:
         raise
-    except (ValueError, RecursionError) as exc:
+    except (ValueError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise MLError(INPUT_INVALID, f"the JSON text cannot be read: {exc}"[:300]) from None
     if not isinstance(data, list):
         raise MLError(INPUT_INVALID, "the JSON text must be an array of objects, one per row")
@@ -357,7 +361,10 @@ def profile(table: Table, key: list[str] | None = None) -> dict[str, Any]:
                 missing_key += 1
                 continue
             counts[json.dumps(parts)] += 1
-        twice = [(json.loads(k), n) for k, n in counts.most_common() if n > 1]
+        try:
+            twice = [(_decode_json(k), n) for k, n in counts.most_common() if n > 1]
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         keyed = {"columns": key, "rows_with_missing_key": missing_key, "repeated_values": len(twice),
                  "rows_sharing_a_key": sum(n for _, n in twice),
                  "examples": [{"key": k, "rows": n} for k, n in twice[:5]]}

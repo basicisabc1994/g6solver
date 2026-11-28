@@ -60,7 +60,7 @@ def test_every_file_of_the_policy_has_a_deletion_rule_and_each_entry_store_a_bin
     assert entries == set(lifecycle.BINDINGS)
     assert {name for name, rule in policy.DELETION.items() if rule == "sidecar"} == set(policy.SIDECARS)
     assert {name for name, rule in policy.DELETION.items() if rule == "person"} == set(policy.PERSON_FILES)
-    assert {name for name, rule in policy.DELETION.items() if rule == "rebuilt"} == {policy.INSPECTION}
+    assert {name for name, rule in policy.DELETION.items() if rule == "rebuilt"} == {policy.INSPECTION, policy.RECORD_MD}
 
 
 def test_deleting_a_run_removes_every_entry_bound_to_it_in_every_store(home):

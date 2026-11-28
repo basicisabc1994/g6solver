@@ -34,3 +34,9 @@ __g6_introduces__: tuple[str, ...] = ()
 
 __all__ = ["Candidate", "HoldoutCase", "HoldoutReport", "Run", "check_source", "evaluate", "run_batch", "run_sandboxed",
            "same"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_DISTILLATION_NEGATIVE_CONTROL_DID_NOT_RUN": "none",
+}

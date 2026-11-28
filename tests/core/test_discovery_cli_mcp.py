@@ -58,6 +58,29 @@ def test_find_reaches_a_component_by_the_failure_mode_it_declares(query: str, co
     assert discovery.find(query)[0]["component"] == component
 
 
+def test_every_hit_says_whether_it_can_run_and_through_what() -> None:
+    """A blockless component stays findable (the D6 cases above), and says it cannot run through g6_invoke."""
+    registry = discovery.get_registry()
+    hits = discovery.find("a plan that fails halfway through", limit=100)
+    assert hits and hits[0]["component"] == "navigator"
+    for hit in hits:
+        runnable = registry.get_class(hit["component"]) is not None
+        assert hit["runnable"] is runnable, hit["component"]
+        assert hit["via"] == ("g6_invoke" if runnable else "python"), hit
+    tuned = discovery.find("make my agent better at classification")[0]
+    assert tuned["via"] == "metaharness_start" and tuned["runnable"] is False
+
+
+def test_every_component_says_whether_it_can_run_without_being_imported() -> None:
+    registry = discovery.get_registry()
+    for name in registry.names():
+        assert discovery.runnable(name) is (registry.get_class(name) is not None), name
+
+
+def test_help_points_to_the_selector_first() -> None:
+    assert discovery.HELP.startswith("What to do next: call g6_select")
+
+
 def test_describe_returns_the_failure_modes_a_component_guards_against_and_can_cause() -> None:
     info = discovery.describe("workforce")
     assert {"code": "moved_goalposts", "title": "moving the goalposts after the work is done"} in info["mitigates"]
@@ -94,6 +117,12 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
                           # the workflow record of G6 0.3's design section 17 (``g6.mcp.workflow``)
                           "g6_workflow_export", "g6_workflow_correct", "g6_workflow_delete", "g6_suggestion_decide",
                           "g6_feedback",
+                          "g6_select",   # the staged selector (``g6.mcp.selector``, plan revision 8 phase B)
+                          "g6_agentic_run",   # the agentic override kernel v1 (``g6.mcp.agentic``)
+                          # Distillation, library decisions, self-model and bounded research (``g6.mcp.distill``).
+                          "g6_failure_record", "g6_distill_start", "g6_distill_job", "g6_library", "g6_library_decide",
+                          "g6_self_model", "g6_simulate", "g6_extend", "g6_research_start", "g6_research_stop",
+                          "g6_research_status", "g6_research_digest",
                           "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
                           "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",

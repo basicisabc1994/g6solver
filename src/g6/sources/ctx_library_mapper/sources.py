@@ -21,7 +21,8 @@ Nothing here judges whether a candidate implements anything.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -123,8 +124,8 @@ def get_json(client: http.Client, url: str, read: list[dict[str, Any]]) -> Any:
         raise Failed(_outcome_of(exc), f"{url}: {exc}"[:300]) from None
     read.append(Source.of(reply.url, reply.body, provenance="fetched").model_dump())
     try:
-        return json.loads(reply.body)
-    except (ValueError, UnicodeDecodeError):
+        return _decode_json(reply.body)
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError):
         kind = reply.headers.get("content-type", "unknown")
         raise Failed("parse_failed", f"{url} answered {reply.status} with {kind}, not JSON") from None
 

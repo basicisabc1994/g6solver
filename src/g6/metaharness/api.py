@@ -9,6 +9,9 @@ Every call returns the library envelope (``completion_state``, ``warning_card``,
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
+import json
 import hashlib
 import re
 import time
@@ -24,10 +27,11 @@ from typing import Any
 
 import g6
 from g6.core import stop
+
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
-from g6.core.reliability_envelope import envelope_fields, warning_card
+from g6.core.guidance_builders import envelope_fields, warning_card
 from g6.core.storage import g6_home, state_path
 from g6.harness import Memory, run
 from g6.integrity import build_manifest, manifest_sha256
@@ -165,12 +169,11 @@ def versions_path(workspace: Path) -> Path:
 def recorded_versions(store: ProfileStore, workspace: Path) -> list[dict]:
     """The store's version rows G6 recorded for ``workspace`` as it appended them (``versions_path``), oldest first: the
     last is the head a harness on it runs (``MetaHarness._head``), read here by anything that must name it without one."""
-    import json
 
     try:
         recorded = {(int(number), str(profile)) for number, profile in
-                    json.loads(versions_path(workspace).read_text(encoding="utf-8"))}
-    except (OSError, ValueError, TypeError):
+                    _decode_json(versions_path(workspace).read_text(encoding="utf-8"))}
+    except (OSError, ValueError, TypeError, RecursionError, MemoryError):
         recorded = set()
     return [row for row in store.versions() if (row["version"], row["profile_digest"]) in recorded]
 
@@ -244,8 +247,14 @@ class MetaHarness:
                 return
             with Coordination(self.workspace / ".operation").mutex():
                 if self._moved():
-                    self.store._chain.reload()
-                    self.ledger._chain.reload()
+                    try:
+                        self.store._chain.reload()
+                    except (RecursionError, MemoryError):
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+                    try:
+                        self.ledger._chain.reload()
+                    except (RecursionError, MemoryError):
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 self._operation_depth += 1
                 try:
                     yield
@@ -293,11 +302,10 @@ class MetaHarness:
 
     def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
         """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
-        import json
 
         try:
-            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
-        except (OSError, ValueError):
+            return _decode_json(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+        except (OSError, ValueError, RecursionError, MemoryError):
             return False
 
     def _record_confirmation(self) -> None:
@@ -349,7 +357,10 @@ class MetaHarness:
     # --- what another process reads: proposals, reports and decisions, by digest ---------------------------------
     def _keep(self, kind: str, ident: str, body: dict[str, Any]) -> None:
         if not self.ledger.has(kind, ident):
-            self.ledger.append(kind, ident, body)
+            try:
+                self.ledger.append(kind, ident, body)
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def _recorded(self, kind: str, ident: str) -> tuple[Any, str]:
         """The proposal, report or decision with digest ``ident``: one this handle made, or one any process recorded
@@ -364,7 +375,9 @@ class MetaHarness:
             return None, f"no {kind} with the digest {ident!r} is recorded in this workspace"
         try:
             found = _rebuilt(kind, self.ledger.get(row, ident))
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return None, f"the recorded {kind} {ident!r} cannot be read ({type(exc).__name__})"
         if found.digest() != ident:
             return None, f"the recorded {kind} does not match its digest {ident!r}"
@@ -402,8 +415,11 @@ class MetaHarness:
             return False
         from g6.core.ledger import _file_head
 
-        return any((_file_head(self.workspace / name) or "") != head for name, head in (
-            ("store.jsonl", self.store.head_hash()), ("ledger.jsonl", self.ledger.head())))
+        try:
+            return any((_file_head(self.workspace / name) or "") != head for name, head in (
+                ("store.jsonl", self.store.head_hash()), ("ledger.jsonl", self.ledger.head())))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     # --- the loop -----------------------------------------------------------------------------------------------
     @_serialized
@@ -472,7 +488,9 @@ class MetaHarness:
                 else:
                     self._append("initial", profile, at=_now(), accepted_by=accepted_by,
                                  ledger_head=self.ledger.head())
-            except OSError as exc:
+            except (OSError, RecursionError, MemoryError) as exc:
+                if isinstance(exc, (RecursionError, MemoryError)):
+                    exc = ValueError("a JSON record exceeds decoder limits")
                 return _blocked(APPROVAL_REQUIRED, f"G6 could not record the initial version in its state folder "
                                 f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, "
                                 "then confirm again.")
@@ -573,9 +591,12 @@ class MetaHarness:
                                   source_run_ids=tuple(f.case_id for f in view.failures),
                                   parent_digests=getattr(strategy, "lineage", {}).get(parsed.digest(), ()))
             proposal = made["proposal"]
-            self.ledger.append("proposal", proposal.digest(), {
-                "strategy": strategy.name, "proposer": proposer, "candidate_digest": proposal.candidate_digest,
-                "diff": dict(proposal.diff), "failures_seen": len(view.failures), "dev_calls_used": meter.used})
+            try:
+                self.ledger.append("proposal", proposal.digest(), {
+                    "strategy": strategy.name, "proposer": proposer, "candidate_digest": proposal.candidate_digest,
+                    "diff": dict(proposal.diff), "failures_seen": len(view.failures), "dev_calls_used": meter.used})
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             proposals.append(proposal)
         flagged = sorted({p for f in view.failures for p in f.flags})
         if not proposals:
@@ -614,7 +635,10 @@ class MetaHarness:
         row = {"split_digest": self.workflow.suite.digest("selection"), "base_digest": base.digest(),
                "ranking": result.ranking, "winner": winner.candidate_digest if winner else None,
                "cases_used": result.cases_used, "calls_used": result.calls_used, "stopped": result.stopped}
-        self.ledger.append("selection", f"{len(self.ledger.rows('selection')) + 1}:{digest(row)}", row)
+        try:
+            self.ledger.append("selection", f"{len(self.ledger.rows('selection')) + 1}:{digest(row)}", row)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if winner is None and result.stopped:
             return _blocked(BUDGET_EXCEEDED, result.stopped, "Raise the selection budget, or race fewer candidates.",
                             ranking=result.ranking, winner=None, cases_used=result.cases_used,
@@ -717,7 +741,10 @@ class MetaHarness:
                           judging_sha256=judging_sha256(), base=base)
         self._decisions[decision.digest()] = decision
         if not self.ledger.has("decision", decision.digest()):  # the same report decided again is the same decision
-            self.ledger.append("decision", decision.digest(), decision.to_dict())
+            try:
+                self.ledger.append("decision", decision.digest(), decision.to_dict())
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if decision.verdict != "recommend":
             plan = recovery.for_decision(decision, report, self.workflow)
             return _blocked(decision.code, "; ".join(decision.reasons), f"Nothing changes. {plan.next_action}",
@@ -782,7 +809,9 @@ class MetaHarness:
             number = self._append("activate", proposal.candidate, at=_now(), accepted_by=who,
                                   decision_digest=decision.digest(), proposer=decision.proposer,
                                   ledger_head=self.ledger.head(), snapshot=snap)
-        except LedgerError as exc:
+        except (LedgerError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return _blocked(APPROVAL_REQUIRED, f"the store refused the activation: {exc}")
         except OSError as exc:
             return _blocked(APPROVAL_REQUIRED, f"G6 could not record the activation in its state folder "
@@ -842,7 +871,10 @@ class MetaHarness:
 
             row["failure"] = {"input": scrub(task_input)[:600], "output": scrub(result.get("output") or "")[:600],
                               "failed_checks": [k for k, v in (result.get("results") or {}).items() if v != "pass"]}
-        self.ledger.append("run", run_id, row)
+        try:
+            self.ledger.append("run", run_id, row)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         out = {**result, "profile_version": version, "profile_digest": profile.digest()}
         audit = self._audit(task_input, run_id, version, released)
         if audit:
@@ -863,7 +895,10 @@ class MetaHarness:
                    "completion_state": shadow_result.get("completion_state", "blocked-escalated"),
                    "model_calls": s_calls, "wall_clock_s": s_elapsed,
                    "output_sha256": hashlib.sha256(s_output.encode("utf-8")).hexdigest()}
-            self.ledger.append("run", f"shadow-{run_id}", row)
+            try:
+                self.ledger.append("run", f"shadow-{run_id}", row)
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
             out["shadow"] = {k: row[k] for k in ("profile_digest", "completion_state", "model_calls", "wall_clock_s",
                                                   "output_sha256")} | {
                 "note": "a shadow run's output is recorded by digest only and never returned or used"}
@@ -908,9 +943,12 @@ class MetaHarness:
                  for c in self.workflow.suite.held_out]
         report = admit(Candidate(source, training_case_ids=tuple(training_case_ids)), cases,
                        negative_control=Candidate("def solve(x):\n    return None\n"))
-        self.ledger.append("evaluation", f"distillate-{hashlib.sha256(source.encode()).hexdigest()}-{index}", {
-            "purpose": "distillate admission", "split": "held_out", "split_digest": digest_, "verdict": report.verdict,
-            "reason": report.reason, "passed": len(report.passed), "failed": len(report.failed)})
+        try:
+            self.ledger.append("evaluation", f"distillate-{hashlib.sha256(source.encode()).hexdigest()}-{index}", {
+                "purpose": "distillate admission", "split": "held_out", "split_digest": digest_, "verdict": report.verdict,
+                "reason": report.reason, "passed": len(report.passed), "failed": len(report.failed)})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         if report.verdict != "passed":
             return _blocked(NO_NEW_CANDIDATE, f"the distillate was not admitted: {report.verdict}: {report.reason}",
                             report={"verdict": report.verdict, "failed": list(report.failed)[:10]})
@@ -960,8 +998,11 @@ class MetaHarness:
         if not result.ok:
             return _blocked(result.code, result.message, result.next_action)
         sha = self.artifacts.put_adapter(result.folder)
-        self.ledger.append("evaluation", f"adapter-{sha}", {"purpose": "adapter training", "examples": len(rows),
-                                                            "base_unchanged": True, "report": result.report})
+        try:
+            self.ledger.append("evaluation", f"adapter-{sha}", {"purpose": "adapter training", "examples": len(rows),
+                                                                "base_unchanged": True, "report": result.report})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _envelope("qualified-draft", "G6_E_META_ADAPTER_TRAINED", "an adapter, a candidate only",
                          next_action=f"mh.candidate({{..., 'adapter': '{sha}'}}, proposer=...)", adapter=sha,
                          report=result.report)
@@ -989,12 +1030,15 @@ class MetaHarness:
         prev = self.store.profile(self.store.versions()[previous]["profile_digest"])
         result, calls, elapsed = self._live(prev, task_input, "metaharness:audit", Memory(":memory:"))
         prev_released = result.get("completion_state", "blocked-escalated") != "blocked-escalated"
-        self.ledger.append("run", f"audit-{run_id}", {
-            "workflow_digest": self.workflow.digest(), "profile_digest": prev.digest(), "purpose": "audit",
-            "audit_of": run_id, "head_version": version, "previous_version": previous,
-            "completion_state": result.get("completion_state", "blocked-escalated"), "released": prev_released,
-            "current_released": released, "difference": float(prev_released) - float(released),
-            "model_calls": calls, "wall_clock_s": elapsed})
+        try:
+            self.ledger.append("run", f"audit-{run_id}", {
+                "workflow_digest": self.workflow.digest(), "profile_digest": prev.digest(), "purpose": "audit",
+                "audit_of": run_id, "head_version": version, "previous_version": previous,
+                "completion_state": result.get("completion_state", "blocked-escalated"), "released": prev_released,
+                "current_released": released, "difference": float(prev_released) - float(released),
+                "model_calls": calls, "wall_clock_s": elapsed})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return {"previous_version": previous, "model_calls": calls, "wall_clock_s": elapsed,
                 "note": "the previous approved version also ran on this task; its output is not returned"}
 
@@ -1034,12 +1078,18 @@ class MetaHarness:
             return _envelope("qualified-draft", "G6_E_META_MONITOR", "no live drift detected", audit=summary, observations=observations, promotion=promotion,
                              next_action="Keep running; the monitor compares a share of runs with the previous version.")
         target = self.store.versions()[previous]
-        number = self._append("demote", self.store.profile(target["profile_digest"]), at=_now(),
-                              accepted_by="monitor", target_version=previous, ledger_head=self.ledger.head(),
-                              reason=f"drift: mean difference {verdict.mean_difference} over "
-                                     f"{verdict.pairs} audited runs > {verdict.threshold}")
-        self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
-                                                         "now_version": number, "audit": summary})
+        try:
+            number = self._append("demote", self.store.profile(target["profile_digest"]), at=_now(),
+                                  accepted_by="monitor", target_version=previous, ledger_head=self.ledger.head(),
+                                  reason=f"drift: mean difference {verdict.mean_difference} over "
+                                         f"{verdict.pairs} audited runs > {verdict.threshold}")
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+        try:
+            self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
+                                                             "now_version": number, "audit": summary})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _blocked(DRIFT_DEMOTED, f"version {version} fell behind the previous approved version on its audited "
                         f"runs; the head is now version {number} (= version {previous})",
                         "Re-evaluate the demoted candidate on a fresh held-out split before trying it again.",
@@ -1057,8 +1107,11 @@ class MetaHarness:
         if not self.workflow.audit_floor <= rate <= 1:
             return _blocked(AUDIT_FLOOR, f"the audit rate must be between the workflow's floor "
                             f"{self.workflow.audit_floor} and 1")
-        self.ledger.append("setting", f"audit-rate-{len(self.ledger.rows('setting'))}",
-                           {"audit_rate": rate, "accepted_by": who, "at": _now()})
+        try:
+            self.ledger.append("setting", f"audit-rate-{len(self.ledger.rows('setting'))}",
+                               {"audit_rate": rate, "accepted_by": who, "at": _now()})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"audit rate {rate}", audit_rate=rate)
 
     def _live_since_online(self) -> int:
@@ -1078,9 +1131,12 @@ class MetaHarness:
             return _blocked(APPROVAL_REQUIRED, "a person switches online tuning on")
         if every < 1:
             return _blocked(SCHEMA, "every must be >= 1")
-        self.ledger.append("setting", f"online-{len(self.ledger.rows('setting'))}", {
-            "online_tuning": True, "online_every": every, "online_strategy": strategy.name, "accepted_by": who,
-            "at": _now()})
+        try:
+            self.ledger.append("setting", f"online-{len(self.ledger.rows('setting'))}", {
+                "online_tuning": True, "online_every": every, "online_strategy": strategy.name, "accepted_by": who,
+                "at": _now()})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._online = strategy
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"online tuning on, every {every} live runs",
                          next_action="Proposals it makes are candidates: evaluate, decide and approve each one.")
@@ -1092,8 +1148,11 @@ class MetaHarness:
             return self.envelope
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person switches online tuning off")
-        self.ledger.append("setting", f"online-{len(self.ledger.rows('setting'))}",
-                           {"online_tuning": False, "accepted_by": who, "at": _now()})
+        try:
+            self.ledger.append("setting", f"online-{len(self.ledger.rows('setting'))}",
+                               {"online_tuning": False, "accepted_by": who, "at": _now()})
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         self._online = None
         return _envelope("qualified-draft", "G6_E_META_SETTING", "online tuning off")
 
@@ -1141,7 +1200,9 @@ class MetaHarness:
         try:
             number = self._append("rollback", profile, at=_now(), accepted_by=who, target_version=version,
                                   ledger_head=self.ledger.head(), snapshot=self._snapshot(len(versions)))
-        except OSError as exc:
+        except (OSError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             return _blocked(APPROVAL_REQUIRED, f"G6 could not record the rollback in its state folder "
                             f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
                             "roll back again.")
@@ -1206,11 +1267,14 @@ class MetaHarness:
     def inspect(self) -> dict[str, Any]:
         if self._problems:
             return self.envelope
-        return _envelope("qualified-draft", "G6_E_META_INSPECT", "Workflow history; this inspection executed no application code", versions=self.store.versions(),
-                         confirmed=self.store.confirmed(), store_head=self.store.head_hash(),
-                         ledger_head=self.ledger.head(), evaluations=self.ledger.rows("evaluation"),
-                         decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}
-                                    for r in self.ledger.rows("decision")])
+        try:
+            return _envelope("qualified-draft", "G6_E_META_INSPECT", "Workflow history; this inspection executed no application code", versions=self.store.versions(),
+                             confirmed=self.store.confirmed(), store_head=self.store.head_hash(),
+                             ledger_head=self.ledger.head(), evaluations=self.ledger.rows("evaluation"),
+                             decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}
+                                        for r in self.ledger.rows("decision")])
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @_serialized
     def report(self) -> dict[str, Any]:
@@ -1220,15 +1284,18 @@ class MetaHarness:
         versions = self.store.versions()
         runs = self.ledger.rows("run")
         heads = {v["version"]: v["profile_digest"] for v in versions}
-        checked = [
-            {"claim": "the store's hash chain verifies", "holds": self.store.verify() == ()},
-            {"claim": "the ledger's hash chain verifies", "holds": self.ledger.verify() == ()},
-            {"claim": "every activation names a person and a decision",
-             "holds": all(v["accepted_by"] and v["decision_digest"] for v in versions if v["kind"] == "activate")},
-            {"claim": "every live run used the profile of the version it names",
-             "holds": all(heads.get(r.get("profile_version")) == r["profile_digest"] for r in runs
-                          if r["purpose"] == "live")},
-        ]
+        try:
+            checked = [
+                {"claim": "the store's hash chain verifies", "holds": self.store.verify() == ()},
+                {"claim": "the ledger's hash chain verifies", "holds": self.ledger.verify() == ()},
+                {"claim": "every activation names a person and a decision",
+                 "holds": all(v["accepted_by"] and v["decision_digest"] for v in versions if v["kind"] == "activate")},
+                {"claim": "every live run used the profile of the version it names",
+                 "holds": all(heads.get(r.get("profile_version")) == r["profile_digest"] for r in runs
+                              if r["purpose"] == "live")},
+            ]
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         last = ([r for r in self.ledger.rows("evaluation") if r.get("split") == "held_out"] or [None])[-1]
         measured = [{"claim": "the last held-out evaluation", "value": last}] if last else []
         online = [r for r in self.ledger.rows("setting") if "online_tuning" in r]

@@ -3,10 +3,14 @@
 ``doctor``, ``skills``."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import argparse
 import json
 import sys
 from pathlib import Path
+
+from g6.cli._capture import invocation_lock
 
 
 def _print(value: object) -> None:
@@ -125,7 +129,7 @@ def _doctor_report(args: argparse.Namespace) -> int:
     return 1 if built["completion_state"] == "blocked-escalated" or written["code"] == E_WRITE_FAILED else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="g6", description="Open-source harness engineering for AI agents.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init", help="create the local state folder ($G6_HOME, default ~/.g6)")
@@ -147,10 +151,14 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--limit", type=int, default=5)
     d = sub.add_parser("describe", help="maturity, ops and dependencies of a component")
     d.add_argument("component")
-    i = sub.add_parser("invoke", help="run one op of a component")
+    i = sub.add_parser("invoke", help="run one op of a component", description=(
+        "Run one op. G6 captures Python output until process exit and reports counts only. "
+        "Writes below Python (os.write on fd 1/2, C extensions and child processes) are outside this capture. "
+        "See docs/cli-output.md."))
     i.add_argument("component")
     i.add_argument("op")
     i.add_argument("params", nargs="?", default="{}", help="JSON object of op parameters")
+    i.add_argument("--json", action="store_true", help="print one JSON reply envelope")
     st = sub.add_parser("state", help="snapshot, list, roll back or export the state folder")
     st_sub = st.add_subparsers(dest="state_cmd", required=True)
     st_sub.add_parser("ls", help="list snapshots")
@@ -185,7 +193,17 @@ def main(argv: list[str] | None = None) -> int:
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
     si.add_argument("--client", choices=("claude", "codex"), default="claude", help="client skill directory")
     si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a CLI call, restoring any capture it installs before returning."""
+    with invocation_lock:
+        return _main(argv)
+
+
+def _main(argv: list[str] | None = None) -> int:
+    args = _parse_arguments(argv)
 
     if args.cmd == "workflow":
         from g6.metaharness.surface import Surface, dialog_only
@@ -195,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if result.get("completion_state") == "blocked-escalated" else 0
 
     if args.cmd == "setup":
+        from g6.cli import setup
+
         return setup.main(args)
     if args.cmd == "bundle":
         return _bundle(args)
@@ -210,6 +230,12 @@ def main(argv: list[str] | None = None) -> int:
         checks = run_checks()
         print(json.dumps(report(checks), indent=2) if args.json else render(checks))
         return 1 if report(checks)["status"] == "fail" else 0
+
+    if args.cmd == "invoke":
+        from g6.cli._capture import capture_invocation
+
+        with capture_invocation() as capture:
+            return _invoke(args, capture)
 
     from g6.core import discovery
     from g6.core.registry import get_registry
@@ -233,26 +259,96 @@ def main(argv: list[str] | None = None) -> int:
         info = discovery.describe(args.component)
         _print(info)
         return 0 if info.get("available") else 1
-    try:
-        params = json.loads(args.params)
-    except json.JSONDecodeError as exc:
-        print(f"params is not JSON: {exc}", file=sys.stderr)
-        return 2
-    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
+
+
+def _invoke(args, capture) -> int:
+    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, invoke_checked
     from g6.core.consent_registry import GuardedRegistry
+    from uuid import uuid4
 
     # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
     # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
     name = f"{args.component}.{args.op}"
-    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
-                           how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
-                                        f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
-    if "result" not in reply:
-        print(reply["error"], file=sys.stderr)
+    request_id = uuid4().hex[:12]
+
+    diagnostic, output = capture.diagnostic, capture.output
+
+    def failed(message: str, door_reply: dict | None = None, *, code: str = "G6_E_INVOKE_FAILED",
+               exit_code: int = 1) -> int:
+        error = f"[{code}] {message}"
+        reply_request_id = (door_reply.get("request_id") or request_id) if door_reply else request_id
+        failure = blocked_reply(error, request_id=reply_request_id)
+        if door_reply and door_reply.get("run_id"):
+            failure["run_id"] = door_reply["run_id"]
+        if args.json:
+            if not output(json.dumps(failure, indent=2, default=str)):
+                return 1
+        else:
+            diagnostic(f"{error} completion_state: blocked-escalated")
+        return exit_code
+
+    try:
+        params = _decode_json(args.params)
+    except (ValueError, RecursionError, MemoryError):
+        return failed("G6: params must be valid JSON.", code="G6_E_INVALID_PARAMS", exit_code=2)
+
+    try:
+        reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(), registry=GuardedRegistry(),
+                               request_id=request_id,
+                               how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                            f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - op failures must not expose library or exception text
+        return failed(f"G6: component {args.component!r}, op {args.op!r} failed while running.")
+    if "result" not in reply and not args.json:
+        diagnostic(reply["error"])
         return 1
-    _print(reply["result"])
+    try:
+        encoded = json.dumps(reply if args.json else reply["result"], indent=2, default=str)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - JSON encoding may run a result object's own code
+        return failed(f"G6: component {args.component!r}, op {args.op!r}: the result could not be written as JSON.", reply)
+    if not output(encoded):
+        return 1
     return 0 if reply["ok"] else 1
 
 
+def entrypoint(argv: list[str] | None = None) -> int:
+    """Console ownership continues after main returns, through interpreter shutdown."""
+    from g6._warnings import install_process_warning_policy
+
+    with invocation_lock:
+        # Parsing imports setup before invocation capture starts. Only the owned
+        # process entry changes warning policy; embedding main() leaves it alone.
+        install_process_warning_policy()
+        return _entrypoint(argv)
+
+
+def _entrypoint(argv: list[str] | None = None) -> int:
+    # Parse before capturing so argparse's help and usage errors keep their streams.
+    args = _parse_arguments(argv)
+    if args.cmd != "invoke":
+        return main(argv)
+
+    import atexit
+    from g6.cli._capture import InvokeCapture, current_capture
+
+    capture = current_capture()
+    owns_capture = capture is None
+    if owns_capture:
+        capture = InvokeCapture()
+        # Registered before resolving the op, so the op's exit callbacks run first.
+        atexit.register(capture.report_late)
+    try:
+        return main(argv)
+    except KeyboardInterrupt:
+        if owns_capture:
+            atexit.unregister(capture.report_late)
+            capture.restore()
+        raise
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(entrypoint())

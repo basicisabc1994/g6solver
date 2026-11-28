@@ -25,7 +25,8 @@ What none of it can judge: whether the file sounds or looks as wanted. It measur
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import tempfile
 from fractions import Fraction
 from pathlib import Path
@@ -102,8 +103,8 @@ def probe(path: Path, *, seconds: float = 60.0) -> dict[str, Any]:
     if ran.code != 0:
         raise MediaError(UNDECODABLE, f"ffprobe could not read {path.name}: {ran.text(400) or f'exit {ran.code}'}")
     try:
-        found = json.loads(ran.out.decode("utf-8", "replace"))
-    except ValueError:
+        found = _decode_json(ran.out.decode("utf-8", "replace"))
+    except (ValueError, RecursionError, MemoryError):
         raise MediaError(UNDECODABLE, f"ffprobe's account of {path.name} is not JSON") from None
     if not isinstance(found, dict) or not isinstance(found.get("format"), dict):
         raise MediaError(UNDECODABLE, f"ffprobe found no format in {path.name}")

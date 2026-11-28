@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -300,11 +301,14 @@ def _tests_near(folder: Path, name: str, family: str, roots: _roots.Roots,
             break
         for candidate in (ancestor / "tests" / f"test_{name}.py", ancestor / "tests" / family / f"test_{name}.py"):
             try:
-                real = confined_path(candidate, roots.roots)
-                if real.is_file():
+                info = _roots.path_info(candidate, roots=roots)
+                if info is not None and stat.S_ISREG(info.st_mode):
+                    real = confined_path(candidate, roots.roots)
                     found.setdefault(real.as_posix(), _roots.read_text(candidate, MAX_FILE_BYTES, roots=roots))
-            except (ValueError, OSError, CodeRefused) as exc:
-                problems.append(_problem("read", str(candidate), f"test file was not read: {exc}"))
+            except (ValueError, OSError, MemoryError, CodeRefused) as exc:
+                reason = (f"[{exc.code}] {exc.reason}" if isinstance(exc, CodeRefused)
+                          else "the test file could not be opened and checked")
+                problems.append(_problem("read", _roots._name(candidate, roots), f"test file was not read: {reason}"))
         if found:
             break
     return found
@@ -312,13 +316,16 @@ def _tests_near(folder: Path, name: str, family: str, roots: _roots.Roots,
 
 def _files(folder: Path, roots: _roots.Roots) -> tuple[dict[str, str], _roots.Walk]:
     walked = _roots.walk(folder, roots, max_files=MAX_FILES, max_file_bytes=MAX_FILE_BYTES, suffixes=(".py", ".md"))
-    return ({p.relative_to(folder).as_posix(): _roots.read_text(p, MAX_FILE_BYTES) for p in walked.files}, walked)
+    return ({p.relative_to(folder).as_posix(): _roots.read_text(p, MAX_FILE_BYTES, roots=roots)
+             for p in walked.files}, walked)
 
 
 def _incomplete(out: dict[str, Any], walked: _roots.Walk) -> None:
     skipped = walked.truncated or walked.skipped_links or walked.skipped_large or walked.skipped_unreadable
     if skipped:
         out["problems"].append(_problem("read", ".", f"package walk was incomplete: {walked.describe()}"))
+    if walked.skipped_hard_links:
+        out["problems"].append(_problem("read", ".", walked.hard_links_said()))
     out["complete"] = not skipped and not any(
         p["check"] == "read" or "parse" in p["message"] for p in out["problems"])
 
@@ -326,8 +333,9 @@ def _incomplete(out: dict[str, Any], walked: _roots.Walk) -> None:
 def check_folder(path: str, roots: _roots.Roots) -> dict[str, Any]:
     """A package folder under a declared root, checked as text."""
     folder = _roots.existing(path, roots, kind="folder")
-    if not (folder / "__init__.py").is_file():
-        raise CodeRefused(NOT_A_PACKAGE, f"{folder} holds no __init__.py, so it is not a package")
+    init = _roots.path_info(folder / "__init__.py", roots=roots)
+    if init is None or not stat.S_ISREG(init.st_mode):
+        raise CodeRefused(NOT_A_PACKAGE, f"{_roots._name(folder, roots)} holds no __init__.py, so it is not a package")
     files, walked = _files(folder, roots)
     package = _package_name(folder)
     family = package.split(".")[1] if package.count(".") == 2 else ""
@@ -355,8 +363,9 @@ def check_component(name: str) -> dict[str, Any]:
     locations = list(spec.submodule_search_locations or ()) if spec else []
     if not locations:
         raise CodeRefused(NOT_A_PACKAGE, f"{package} is not a package folder")
-    folder = Path(locations[0]).resolve()
-    every = _roots.Roots((folder,), "the installed package")
+    every = _roots.for_folder(Path(locations[0]), "the installed package")
+    every.refuse_if_empty("read")
+    folder = every.roots[0]
     files, walked = _files(folder, every)
     cls = reg.get_class(name)
     forbids = None
@@ -370,7 +379,7 @@ def check_component(name: str) -> dict[str, Any]:
     family = reg.refs[name].family or ""
     home = folder.parents[min(3, len(folder.parents) - 1)]
     unread: list[dict[str, str]] = []
-    tests = _tests_near(folder, name, family, _roots.Roots((home,), "installed tests"), unread)
+    tests = _tests_near(folder, name, family, _roots.for_folder(home, "installed tests"), unread)
     out = check_package(name, package, files, tests, ops=list(discovery.ops(name) or []), input_forbids_extra=forbids)
     out["problems"].extend(unread)
     _incomplete(out, walked)

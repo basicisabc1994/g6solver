@@ -15,7 +15,8 @@ from typing import Any
 import pytest
 
 from g6.core import component_process, confine
-from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from tests.guidance_expectations import ISOLATION_ACTION, UNCONFINED_WARNING, isolation_record, no_setup
 
 OFF = "unavailable: switched off by this test"
 
@@ -60,7 +61,8 @@ def test_swi_prolog_runs_through_a_plan_with_its_folders(started, tmp_path) -> N
     runner.run(str(swipl), runner.driver_arguments(256), files={"program.pl": "a."}, seconds=5, memory_mb=256,
                cap=1000, record=record)
     _planned(started[0], swipl)
-    assert record["isolation"]["why"] == OFF and record["isolation"]["warning"] == confine.UNCONFINED_WARNING
+    assert record["isolation"]["why"] == OFF and record["isolation"]["warning"] == UNCONFINED_WARNING
+    isolation_record(record["isolation"])
 
 
 def test_lean_runs_through_a_plan_with_its_folders_and_elan_home(started, tmp_path, monkeypatch) -> None:
@@ -148,6 +150,14 @@ def test_with_no_backend_each_is_refused_before_it_starts_unless_allowed(which, 
     assert result.reason.startswith(f"[{ISOLATION_UNAVAILABLE}]") and OFF in result.reason
     assert result.warning_card["code"] == ISOLATION_UNAVAILABLE
     assert result.warning_card["suggested_action"] == ISOLATION_ACTION
+    records = [item["isolation"] for item in result.evidence if "isolation" in item]
+    assert records, result.evidence
+    for record in records:
+        isolation_record(record)
+    no_setup(result.model_dump(mode="json"))
+    from g6.cli import doctor
+    monkeypatch.setattr(confine, "backend", lambda *a, **k: (None, OFF))
+    assert "g6 setup" in doctor._isolation().fix
 
 
 def test_an_installation_that_keeps_part_of_itself_elsewhere_is_read_there_too(tmp_path) -> None:

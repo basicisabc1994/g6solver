@@ -75,7 +75,8 @@ def test_operational_contracts_with_other_scopes_planted(tmp_path, monkeypatch, 
 @pytest.mark.parametrize('scope_granted', [False])
 @pytest.mark.parametrize('granted', [False, True])
 def test_catalogue_reality_capture(tmp_path, monkeypatch, accepted_cloud_dialog, scope_granted, granted):
-    scope_captures.test_actual_catalogue_file_is_not_operational_text(
+    # renamed by 2b0d29c6 (owner, 2026-11-16: G6's built-in catalogue is public, with or without the grant)
+    scope_captures.test_a_built_in_components_catalogue_file_is_public(
         tmp_path, monkeypatch, accepted_cloud_dialog, granted)
 
 

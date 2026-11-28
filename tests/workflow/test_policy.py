@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The versioned storage policy (design 17.3): finite retention for everything the workflow record stores, published
-before collection is enabled, and a switch that is off unless the person turned it on."""
+before collection is enabled, and a switch that is on by default (owner ruling, 2026-11-25) and off when the person
+sets it off."""
 from __future__ import annotations
 
 import ast
@@ -14,7 +15,7 @@ from g6.harness.workflow import policy
 
 _PACKAGE = Path(g6.harness.workflow.__file__).parent
 _DOC = Path(__file__).resolve().parents[2] / "docs" / "product_global_specs" / "workflow_storage_policy.md"
-_FILE_NAME = re.compile(r"\.(jsonl|json|head|lock|part|tmp|new)\Z")
+_FILE_NAME = re.compile(r"(\.(jsonl|json|head|lock|part|tmp|new)|RECORD\.md)\Z")    # RECORD.md: the readable export (rc030-card)
 
 
 def _strings(path: Path) -> set[str]:
@@ -54,18 +55,23 @@ def test_policy_doc_states_each_period():
         assert name.lstrip(".") in text, name
     for field in policy.RECEIPT_FIELDS:
         assert f"`{field}`" in text
-    assert "G6_WORKFLOW_RECORD=on" in text and "second worktree is a second project" in text
+    assert "G6_WORKFLOW_RECORD=off" in text and "on by default" in text
+    assert "second worktree is a second project" in text
 
 
-def test_the_record_is_off_until_the_person_turns_it_on(monkeypatch):
+def test_the_record_is_on_by_default_and_off_when_the_person_says_off(monkeypatch):
+    # owner ruling, 2026-11-25: the default changed on purpose, from off to on; the off switch is kept
     monkeypatch.delenv(policy.RECORD_ENV, raising=False)
-    assert policy.ON_BY_DEFAULT is False                  # the one line the owner's answer would change
-    on, why = policy.enabled()
-    assert on is False and policy.RECORD_ENV in why
+    assert policy.ON_BY_DEFAULT is True
+    assert policy.enabled() == (True, "")
     monkeypatch.setenv(policy.RECORD_ENV, "on")
     assert policy.enabled() == (True, "")
     monkeypatch.setenv(policy.RECORD_ENV, "off")
-    assert policy.enabled()[0] is False
+    on, why = policy.enabled()
+    assert on is False and f"{policy.RECORD_ENV}=off" in why
+    monkeypatch.setenv(policy.RECORD_ENV, "Zebra-77")
+    on, why = policy.enabled()
+    assert on is False and "cannot read" in why and "Zebra-77" not in why
 
 
 @pytest.mark.parametrize("value", ["", " ", "ON", "yes", "1", "true", "on ", "off\n", "on;off", "Zebra-77"])
@@ -75,10 +81,11 @@ def test_unreadable_switch_value_turns_collection_off(monkeypatch, value):
     assert on is False and "cannot read" in why and "Zebra-77" not in why      # the value is not repeated
 
 
-def test_default_on_is_one_constant(monkeypatch):
+def test_the_default_is_one_constant(monkeypatch):
     monkeypatch.delenv(policy.RECORD_ENV, raising=False)
-    monkeypatch.setattr(policy, "ON_BY_DEFAULT", True)
-    assert policy.enabled() == (True, "")
+    monkeypatch.setattr(policy, "ON_BY_DEFAULT", False)
+    on, why = policy.enabled()
+    assert on is False and f"{policy.RECORD_ENV}=on" in why
     monkeypatch.setenv(policy.RECORD_ENV, "off")
     assert policy.enabled()[0] is False
 

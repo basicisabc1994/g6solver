@@ -5,6 +5,9 @@ Only trusted Python integrations register builders and check scripts. Request da
 cannot replace a checker. The sandbox is a resource bound, not an OS boundary.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import script_run
+
+from g6.core.decoder_limits import json_value as _decode_json
 
 import io
 import json
@@ -13,12 +16,12 @@ import secrets
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
 from g6.code import _roots
 from g6.code._types import CodeRefused, answer, refuse
-from g6.core import sandbox
 
 MAX_FILES = 200
 MAX_FILE_BYTES = 1_000_000
@@ -214,7 +217,7 @@ except BaseException as exc:
 report.write_text(json.dumps({**result, "token": _g6_token, "completed": True}), encoding="utf-8")
 """
         try:
-            ran = sandbox.run_script(script, {"artefact.zip": packed.getvalue()}, timeout_s=check.timeout_s,
+            ran = script_run(script, {"artefact.zip": packed.getvalue()}, timeout_s=check.timeout_s,
                                      mem_mb=check.mem_mb, max_output_bytes=128_000)
             evidence = {"sandbox_status": ran.status, "limits": ran.limits,
                         "stdout": ran.stdout[-4000:], "stderr": ran.stderr[-4000:]}
@@ -222,7 +225,7 @@ report.write_text(json.dumps({**result, "token": _g6_token, "completed": True}),
                 results.append(CheckResult(check.name, False, evidence, "sandbox failed or returned no check report",
                                            check.code))
                 continue
-            data = json.loads(ran.outputs["_g6_check.json"])
+            data = _decode_json(ran.outputs["_g6_check.json"])
             if (not isinstance(data, dict)
                     or set(data) != {"passed", "evidence", "reason", "code", "token", "completed"}
                     or data["token"] != token or data["completed"] is not True
@@ -265,8 +268,8 @@ def write_files(artefact: Artefact, dest: str, roots: _roots.Roots, *, dry_run: 
         return {"written": [], "dry_run": True}
     target = _roots.destination(dest, roots)
     written = []
+    parents: dict[Path, tuple[int, int]] = {}
     try:
-        target.mkdir(exist_ok=True)
         for name, data in artefact.files.items():
             output = target / name
             # Recheck every parent and file immediately before writing; refuse links.
@@ -276,7 +279,7 @@ def write_files(artefact: Artefact, dest: str, roots: _roots.Roots, *, dry_run: 
                     raise CodeRefused("G6_E_BUILD_PATH", "destination contains a link")
             if not _roots.under(output.resolve(), (target.resolve(),)):
                 raise CodeRefused("G6_E_BUILD_PATH", "destination leaves its root")
-            output.parent.mkdir(parents=True, exist_ok=True)
+            _roots._prepare_write_parent(output.parent, target, parents)
             with output.open("xb") as handle:
                 handle.write(data)
             if output.read_bytes() != data:

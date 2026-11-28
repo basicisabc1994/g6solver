@@ -28,6 +28,8 @@ was made by: a check is independent only of what its op made none of (Security B
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -74,7 +76,10 @@ def _answered_call(ledger: Any, mission_id: str, run_id: str) -> dict | None:
         run = ledger.run(mission_id, run_id)
     except LookupError:
         return None
-    calls = [c for c in json.loads(run.get("calls_json") or "[]") if isinstance(c, dict)]
+    try:
+        calls = [c for c in _decode_json(run.get("calls_json") or "[]") if isinstance(c, dict)]
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return next((c for c in calls if c.get("refused") is False), None)
 
 

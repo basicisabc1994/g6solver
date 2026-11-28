@@ -2,6 +2,8 @@
 """Bundled textbook-derived metadata. Retrieval is not verification or execution."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from importlib.resources import files
 from typing import Any
@@ -16,7 +18,10 @@ def _load(name: str) -> dict[str, Any]:
     raw = resource.read_bytes()
     if len(raw) > 4_000_000:
         raise ValueError("knowledge bundle exceeds size limit")
-    value = json.loads(raw)
+    try:
+        value = _decode_json(raw)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(value, dict) or value.get("version") != "0.1.0":
         raise ValueError("unsupported knowledge bundle schema")
     return value

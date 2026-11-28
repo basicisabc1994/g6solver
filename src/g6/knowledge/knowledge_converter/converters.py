@@ -20,8 +20,9 @@ after :data:`PDF_READ_SECONDS`, and the pages not read are listed as unread (``p
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import binascii
-import json
 import os
 import sys
 import tempfile
@@ -206,8 +207,8 @@ def _read_pdf(data: bytes) -> dict | str:
         tail = done.stderr.decode("utf-8", "replace").strip()[-300:]
         return f"the PDF reader stopped with exit code {done.returncode} (out of memory, or a crash): {tail}"[:500]
     try:
-        reply = json.loads(done.stdout.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+        reply = _decode_json(done.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError, MemoryError):
         return "the PDF reader's reply could not be read"
     if not (isinstance(reply, dict) and isinstance(reply.get("version"), str)
             and (reply.get("ok") is False and isinstance(reply.get("reason"), str)

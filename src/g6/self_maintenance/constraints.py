@@ -7,6 +7,7 @@ can shift, so a score or one passing trial cannot establish monotone real-world
 improvement. Safety/authorization is a hard feasibility condition, not a reward.
 """
 from __future__ import annotations
+import json
 from dataclasses import dataclass
 from math import isfinite
 from typing import Sequence
@@ -148,10 +149,16 @@ def focus_plan(tickets: Sequence[MaintenanceTicket], stages: Sequence[StageMeasu
     """Prioritize bottleneck-related work; do not invent labels for unmeasured stages."""
     constraint = identify_constraint(stages)
     if constraint.bottleneck == "unknown":
-        return Plan("blocked-escalated", None, None, 0, (), ("bottleneck_unmeasured",),
-                    "measure workflow independently before spending", book.ledger.head())
+        try:
+            return Plan("blocked-escalated", None, None, 0, (), ("bottleneck_unmeasured",),
+                        "measure workflow independently before spending", book.ledger.head())
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     relevant = [t for t in tickets if ticket_stages.get(t.id) == constraint.bottleneck]
     if not relevant:
-        return Plan("blocked-escalated", None, None, 0, (), ("no_ticket_for_constraint",),
-                    "no substantiated intervention for current bottleneck", book.ledger.head())
+        try:
+            return Plan("blocked-escalated", None, None, 0, (), ("no_ticket_for_constraint",),
+                        "no substantiated intervention for current bottleneck", book.ledger.head())
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return rank_tickets(relevant, policy=policy, book=book, day=day, preferred_provider=provider)

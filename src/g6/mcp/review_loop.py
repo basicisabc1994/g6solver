@@ -15,6 +15,8 @@ wait, for the person's answer.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import uuid
 from pathlib import Path
@@ -45,10 +47,10 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
     if known.is_file():
         try:
             expected = (session / 'task.sha256').read_text(encoding='ascii')
-            asked = json.loads(cloud.read_retained(known, expected))
+            asked = _decode_json(cloud.read_retained(known, expected))
             if not isinstance(asked, dict) or set(asked) != {'repo', 'task', 'base'}:
                 raise ValueError('malformed retained task')
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, RecursionError, MemoryError):
             cloud.record_sources((cloud.UNKNOWN,))
             raise repo_tests.RepoRefused(cloud.REQUIRED, cloud.WITHHELD) from None
         if asked["repo"] != str(root):
@@ -72,8 +74,8 @@ def _evidence(state: dict, base: str) -> list[dict[str, Any]]:
 
 def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """One step of the loop, for a job over MCP: see the module's docstring."""
-    from g6.core.door import blocked_reply
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.guidance_builders import blocked_reply
+    from g6.core.guidance_builders import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
     from g6.workspace._envelope import WorkspaceRefused
@@ -97,6 +99,7 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
     state = loop._load(folder)
     evidence = _evidence(state, asked["base"])
     text = done.text or loop.read_report(folder, state)
+    card_report = text
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch as the session's loop ended
         reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
@@ -105,6 +108,29 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
             text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
+    if done.action == loop.STOP:
+        from g6.harness import patch_report
+        from g6.harness.workflow import evidence as workflow_evidence
+
+        loop_fields = {**state, "workflow_evidence": state.get("workflow_evidence")}
+        if done.note == loop.ALREADY_ENDED:
+            loop_fields["workflow_evidence"] = workflow_evidence.read(
+                asked["repo"], asked["task"], origin_kind="loop_session", origin_id=folder.name)
+        assessment = state.get("final_assessment") or {}
+        if "- **Checked:**" not in text:
+            loop_fields["unchecked_reason"] = text or note or why
+        said["card"] = patch_report.card(assessment, loop_fields)
+        if done.note == loop.ALREADY_ENDED and "- **Checked:**" in card_report:
+            refreshed = patch_report.with_card(card_report, said["card"])
+            said["report"] = f"{CHANGED}\n\n{refreshed}" if note == CHANGED else refreshed
+        if said["card"]["justification"]:
+            from g6.core import cloud_consent as cloud
+            from g6.harness.workflow.record import workflow_source
+
+            held = loop_fields["workflow_evidence"]
+            project = held["events"][0]["project"]
+            cloud.record_sources((cloud.Source.text(workflow_source(project), "card-events", json.dumps(
+                held, sort_keys=True)),))
     if code:
         refused = blocked_reply(f"[{code}] {why}"[:600], request_id=request_id)
         result = {**refused, "run_id": folder.name, "evidence": evidence, **said}
@@ -113,14 +139,20 @@ def _step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = 
         result = {"ok": True, **said, **envelope_fields(
             reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
             run_id=folder.name, degradation_reason=card[0][:300])}
+    if code and state.get("requests_sent"):     # a review refused after a request went out: never "not sent"
+        result["requests_sent"] = state["requests_sent"]
     from g6.core.cloud_consent import bind_output
     return bind_output(result, loop.source_refs(state))
 
 
 def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
     """Retain the run's saved origins; never rebind old report content to the current request."""
-    from g6.core.cloud_consent import Source, bind_output, repository_source, freeze_output
+    from g6.core.cloud_consent import Source, bind_output, repository_source
+    from g6.core.storage import _elsewhere
     from g6.harness import completion_loop
+    if why := _elsewhere(str(repo)):     # refused on its words, as ``repo_tests.checked_repo``: nothing asks about it
+        from g6.core.guidance_builders import blocked_reply
+        return bind_output(blocked_reply(f"[G6_E_INPUT_VALIDATION] {why}"), ())
     result = _step(repo, task, session, base, reason)
     if result.get('action') == completion_loop.WAIT:
         # The running step owns the state. This reply contains only fresh host
@@ -130,10 +162,11 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     from g6.core.cloud_consent import REQUIRED, current_capture, input_source
     capture = current_capture()
     if capture is not None:
-        capture.review_unsent = (result.get('ending') == 'untested' and
-            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))
-    body, refs, _ = freeze_output(result)
-    result = json.loads(body)
+        capture.review_unsent = (result.get('ending') == 'untested' and not result.get('requests_sent') and
+            str(result.get('error', '')).startswith(f'[{REQUIRED}]'))     # "not sent" only with nothing sent (efa43a2a)
+    from g6.core.external_data import detached
+    result, refs, _ = detached(result)
+    body = json.dumps(result, separators=(',', ':'), allow_nan=False)
     metadata = {key: result[key] for key in ('action', 'ending', 'request_id', 'run_id') if key in result}
     metadata.update(has_report='report' in result, has_text='text' in result)
     if capture is not None and capture.review_unsent and capture.refused_provider:

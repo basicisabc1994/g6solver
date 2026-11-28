@@ -13,6 +13,8 @@ runs a base model with an adapter in this process, for a ``Model(adapter_loader=
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import importlib.util
 import json
 import tempfile
@@ -109,7 +111,7 @@ print(json.dumps({"steps": spec["steps"], "first_loss": losses[0], "last_loss": 
 
 def sandbox_trainer(spec: LoraSpec, rows: Sequence[tuple[str, str]], out: Path) -> dict[str, Any]:
     """Train in a bounded child process; the adapter's files are written to ``out``."""
-    from g6.core.sandbox import run_script
+    from g6.core.guidance_builders import script_run as run_script
 
     files = {"spec.json": json.dumps(asdict(spec)),
              "examples.jsonl": "\n".join(json.dumps([p, c]) for p, c in rows)}
@@ -120,7 +122,10 @@ def sandbox_trainer(spec: LoraSpec, rows: Sequence[tuple[str, str]], out: Path) 
     for name, data in ran.outputs.items():
         if name not in ("spec.json", "examples.jsonl"):
             (out / name).write_bytes(data)
-    return json.loads(ran.stdout.strip().splitlines()[-1])
+    try:
+        return _decode_json(ran.stdout.strip().splitlines()[-1])
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def train(spec: LoraSpec, rows: Sequence[tuple[str, str]], *,

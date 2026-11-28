@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "155519f19c8324e01d04a242506acde2e34e7ae3a1cab500a2f695a1ff0ae7d1"
+  },
+  "reason": "the census caption fix (claude/census-caption-fix) rewrites the question route's detail (references/question.md); no session has run; re-frozen before any arm",
+  "digest": "baa2ae9091bb4e438a5a49bf29dc6b4639e5520630579f932f394510a722e646"
+}

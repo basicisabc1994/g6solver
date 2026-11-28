@@ -25,6 +25,8 @@ answers what it did (stored, delivered, acknowledged, with ids), a fact of G6's 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import re
 import time
@@ -126,8 +128,11 @@ class Mailbox:
         row = db.execute("SELECT name, members, schema FROM groups WHERE name = ?", (name,)).fetchone()
         if row is None:
             return None
-        return {"name": row["name"], "members": json.loads(row["members"]),
-                "schema": json.loads(row["schema"]) if row["schema"] else None}
+        try:
+            return {"name": row["name"], "members": _decode_json(row["members"]),
+                    "schema": _decode_json(row["schema"]) if row["schema"] else None}
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     def create_group(self, group: str, members: list[str], *, schema: dict[str, FieldType] | None = None
                      ) -> dict[str, Any]:
@@ -225,9 +230,12 @@ class Mailbox:
                            (group, member, row["id"], now))
                 times = db.execute("SELECT times FROM deliveries WHERE group_name = ? AND member = ? AND "
                                    "message_id = ?", (group, member, row["id"])).fetchone()["times"]
-                out.append({"id": row["id"], "sender": row["sender"], "sender_is": "declared, not authenticated",
-                            "to": row["recipient"], "body": json.loads(row["body"]), "sent": row["sent"],
-                            "deliveries": times})
+                try:
+                    out.append({"id": row["id"], "sender": row["sender"], "sender_is": "declared, not authenticated",
+                                "to": row["recipient"], "body": _decode_json(row["body"]), "sent": row["sent"],
+                                "deliveries": times})
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         cursor = out[-1]["id"] if out else after
         return reply(op, "qualified-draft", CODES["DELIVERED"], f"{len(out)} message(s) for {member!r}"
                      f"{', and more after them' if more else ''}; ack up to the last id once each is handled",
@@ -291,9 +299,12 @@ class Mailbox:
                 times = {r["member"]: r["times"] for r in db.execute(
                     "SELECT member, times FROM deliveries WHERE group_name = ? AND message_id = ?",
                     (group, row["id"])).fetchall()}
-                out.append({"id": row["id"], "sender": row["sender"], "to": row["recipient"],
-                            "body": json.loads(row["body"]), "sent": row["sent"], "delivered_to": times,
-                            "acked_by": sorted(m for m, upto in cursors.items() if upto >= row["id"] and m in times)})
+                try:
+                    out.append({"id": row["id"], "sender": row["sender"], "to": row["recipient"],
+                                "body": _decode_json(row["body"]), "sent": row["sent"], "delivered_to": times,
+                                "acked_by": sorted(m for m, upto in cursors.items() if upto >= row["id"] and m in times)})
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return reply(op, "qualified-draft", CODES["HISTORY"], f"{len(out)} message(s) in {group!r}", group=group,
                      members=found["members"], schema=found["schema"], messages=out)
 

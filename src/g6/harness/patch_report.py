@@ -98,17 +98,17 @@ NOT_PASSED = "ran, but a case that failed has not passed"
 #: A file of a reviewer's test with a case the operating system refused: unknown, so the file neither passes nor fails.
 NOT_JUDGED = "ran, but a case could not be judged"
 #: How a run of the review-until-clean loop ended, in the reply and at the head of the report, and what each label says.
-ENDINGS = {"clean": "a review of this patch reproduced nothing, and no reviewer's test failed on it",
-           "fixed": "each reviewer's test that failed now passes, and a fresh review of this patch reproduced nothing",
-           "contested": "a reviewer's test fails, and the agent left the code as it was",
-           "open": "a reviewer's test that failed has not been shown to pass",
-           "untested": "nothing here tested this patch to a result"}
+ENDINGS = {"clean": "a review of this patch found no case that fails at the parent and still fails on the patch",
+           "fixed": "each case that failed at the parent and on the patch now passes, and a fresh review found no such case",
+           "contested": "a reviewer's case fails at the parent and on the patch, and the agent left the code as it was",
+           "open": "a reviewer's case that failed at the parent and on the patch has not been shown to pass",
+           "untested": "no reviewer loop came to a result on this patch; a model-free review is reported on its own"}
 #: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
 LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
                "it could show.",
-               "- An open finding is a reviewer's test that still fails; on the training bugs that did not always mean a wrong "
-               "patch.",
+               "- An open finding is a reviewer's case that failed at the parent and on the patch. On the training bugs, "
+               "under the earlier rule (a failure on the patch alone), an open finding did not always mean a wrong patch.",
                "- It differs from what was measured: the reviewer here reads a text pack and has no tools, and each step "
                "replays the rounds before it.",
                "- A model wrote these tests, so none of them passes a requirement.")
@@ -274,7 +274,7 @@ def _findings(assessment: dict) -> list[list[str]]:
                f"to {code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}; {base}. "
                f"{EXACT}. The check is code someone other than G6 wrote: {CAUTION}")
         items.append([head, how])
-    return items
+    return [[item[0] + " Not labelled by you.", *item[1:]] if item else [] for item in items]
 
 
 def _missing(assessment: dict) -> list[list[str]]:
@@ -467,7 +467,7 @@ def _execution_limit() -> str:
 
 def render(assessment: dict) -> str:
     """The report of ``assessment`` (the module's order and rules), from its decided fields alone."""
-    lines = [_headline(assessment), "", "## Reproduced findings"]
+    lines = [_headline(assessment), *card_lines(card(assessment, None)), "", "## Reproduced findings"]
     lines += _cut(_findings(assessment), BUDGET["findings"], "assessment.completion.defects_reproduced") or ["- None."]
     lines += ["", "## Not established"]
     lines += _cut(_missing(assessment), BUDGET["missing"], "assessment.completion.not_established") or ["- None."]
@@ -492,7 +492,7 @@ def _loop_lines(loop: dict) -> list[str]:
               f"no counterexample found in {ran} probes; that does not show the patch is right" if ran else
               "no probe ran, so the loop says nothing for or against the patch")
     lines = ["## What the completion loop tested",
-             f"- **Stopped:** {loop.get('reason')}, after {loop.get('repairs')} of at most {loop.get('max_repairs')} "
+             f"- **Stopped:** {code(loop.get('reason'))}, after {loop.get('repairs')} of at most {loop.get('max_repairs')} "
              "repairs.", f"- **Result:** {result}."]
     if ran and loop.get("boundary"):   # the review below ran no test of its own, so its isolation says nothing of these
         lines.append(f"- **Boundary:** the probes ran inside {code(loop['boundary'])}, in scratch copies with no network.")
@@ -510,6 +510,9 @@ def _loop_lines(loop: dict) -> list[str]:
                  f"- The reviewer from another model family did not finish: {code(critic['error'], 200)}"
                  if critic.get("error") else
                  f"- A reviewer from another model family read the patch once: {code(critic.get('verdict'))}.")
+    if critic is not None:
+        lines.append(f"- {PARENT_RULE}")
+    lines += _note_lines(loop.get("reviewer_notes") or {})
     if failing:
         lines += ["", "## Probes that still fail"]
         lines += _cut([[f"- {code(case, 200)}"] for case in failing], BUDGET["findings"], "report.md's folder, state.json")
@@ -520,12 +523,47 @@ def _times(count: int) -> str:
     return {1: "once", 2: "twice"}.get(count, f"{count} times")
 
 
+#: The owner's ruling R4 (2026-11-23), as the report states it (``completion_loop.reviewer_cases``).
+PARENT_RULE = ("Parent rule: a reviewer's case is a finding only when it fails at the parent and still fails on the "
+               "patch. A case that fails only on the patch, or whose parent run gave no usable result, is a note, never "
+               "sent back as a defect.")
+
+
+def legacy_review_notes(reviews: list[dict]) -> dict:
+    """A failure a session saved before the parent rule, with no parent observation beside it: a note, never a finding."""
+    notes = {}
+    for run in reviews:
+        for file, result in (run.get("results") or {}).items():
+            if result == "failed" and not run.get("observations", {}).get(file):
+                cases = run.get("failed", {}).get(file) or [file]
+                notes.setdefault(file, {}).update({case: {"case": case, "reason": "saved failure lacks parent observations"}
+                                                   for case in cases})
+    return {file: list(cases.values()) for file, cases in notes.items()}
+
+
+def _note_lines(notes: dict) -> list[str]:
+    """Each reviewer case the parent rule keeps as a note: the case, its reviewer's test file, and why."""
+    return [f"- **Note:** {code(note.get('case') or file, 200)} ({code(file)}): {code(note.get('reason', ''), 300)}."
+            for file, cases in notes.items() for note in cases]
+
+
+def admitted_cases(run: dict, file: str) -> set[str]:
+    """The parent rule (``completion_loop.reviewer_cases``) read again on a run's saved observations of ``file``: a run
+    saved with no parent observation admits nothing."""
+    from g6.harness.completion_loop import ProbeRun, reviewer_cases
+
+    observed = run.get("observations", {}).get(file) or {}
+    if not observed.get("patch") or not observed.get("parent"):
+        return set()
+    return reviewer_cases(ProbeRun(**observed["patch"]), ProbeRun(**observed["parent"]))[0]
+
+
 def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The reviews whose test failed on the patch in any run, as a repair can break a test that passed when it was written:
-    fixed (it passed on the last run) and open (anything else: a test that did not run again says nothing, so it fixes
-    nothing)."""
+    """The reviews with a case the parent rule admits (``admitted_cases``) in any run, as a repair can break a test that
+    passed when it was written: fixed (it passed on the last run) and open (anything else: a test that did not run again
+    says nothing, so it fixes nothing)."""
     last = reviews[-1]["results"] if reviews else {}
-    found = [one for one in reviews if any(run["results"].get(one["file"]) == "failed" for run in reviews)]
+    found = [one for one in reviews if any(admitted_cases(run, one["file"]) for run in reviews)]
     return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
 
 
@@ -537,32 +575,38 @@ def _latest(reviews: list[dict], file: str) -> str | None:
 
 def _review_lines(loop: dict) -> list[str]:
     """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
-    A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
-    open finding is no ruling on the patch: nothing here says it is right or wrong."""
+    A finding is a reviewer's case that failed at the parent and on the patch (``PARENT_RULE``); any other failing case is
+    a note. A finding stays open at the cap, or when the agent rejects it, and an open finding is no ruling on the patch:
+    nothing here says it is right or wrong."""
     reviews = loop.get("reviews") or []
     fixed, still = findings(reviews)
     last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
+    notes = {**legacy_review_notes(reviews), **(reviews[-1].get("notes") or {} if reviews else {})}
     lines = ["## What the reviews found"]
     if loop.get("ending"):
         lines.append(f"- **Ending:** {code(loop['ending'])}: {ENDINGS[loop['ending']]}.")
-    lines.append(f"- **Found:** {count} reproduced, each a reviewer's test that failed on the patch." if count else
-                 "- **Found:** no reviewer's test failed on the patch.")
+    lines.append(f"- **Found:** {count} reproduced, each a reviewer's case that failed at the parent and on the patch."
+                 if count else "- **Found:** no reviewer's case failed at the parent and on the patch."
+                 if any(cases for cases in notes.values()) else "- **Found:** no reviewer's test failed on the patch.")
     lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
                   BUDGET["findings"], "report.md's folder, state.json")
     lines += _cut([[f"- **Open:** review {one['n']}: {code(one['rule'], 200)}; its test {code(one['file'])} "
                     + {"failed": "fails.", NOT_PASSED: "ran, but the case that failed did not pass, so nothing shows it is "
                                                        "fixed.",
                        NOT_JUDGED: "ran, but a case could not be judged, so nothing shows it is fixed."}.get(
-                           last.get(one["file"]), "did not run again, so nothing shows it is fixed."),
+                           last.get(one["file"]), "did not run again, so nothing shows it is fixed.") + " Not labelled by you.",
                     f"  - The reviewer's reasons: {code(one['why'], 300)}"] for one in still],
                   BUDGET["findings"], "report.md's folder, state.json")
+    lines += _note_lines(notes)
     if loop.get("left"):
         lines.append(f"- **The agent left the code as it was.** Its reason: {code(loop['left'], 300)}.")
     if loop.get("no_clean"):
         error = reviews[-1].get("error") if reviews else ""
-        lines.append(f"- **No clean review:** {loop.get('reason')}" + (f": {code(error, 200)}." if error else "."))
-    lines += ["", "## How the loop ran",
-              f"- **Stopped:** {loop.get('reason')}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
+        # This fixed reason is G6's own wording; unknown reasons remain inert.
+        reason = "a review failed" if loop.get("reason") == "a review failed" else code(loop.get("reason"))
+        lines.append(f"- **No clean review:** {reason}" + (f": {code(error, 200)}." if error else "."))
+    lines += ["", "## How the loop ran", f"- {PARENT_RULE}",
+              f"- **Stopped:** {code(loop.get('reason'))}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
               f"{loop.get('repairs')} of at most {loop.get('max_repairs')} repairs."]
     if reviews:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
@@ -575,9 +619,11 @@ def _review_lines(loop: dict) -> list[str]:
             said = _latest(reviews, one["file"])
             why = (f"a case of its test could not be judged: {code(one.get('unrun', ''), 200)}" if said == NOT_JUDGED else
                    f"its test would not run: {code(one['unrun'], 200)}" if said == "did not run" and one.get("unrun") else
+                   "its failing cases are notes under the parent rule" if said == "notes only" else
                    "its test passes on the patch" if said == "passed" else
                    "it wrote no test" if said is None else "its test showed nothing")
-            lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
+            shown = "established no finding" if said == "notes only" else "showed no failure"
+            lines.append(f"- Review {one['n']} named a defect but {shown}: {code(one['rule'], 200)}; {why}.")
     masked = sum(one.get("masked", 0) for one in reviews)
     if masked:
         lines.append(f"- **Masked:** G6 put {code('[REDACTED]')} in place of {masked} value{'s' if masked != 1 else ''} that "
@@ -591,7 +637,204 @@ def _review_lines(loop: dict) -> list[str]:
 def completion_report(loop: dict, review: str) -> str:
     """The completion loop's report: what it tested and what still fails, above the ``review`` of the patch it stopped
     on, which says what is not established."""
-    return "\n".join([*(_loop_lines(loop) if loop.get("reviews") is None else _review_lines(loop)), "", review])
+    assessment = loop.get("assessment") or getattr(review, "assessment", {})
+    body = str(review).splitlines()
+    if len(body) >= 6 and body[1].startswith("- **Checked:**"):
+        del body[1:6]  # one card; retain the review's own headline in its original section
+    lines = _loop_lines(loop) if loop.get("reviews") is None else _review_lines(loop)
+    return "\n".join([lines[0], *card_lines(card(assessment, loop)), *lines[1:], "", *body])
+
+
+def with_card(report: str, value: dict) -> str:
+    """Add or refresh only the card, preserving every byte of the producer's report body."""
+    headline, separator, body = report.partition("\n")
+    labels = ("Checked", "Caught", "Repaired", "Not checked", "Needs you")
+    lines = body.split("\n")
+    if len(lines) >= 5 and all(lines[i].startswith(f"- **{label}:**") for i, label in enumerate(labels)):
+        body = "\n".join(lines[5:])
+    elif lines and lines[0].startswith("- **Checked:**"):
+        body = "\n".join(lines[1:])
+    return headline + "\n" + "\n".join(card_lines(value)) + (separator + body if separator else "")
+
+
+def model_relation(agent: str, reviewer: str) -> str:
+    """A family is known only for a named member of these model families."""
+    def family(model):
+        name = str(model).lower()
+        if re.search(r"(?:^|[/:_-])(?:claude|opus|sonnet|haiku)(?:$|[\d._:-])", name):
+            return "anthropic"
+        if re.search(r"(?:^|[/:_-])(?:codex|gpt|o[134])(?:$|[\d._:-])", name):
+            return "openai"
+        return ""
+    left, right = family(agent), family(reviewer)
+    return "another model family" if left and right and left != right else "a second model"
+
+
+def card(assessment: dict, loop: dict | None = None) -> dict:
+    """Five-line summary from the cited observations; pure, additive, and never a gate.
+
+    With no recorded observations, numerical observations are unknown. The
+    existing report below still carries every decided field and its limits.
+    """
+    from g6.harness.workflow import evidence
+
+    loop = loop or {}
+    unchecked_reason = assessment.get("unchecked_reason") or loop.get("unchecked_reason") or ""
+    held = loop.get("workflow_evidence") or assessment.get("workflow_evidence") or {}
+    events = evidence.matched(held)
+    kind = "loop_ended" if loop and any(e["kind"] == "loop_ended" for e in events) else "review_finished"
+    observed = [e for e in events if e["kind"] == kind] if not unchecked_reason else []
+    selected = [e for e in observed if e["run"] == held["selected_run"]] if "selected_run" in held else observed
+    if "selected_run" not in held and len({e["run"] for e in observed}) > 1:
+        selected = []  # no call identity: task run ordering cannot select a review
+    one = selected[-1] if selected else {}
+    if not one:
+        events = []
+    elif kind == "loop_ended":
+        targets = {e["event_id"] for e in events if e["run"] == one["run"]}
+        events = [e for e in events if e["run"] == one["run"] or e["kind"] == "annotation"
+                  and (e.get("data") or {}).get("target") in targets]
+    else:
+        selected_events = [e for e in events if e["run"] == one["run"]
+                           or e["kind"] == "review_finished" and e["at"] < one["at"]]
+        targets = {e["event_id"] for e in selected_events}
+        events = [e for e in events if e in selected_events or e["kind"] == "annotation"
+                  and (e.get("data") or {}).get("target") in targets]
+    observed = [e for e in events if e["kind"] == kind]
+    data = one.get("data") or {}
+    known = bool(one)
+    if known:
+        from g6.harness.workflow.record import Event
+
+        rows = [Event.from_body(e) for e in events if kind == "loop_ended" or e["kind"] == "review_finished"]
+        checks = evidence.check_state(rows)
+        check_counts = evidence.check_counts(rows)
+        if not evidence.checked(rows if kind == "loop_ended" else [Event.from_body(one)]):
+            unchecked_reason = data.get("unchecked_reason") or data.get("code") or "No test ran and no reviewer returned."
+    status = held.get("status", "unavailable")
+    runs, by = [], []
+    isolation = data.get("isolation") or "not recorded"
+    if known and kind == "loop_ended" and not unchecked_reason:
+        model = data.get("reviewer") or "not recorded"
+        by = ["reviewer:" + model] if data.get("reviews") else ["proposer:not recorded"]
+        runs = [{"what": "reviews" if data.get("reviews") else "model probes",
+                 "count": sum(e.data.get("checked", 0) for e in rows if e.kind == "loop_round")
+                 if data.get("reviews") else data.get("probes", 0), "by": by[0], "isolation": isolation}]
+    elif known and kind == "review_finished":
+        for key, what in (("stated_checks", "stated checks"), ("repository_checks", "tests that touch the changed code"),
+                          ("deeper_checks", "deeper checks")):
+            if data.get(key):
+                runs.append({"what": what, "count": data[key], "by": "repository_tests", "isolation": isolation})
+        if runs:
+            by.append("repository_tests")
+        if data.get("proposer"):
+            by.append("proposer:" + data["proposer"])
+        if data.get("person_checks"):
+            by.append("person")
+    scope = assessment.get("scope") or {}
+    raw_base = scope.get("base_commit") or loop.get("base") or ""
+    base = raw_base if raw_base and evidence.sha256(raw_base) == one.get("baseline_sha256") else ""
+    reproduced = data.get("reproduced") if known else None
+    repaired = None
+    if known:
+        if kind == "loop_ended" and data.get("reviews") or kind == "review_finished" and len(observed) > 1:
+            repaired = check_counts["repaired"]
+    open_count = data.get("open", reproduced) if known else None
+    if known and kind == "loop_ended" and data.get("reviews"):
+        reproduced, open_count = check_counts["reproduced"], check_counts["open"]
+    if known and kind == "review_finished":
+        reproduced = evidence.check_counts([Event.from_body(one)])["reproduced"]
+        open_count = check_counts["open"]
+    if known and any((e.get("data") or {}).get("source_incomplete_sha256") for e in events):
+        # A captured source gap cannot establish repair totals, even when this
+        # particular job is selected. Retention caps keep their lower bounds.
+        repaired = open_count = None
+    labels = evidence.finding_labels([evidence.Event.from_body(e) for e in events],
+        [e["event_id"] for e in events if e["kind"] in ("review_finished", "loop_ended", "loop_round")
+         and ((e.get("data") or {}).get("reproduced") or (e.get("data") or {}).get("failed_sha256"))])
+    labelled = {label["target"] for label in labels}
+    open_findings = [e for e in events if e["kind"] in ("review_finished", "loop_round")
+                     and (any((e["task"], c) in checks["open"] for c in (e.get("data") or {}).get("failed_sha256") or [])
+                          or not (e.get("data") or {}).get("failed_sha256") and (e.get("data") or {}).get("reproduced"))]
+    unlabelled = bool(open_count) and (not open_findings or any(e["event_id"] not in labelled for e in open_findings))
+    if kind == "loop_ended" and one.get("event_id") in labelled:
+        unlabelled = False
+    reason = unchecked_reason
+    if not known and not reason:
+        reason = {"off": "off: No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on.",
+                  "withheld": "withheld: The local record is not shared with this provider; no event counts are claimed.",
+                  "write_failed": "write_failed: The record write failed; no event counts are claimed.",
+                  "kept": "unavailable: No recorded events for this call.",
+                  "unavailable": "unavailable: No recorded events are available to this card; no event counts are claimed."}.get(
+                      status, "unavailable: No recorded events for this call.")
+    return {"checked": {"runs": runs, "by": by, "artifact": one.get("artifact_sha256", ""), "base": base,
+                        "record_status": status,
+                        "unchecked": bool(unchecked_reason),
+                        "reason": reason, "model_relation": model_relation(data.get("agent", ""), data.get("reviewer", "")),
+                        "model_calls": data.get("model_calls") if known else None},
+            "caught": {"reproduced": reproduced, "integrity": data.get("integrity_reasons") if known else None,
+                       "unconfirmed": data.get("unconfirmed") if known else None},
+            "repaired": repaired, "open": open_count, "labels": labels, "unlabelled_open": unlabelled,
+            "identities_incomplete": bool(known and check_counts["identities_incomplete"]),
+            "left_by_agent": data.get("left_by_agent", 0) if known else None,
+            "agent_reason": loop.get("left", "") if known and data.get("left_by_agent") else "",
+            "not_checked": {"not_established": data.get("not_established") if known else None,
+                            "skipped": data.get("checks_skipped") if known else None,
+                            "standing": list(assessment.get("not_checked") or [])},
+            "needs_you": {"merge": True, "questions": data.get("questions") if known else None,
+                          "unknowns": data.get("unknowns") if known else None, "open_findings": open_count},
+            "ending": data.get("ending") or ("open" if reproduced else "clean" if known and runs else "untested"),
+            "justification": [{"event_id": e["event_id"], "kind": e["kind"], "sha256": evidence.digest(e)} for e in events]}
+
+
+def card_lines(value: dict) -> list[str]:
+    """Render one card identically on every report route, with repository text inert."""
+    checked = value["checked"]
+    if checked.get("unchecked"):
+        return ["- **Checked:** nothing this turn. " + checked["reason"]
+                + (" Check identities are incomplete; omitted findings remain unresolved."
+                   if value.get("identities_incomplete") else "")]
+    if checked.get("reason"):
+        status = checked.get("record_status")
+        note = ("No record is kept. G6_WORKFLOW_RECORD=on where the server is registered turns it on." if status == "off" else
+                "The record write failed; no event counts are claimed." if status == "write_failed" else
+                "Record events: " + ", ".join(code(r["event_id"]) for r in value["justification"]) + "."
+                if value["justification"] else "No recorded events for this call.")
+        return ["- **Checked:** " + ("nothing this turn. " if checked.get("unchecked") else "not recorded. ") + checked["reason"],
+                "- **Caught:** not recorded.", "- **Repaired:** not observed. Open: not recorded. Left by the agent: not recorded.",
+                "- **Not checked:** no event counts available; the standing list below.",
+                "- **Needs you:** merging. " + note]
+    runs = checked["runs"]
+    named = "; ".join(f"{r['count']} {r['what']} by {code(r['by'])} inside {code(r['isolation'])}" for r in runs)
+    model = (" (" + checked["model_relation"] + "; it did not see the agent's reasoning)"
+             if any(r["by"].startswith("reviewer:") for r in runs) else
+             " No model was asked." if checked.get("model_calls") == 0 else " Model calls: not recorded.")
+    caught, missing, needs = value["caught"], value["not_checked"], value["needs_you"]
+    def count(number):
+        return "not recorded" if number is None else str(number)
+    if value["repaired"] is None:
+        repaired = ("not observed: no same-case pass receipts are recorded" if any(
+            r["what"] == "model probes" or r["what"] == "reviews" and r["count"] > 1 for r in runs) else
+            "not observed: this is one review, and G6 saw no earlier one of this task")
+    else:
+        repaired = str(value["repaired"]) + " (same-case passes on later patches observed)"
+    cited = ", ".join(code(r["event_id"]) for r in value["justification"])   # display text, not an id
+    return [f"- **Checked:** {named or 'no test run recorded'}, on patch {code(checked['artifact'][:12])} against base "
+            f"{code(checked['base'][:12])}.{model}",
+            f"- **Caught:** {count(caught['reproduced'])} reproduced findings (tests failed on the patch); "
+            f"{count(caught['integrity'])} signs of weakened tests; {count(caught['unconfirmed'])} unconfirmed.",
+            f"- **Repaired:** {repaired}. Open: {count(value['open'])}. Left by the agent: {count(value['left_by_agent'])}."
+            + (" Check identities are incomplete; open counts are lower bounds and omitted findings remain unresolved."
+               if value.get("identities_incomplete") else "")
+            + (f" Its reason: {code(value['agent_reason'])}." if value['agent_reason'] else "")
+            + ((" " + " ".join(f"Person label by {code(label['by'])}: {code(label['note'])} "
+                                 f"(event {code(label['event_id'])})." for label in value.get("labels") or []))
+               if value.get("labels") else "")
+            + (" Not labelled by you." if value.get("unlabelled_open", bool(value['open'])) else ""),
+            f"- **Not checked:** {count(missing['not_established'])} requirements not established; "
+            f"{count(missing['skipped'])} runs skipped; the standing list below.",
+            f"- **Needs you:** merging; {count(needs['questions'])} questions; {count(needs['unknowns'])} unknowns. "
+            f"Record events: {cited}."]
 
 
 def safe_render(assessment: dict) -> str:
@@ -603,5 +846,5 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["ENDINGS", "MAX_LINES", "NOT_JUDGED", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render",
-           "safe_render"]
+__all__ = ["ENDINGS", "MAX_LINES", "NOT_JUDGED", "NOT_PASSED", "STANDING_NOTE", "card", "card_lines", "code", "completion_report", "findings", "render",
+           "safe_render", "with_card"]

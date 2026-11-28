@@ -75,13 +75,28 @@ def differences(before, after):
     return {key: (before[key], after[key]) for key in before if before[key] != after[key]}
 
 
-def intended_reading(before, case):
+def card_fields(raw):
+    """The end-of-task card's additive record fields (f7639fc9, `patch_review._record`), pinned from the producer's
+    own validated reader: each phased check whose body passed or failed, with that result, and their count. Present
+    only when the report has phases (no sources are captured on this path)."""
+    report = rt.read_report(raw)
+    if not report.phases:
+        return {}
+    outcomes = {node: report.body_result(node) for node in report.phases
+                if report.body_result(node) in ("passed", "failed")}
+    return {"executed_outcomes": outcomes, "executed_tests": len(outcomes)}
+
+
+def intended_reading(before, case, raw):
     """Exhaustive exceptions: only missing/incomplete evidence becomes unknown.
 
     Persisted verdicts/outcomes, counters, annotations and loading decisions are
-    never excluded. Each exception below has a named producer case.
+    never excluded. Each exception below has a named producer case, except the one that holds in every case.
     """
     expected = deepcopy(before)
+    # Every case: the card's record fields are additive (f7639fc9, owner ruling 2026-11-26: the card ships in 0.3.0).
+    # The released record's fields are all kept; the new ones are pinned to their exact values, never ignored.
+    expected["record"] = {**before["record"], **card_fields(raw)}
     if case in {"could_not_start", "pytest_not_found", "timed_out", "crashed", "inconsistent_report"}:
         # No progress exists: the attempt cannot establish candidate absence.
         for field in ("observed", "derived_observations"):
@@ -142,7 +157,7 @@ def assert_parity(raw, *, case="complete"):
         # the harness: values and absence have identical released meanings.
         assert rt.read_report(raw).wire() == raw
     before = reading(old_review, old_search, old_completion, raw)
-    expected = intended_reading(before, case)
+    expected = intended_reading(before, case, raw)
     for label, projected in (("direct", raw), ("projected", patch_review._confined(raw))):
         after = reading(patch_review, verification_search, completion_loop, projected)
         delta = differences(expected, after)
@@ -420,4 +435,12 @@ def test_replay_persisted_fields_keep_the_exact_failure_disposition(process, mon
         return dict(runs=runs, unknowns=unknowns, reasons=reasons, observed=observed)
 
     before, after = replay_reading(old_review), replay_reading(patch_review)
+    # The card's additive run fields (f7639fc9), each pinned to its exact value before the released fields compare.
+    expected = card_fields(raw)
+    for run in after["runs"]:
+        assert {key: run.pop(key) for key in ("executed_outcomes", "executed_tests") if key in run} == expected, mode
+        sources = run.pop("check_sources", None)
+        assert sources is None or set(run["tests"]) <= set(sources), (mode, sources)
+    if mode != "setup_lookup":            # every replayed body failed; a setup failure runs no body
+        assert expected["executed_outcomes"] == dict.fromkeys(expected["executed_outcomes"], "failed") != {}, mode
     assert before == after, (mode, before["reasons"], after["reasons"])

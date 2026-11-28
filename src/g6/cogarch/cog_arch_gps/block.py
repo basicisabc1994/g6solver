@@ -12,6 +12,8 @@ the operators declared, not against the world they describe.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -23,7 +25,7 @@ from g6.cogarch import _reply
 from g6.cogarch.cog_arch_gps import engine
 from g6.core.ai_block import AIBlock
 from g6.core.contract_decorator import block_contract
-from g6.core.llm import CONFIGURE_MODEL, LLMError, extract_json
+from g6.core.llm import LLMError, extract_json
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
 from g6.core.storage import state_path
@@ -62,8 +64,7 @@ _ACTIONS: dict[str, str] = {
              "domain, such as a PDDL planner.",
     CAP: "Raise the cap named, within its ceiling, or give a smaller problem.",
     INPUT: "Correct the request as the reason says.",
-    NO_MODEL: f"To give G6 a model, {CONFIGURE_MODEL}. Or give the block a model caller from Python "
-              "(CogArchGpsBlock(caller=...)), or write the problem yourself and call solve.",
+    NO_MODEL: "Tell the person G6 has no model configured. Setting it up is the person's decision.",
     MODEL_FAILED: "The model call failed, so nothing was encoded. Try again, or with another caller.",
     MALFORMED: "The model did not write a problem in the form asked: nothing was offered. Try again, or write the "
                "problem yourself.",
@@ -197,12 +198,14 @@ def _load_set(name: str) -> list[OperatorSpec]:
     if not path.is_file():
         raise _Refusal(NO_SET, f"no operator set named {name!r} is kept")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _decode_json(path.read_text(encoding="utf-8"))
         ops = [OperatorSpec.model_validate(o) for o in data["operators"]]
         if _digest(_plain(ops)) != data["sha256"]:
             raise ValueError("its operators no longer match the digest kept with them")
         return _unique(ops)
-    except (OSError, KeyError, TypeError, ValueError, ValidationError) as exc:
+    except (OSError, KeyError, TypeError, ValueError, ValidationError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise _Refusal(STORE, f"the kept set {name!r} could not be used: {str(exc)[:200]}") from exc
 
 
@@ -227,8 +230,8 @@ def keep_operators(d: CogArchGpsInput) -> dict[str, Any]:
     digest, path = _digest(ops), _set_path(d.name)
     if path.is_file():
         try:
-            same = json.loads(path.read_text(encoding="utf-8")).get("sha256") == digest
-        except (OSError, ValueError, AttributeError):
+            same = _decode_json(path.read_text(encoding="utf-8")).get("sha256") == digest
+        except (OSError, ValueError, AttributeError, RecursionError, MemoryError):
             same = False
         if not same:
             return _refuse("keep_operators", SET_EXISTS, f"a different operator set is already kept as {d.name!r}", d)

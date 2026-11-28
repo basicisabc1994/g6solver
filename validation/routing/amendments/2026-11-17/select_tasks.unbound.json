@@ -1,0 +1,280 @@
+{
+  "date": "2026-11-17",
+  "before_any_arm": true,
+  "binding_status": "unbound",
+  "routes": {
+    "select": null
+  },
+  "research_index": "../../moment_sources.md",
+  "rebind": "After using-g6 split and phase C merge on the integration line, bind all route digests once. Extract each task for its cohort and listed clients; retain provenance in this amendment. This draft cannot run: the digest is null. No bar changes.",
+  "cue_scan": "Prompts and fixture files contain no G6, route, review, outside-opinion or measurement cue. Sources are the supplied audit index; no new research access was attempted.",
+  "cases": [
+    {
+      "clients": [
+        "claude_code"
+      ],
+      "source_ids": [
+        "S5",
+        "S7"
+      ],
+      "rationale": "A repository-specific failure leaves the next step uncertain; the selector must receive the task and its phase. The prompt names the failure without naming the route or an outside opinion.",
+      "task": {
+        "id": "development.select.positive.claude_code",
+        "route": "select",
+        "polarity": "positive",
+        "cohort": "development",
+        "fixture": "fees",
+        "prompt": "The late-fee tests still fail after two changes. The cap in the docstring disagrees with one expectation. Before changing anything else, work out the next step and explain why.",
+        "budget": {
+          "seconds": 600,
+          "calls": 20,
+          "questions": 1
+        },
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "calls_in_order"
+        }
+      }
+    },
+    {
+      "clients": [
+        "codex"
+      ],
+      "source_ids": [
+        "S8",
+        "S10"
+      ],
+      "rationale": "A repository-specific failure leaves the next step uncertain; the selector must receive the task and its phase. The prompt names the failure without naming the route or an outside opinion.",
+      "task": {
+        "id": "development.select.positive.codex",
+        "route": "select",
+        "polarity": "positive",
+        "cohort": "development",
+        "fixture": "stock",
+        "prompt": "Two attempts at fixing reservation have failed: upper-casing the SKU still raised KeyError, and changing reserve alone left available wrong. Work out the next step before another edit.",
+        "budget": {
+          "seconds": 600,
+          "calls": 20,
+          "questions": 1
+        },
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "calls_in_order"
+        }
+      }
+    },
+    {
+      "clients": [
+        "claude_code"
+      ],
+      "source_ids": [
+        "S8",
+        "S9"
+      ],
+      "rationale": "A repository-specific failure leaves the next step uncertain; the selector must receive the task and its phase. The prompt names the failure without naming the route or an outside opinion.",
+      "task": {
+        "id": "final.select.positive.claude_code",
+        "route": "select",
+        "polarity": "positive",
+        "cohort": "final",
+        "fixture": "ledger_report",
+        "prompt": "Changing the arithmetic has not stopped balances going stale after entries change. Two attempts have failed. Work out what to do next before another change.",
+        "budget": {
+          "seconds": 600,
+          "calls": 20,
+          "questions": 1
+        },
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "stuck"
+            },
+            "args_present": [
+              "task"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "calls_in_order"
+        }
+      }
+    },
+    {
+      "clients": [
+        "codex"
+      ],
+      "source_ids": [
+        "S1",
+        "S3"
+      ],
+      "rationale": "A repository-specific failure leaves the next step uncertain; the selector must receive the task and its phase. The prompt names the failure without naming the route or an outside opinion.",
+      "task": {
+        "id": "final.select.positive.codex",
+        "route": "select",
+        "polarity": "positive",
+        "cohort": "final",
+        "fixture": "invoices",
+        "prompt": "Making printed amounts easier to read also changed the nightly export. I need a plan for the next step that accounts for both uses before any further edit.",
+        "budget": {
+          "seconds": 600,
+          "calls": 20,
+          "questions": 1
+        },
+        "expected_calls": [
+          {
+            "tool": "g6_select",
+            "args_include": {
+              "phase": "plan"
+            },
+            "args_present": [
+              "task"
+            ]
+          }
+        ],
+        "completion": {
+          "kind": "calls_in_order"
+        }
+      }
+    },
+    {
+      "clients": [
+        "claude_code"
+      ],
+      "source_ids": [
+        "S4"
+      ],
+      "rationale": "A quiet boundary control against cues and excess assistance: a determinate prose edit or code reading has no uncertain next step. S4 motivates avoiding answer and route leakage, not an empirical claim about this trivial task.",
+      "task": {
+        "id": "development.select.negative.claude_code",
+        "route": "select",
+        "polarity": "negative",
+        "cohort": "development",
+        "fixture": "notes_m",
+        "prompt": "Correct recieve to receive in README.md. Tell me the word you changed; nothing else needs doing.",
+        "budget": {
+          "seconds": 300,
+          "calls": 12,
+          "questions": 0
+        },
+        "forbidden": "any"
+      }
+    },
+    {
+      "clients": [
+        "codex"
+      ],
+      "source_ids": [
+        "S4"
+      ],
+      "rationale": "A quiet boundary control against cues and excess assistance: a determinate prose edit or code reading has no uncertain next step. S4 motivates avoiding answer and route leakage, not an empirical claim about this trivial task.",
+      "task": {
+        "id": "development.select.negative.codex",
+        "route": "select",
+        "polarity": "negative",
+        "cohort": "development",
+        "fixture": "rules_m",
+        "prompt": "Add a line at the end of README.md saying the policy was last updated in April 2026. Nothing else.",
+        "budget": {
+          "seconds": 300,
+          "calls": 12,
+          "questions": 0
+        },
+        "forbidden": "any"
+      }
+    },
+    {
+      "clients": [
+        "claude_code"
+      ],
+      "source_ids": [
+        "S4"
+      ],
+      "rationale": "A quiet boundary control against cues and excess assistance: a determinate prose edit or code reading has no uncertain next step. S4 motivates avoiding answer and route leakage, not an empirical claim about this trivial task.",
+      "task": {
+        "id": "final.select.negative.claude_code",
+        "route": "select",
+        "polarity": "negative",
+        "cohort": "final",
+        "fixture": "shop_m",
+        "prompt": "What does shop.prices.total return for no order lines? Answer in one sentence and leave every file alone.",
+        "budget": {
+          "seconds": 300,
+          "calls": 12,
+          "questions": 0
+        },
+        "forbidden": "any"
+      }
+    },
+    {
+      "clients": [
+        "codex"
+      ],
+      "source_ids": [
+        "S4"
+      ],
+      "rationale": "A quiet boundary control against cues and excess assistance: a determinate prose edit or code reading has no uncertain next step. S4 motivates avoiding answer and route leakage, not an empirical claim about this trivial task.",
+      "task": {
+        "id": "final.select.negative.codex",
+        "route": "select",
+        "polarity": "negative",
+        "cohort": "final",
+        "fixture": "classify_m",
+        "prompt": "Name the three labels classify() can return. Read the function and answer only; do not change files.",
+        "budget": {
+          "seconds": 300,
+          "calls": 12,
+          "questions": 0
+        },
+        "forbidden": "any"
+      }
+    },
+    {
+      "clients": [
+        "claude_code",
+        "codex"
+      ],
+      "source_ids": [
+        "S11",
+        "S8"
+      ],
+      "rationale": "One shared development missing-tool task: the next-step aid is absent during a repeated local failure. Credit remains the existing absent-tool recovery rule with every scheduled task in its denominator.",
+      "task": {
+        "id": "development.select.missing_tool.1",
+        "route": "select",
+        "polarity": "missing_tool",
+        "cohort": "development",
+        "fixture": "stock",
+        "prompt": "Reservation still fails after two attempted fixes. Work out the next step from the failure and explain it before another edit.",
+        "budget": {
+          "seconds": 600,
+          "calls": 20,
+          "questions": 1
+        },
+        "withhold": [
+          "g6_select"
+        ]
+      }
+    }
+  ]
+}

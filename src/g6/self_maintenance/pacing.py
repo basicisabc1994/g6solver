@@ -19,7 +19,8 @@ its week ends: from then the meter is on the provider's own week, and the file i
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -88,8 +89,10 @@ def read_settings(root: str | Path) -> dict[str, Any]:
     """The settings file in the loop's folder. A ``ValueError`` says what is wrong with it."""
     path = Path(root) / SETTINGS_FILE
     try:
-        found = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+        found = _decode_json(path.read_text(encoding="utf-8"))
+    except (OSError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         raise ValueError(f"{SETTINGS_FILE} cannot be read in {root} ({type(exc).__name__})") from None
     except ValueError as exc:
         raise ValueError(f"{SETTINGS_FILE} is not JSON: {exc}") from None

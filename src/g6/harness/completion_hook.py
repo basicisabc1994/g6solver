@@ -8,14 +8,21 @@ so a commit the agent makes later cannot move it. With ``G6_LOOP_SCOUTS=before_f
 prompt also runs the scouts (``completion_loop.prepare``) and gives the agent what they found as ``additionalContext``.
 Nothing heavy is imported until a hook has work to do. A prompt after a loop has ended arms a new one (``_again``), so one
 ended loop does not leave the rest of a session unreviewed. Its base is HEAD at that prompt, and it has a folder of its own
-(``current``). A session's prompts take turns (``_one_prompt``).
+(``current``). A session's prompts take turns (``_one_prompt``). When a task starts (a session's first prompt, or one that
+arms a new loop) the agent is also told, after anything the scouts found, which G6 calls may fit the task and when to call
+G6 (``_hint``): at most 60 words, never the prompt's own, off where the person's key file says ``G6_HINTS=off``.
 
-``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
+``stop`` checks each Python change by default with a model-free patch review, after the boundary check. The reviewer
+loop is an opt-in extra. With no reviewer approved the report goes only to the person: no repair feedback or blocked turn.
+``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;
 when the stop rule fires the turn ends and ``systemMessage`` shows the report. What the agent said as it stopped goes with
 each call, from the hook's ``last_assistant_message`` where Claude Code gives one and else from the transcript, as it is the
-agent's reason if it left the code as it was. Where a loop did not run, ``systemMessage`` says what did not run and why, in
-one line: a turn never ends with the work silently untested.
+agent's reason if it left the code as it was. Where the reviewer loop did not run, ``systemMessage`` shows the model-free
+review and how to opt in, or the guard that prevented any check: a turn never ends with the work silently untested.
+
+``tool``: on ``PostToolUse`` after a G6 tool, one line of ``additionalContext`` when the reply's ``repair`` block is the
+agent's to make (``g6.mcp.repair``), once per code in a session; off with ``G6_HINTS=off``.
 
 The hooks are a convenience, not a security boundary. A failure never holds the person's turn or the agent's: it ends with
 one line on standard error, and only exit 2 would block, which these never give. A session's folder is named by a digest,
@@ -24,9 +31,12 @@ session reads.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -43,6 +53,8 @@ NO_REPOSITORY = ("G6's completion loop did not run: this folder is not a git rep
 PROMPT_WAIT = 30.0
 #: A file in a run's folder: a turn ended there with no loop run, which nothing in its state can say (``on_stop``).
 TURN_ENDED = ".turn_ended"
+#: The line in the person's key file that turns off the hint a task starts with: ``G6_HINTS=off``.
+HINTS_LINE = "G6_HINTS"
 
 
 def folder(session_id: str) -> Path:
@@ -71,8 +83,11 @@ def _one_prompt(session: Path) -> Any:
 def _here(cwd: str) -> tuple[Path, str] | None:
     """The repository at ``cwd`` and its HEAD; None outside a repository with a commit, where there is nothing to test the
     work against."""
+    from g6.core.storage import _elsewhere
     from g6.workforce import repo_tests
 
+    if _elsewhere(str(cwd)):   # a network or device folder is never asked about (``repo_tests.checked_repo``)
+        return None
     try:
         top = repo_tests._git(Path(cwd), "rev-parse", "--show-toplevel").decode("utf-8", "replace").strip()
         repo = repo_tests.checked_repo(top)
@@ -96,16 +111,16 @@ def _task(session: Path) -> dict:
     """Read the task binding from exactly the bytes its producer completed."""
     try:
         expected = (session / 'task.sha256').read_text(encoding='ascii')
-        asked = json.loads(cloud.read_retained(session / 'task.json', expected))
+        asked = _decode_json(cloud.read_retained(session / 'task.json', expected))
         if not isinstance(asked, dict) or not {'repo', 'task', 'base'} <= asked.keys():
             raise ValueError('malformed retained task')
         return asked
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, RecursionError, MemoryError):
         cloud.record_sources((cloud.UNKNOWN,))
         raise ValueError(f'{cloud.REQUIRED}: {cloud.WITHHELD}') from None
 
 
-def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
+def _again(event: dict, asked: dict, ended: dict, task: str) -> bool:
     """A new loop after one that ended, or after a turn that ran none on a commit that has since moved: a commit nobody is on
     is no base. Its base is HEAD now, and its task this prompt, with the earlier task if that base is the same, as the patch
     still holds that work. On that same base its state names the patch the last review read, so a
@@ -113,7 +128,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     patch. Nor does it after a loop that ended with a stable code: that came to no result, so the next stop may try again. The
     scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. A row the ended loop still
     owes is tried first, and if the log keeps it out it stays owed: the new loop's calls reach it by its mark, as they no
-    longer reach that loop's folder. Outside a repository nothing moves, and the stop says so."""
+    longer reach that loop's folder. Outside a repository nothing moves, and the stop says so. Whether it armed one."""
     session_id, session = event["session_id"], folder(event["session_id"])
     if "row_due" in ended:
         from g6.harness import completion_loop as loop
@@ -121,7 +136,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
         loop.settle()
     here = _here(event["cwd"])
     if here is None:
-        return
+        return False
     repo, base, reviews = str(here[0]), here[1], ended.get("reviews") or []
     same, read_last = (repo, base) == (asked["repo"], asked["base"]), reviews[-1]["patch"] if reviews else ended.get("reviewed")
     fresh = {"repo": repo, "task": f"{asked['task']}\n\n{task}" if same else task, "base": base,
@@ -135,6 +150,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
         cloud.Source.text(cloud.input_source(task), 'task', task)))
     loop._save(run, read, sources=refs)
     cloud.write_retained(session / 'task.json', json.dumps(fresh).encode('utf-8'))
+    return True
 
 
 def _moved(event: dict, asked: dict) -> bool:
@@ -153,8 +169,8 @@ def _lines(transcript: object) -> list[dict]:
     found: list[dict] = []
     for line in lines:
         try:
-            item = json.loads(line)
-        except ValueError:
+            item = _decode_json(line)
+        except (ValueError, RecursionError, MemoryError):
             continue
         if isinstance(item, dict):
             found.append(item)
@@ -195,11 +211,34 @@ def _model(event: dict) -> str:
     return next((one for one in named if isinstance(one, str) and one and not one.startswith("<")), "")
 
 
+def _hint(task: str) -> str:
+    """At a task's start, which G6 calls may fit it and when to call G6 (``g6.core.selector.hint``: lexical, no model,
+    never the prompt's words); "" where the person's key file says ``HINTS_LINE=off``, or if it cannot be made, as a
+    hint never holds a prompt (a key file that cannot be read among them: then no hint)."""
+    try:
+        from g6.core import keys
+
+        if (keys.get(HINTS_LINE) or "").strip().lower() == "off":
+            return ""
+        from g6.core import selector
+
+        return selector.hint(task)
+    except Exception:  # noqa: BLE001 - a hint is a convenience; the prompt goes ahead without it
+        return ""
+
+
+def _context(found: str, task: str) -> dict:
+    """What the agent is told as a task starts: what the scouts found, then the hint."""
+    said = "\n\n".join(part for part in (found, _hint(task)) if part)
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": said}} if said else {}
+
+
 def on_prompt(event: dict) -> dict:
     session = folder(event["session_id"])
     task, known = str(event.get("prompt") or "").strip(), session / "task.json"
     if not task:
         return {}
+    armed = False
     with _one_prompt(session):
         if known.exists():
             from g6.harness import completion_loop as loop
@@ -208,17 +247,20 @@ def on_prompt(event: dict) -> dict:
             state = loop._load(run)
             idle = "started" not in state and (run / TURN_ENDED).exists() and _moved(event, asked)
             if state.get("done") or idle:
-                _again(event, asked, state, task)
+                armed = _again(event, asked, state, task)
             elif "started" not in state:
                 cloud.write_retained(known, json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}).encode('utf-8'))
-            return {}
-        asked = _record(session, event["cwd"], task)
+            if not armed:
+                return {}
+        else:
+            asked = _record(session, event["cwd"], task)
+    if armed:
+        return _context("", task)      # a new loop's task starts here; its scouts do not run (``_again``)
     if asked is None:
         return {}
     from g6.harness import completion_loop as loop
 
-    context = loop.prepare(asked["repo"], task, asked["base"], session)
-    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}} if context else {}
+    return _context(loop.prepare(asked["repo"], task, asked["base"], session), task)
 
 
 def on_stop(event: dict) -> dict:
@@ -229,13 +271,20 @@ def on_stop(event: dict) -> dict:
 
     asked = _task(session)
     run = current(event["session_id"], asked)
-    step = loop.advance(asked["repo"], asked["task"], asked["base"], run, said=_said(event), agent=_model(event))
+    from g6.harness.workflow import adapters
+
+    with adapters.hook_observation():
+        step = loop.advance(asked["repo"], asked["task"], asked["base"], run, said=_said(event), agent=_model(event))
     from g6.harness.workflow import policy as workflow_policy
 
-    if workflow_policy.enabled()[0]:    # the workflow record of this step, off unless the person turned it on
-        from g6.harness.workflow import adapters
+    unchecked = step.action == loop.STOP and not step.text
+    if workflow_policy.enabled()[0]:    # the workflow record of this step, only while the record is on
+        if unchecked:
+            from g6.harness.workflow.record import now
 
-        adapters.observe_step(asked["repo"], asked["task"], run, step, base=asked["base"])    # never fails the hook
+            adapters.observe_unchecked(asked["repo"], asked["task"], run, step, at=now(), base=asked["base"])
+        else:
+            adapters.observe_step(asked["repo"], asked["task"], run, step, base=asked["base"])    # never fails the hook
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": step.text}
     if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
@@ -249,7 +298,104 @@ def on_stop(event: dict) -> dict:
     return {"systemMessage": said} if said else {}
 
 
-HOOKS = {"prompt": on_prompt, "stop": on_stop}
+#: Set to ``off`` where Claude Code runs to keep G6's repair line out of the agent's context.
+HINTS = "G6_HINTS"
+_REPAIR_CODE = re.compile(r"G6_E_[A-Z0-9_]+")
+#: Exact MCP identities; hooks.json is checked against tool_matcher().
+G6_SERVER_PREFIXES = ("mcp__g6__", "mcp__plugin_g6_g6__")
+
+
+def tool_matcher() -> str:
+    """Only the two G6 servers and the tool names in G6's shipped corpus."""
+    from g6.skills import corpus
+
+    tools = sorted(e["call"]["tool"] for e in corpus.load()["entries"] if e["kind"] == "tool")
+    # Unlike $, this end assertion cannot match before a trailing newline (Python and JavaScript regexes).
+    return "^(?:" + "|".join(map(re.escape, G6_SERVER_PREFIXES)) + ")(?:" + "|".join(tools) + r")(?![\s\S])"
+
+
+def repair_line(name: str, repair: dict) -> str:
+    """Guidance from G6's declaration and corpus only; no reply words are repeated."""
+    from g6.core import refusals
+    from g6.skills import corpus
+
+    if not re.fullmatch(tool_matcher(), name) or repair.get("by") != "agent":
+        return ""
+    code = repair.get("code")
+    if not isinstance(code, str) or not _REPAIR_CODE.fullmatch(code):
+        return ""
+    data = corpus.load()
+    row = refusals.resolve(code, declared=data["refusals"])
+    if not row.declared or row.kind in ("person", "none"):
+        return ""
+    tool = next(name[len(prefix):] for prefix in G6_SERVER_PREFIXES if name.startswith(prefix))
+    if tool == "g6_cloud_grant":
+        return ""
+    template = row.fix_by[5:] if row.kind == "tool" else tool
+    key = ("op:" if "." in template else "tool:") + template
+    if not any(e["id"] == key for e in data["entries"]):
+        return ""
+    return f"G6 refused ({code}; {row.fix_by}); template {template}: {row.words}"[:300]
+
+
+def _repair(response: object) -> dict | None:
+    """The ``repair`` block of a G6 reply as the hook's ``tool_response`` holds it: the reply itself, its
+    ``structuredContent``, or a text item that is the reply's JSON."""
+    found: list[object] = [response]
+    if isinstance(response, dict):
+        found += [response.get("structuredContent"), response.get("structured_content")]
+        content = response.get("content")
+    else:
+        content = response
+    for item in content if isinstance(content, list) else ():
+        text = item.get("text") if isinstance(item, dict) else None
+        if isinstance(text, str) and text.lstrip().startswith("{"):
+            try:
+                found.append(_decode_json(text))
+            except ValueError:
+                pass
+    if isinstance(response, str) and response.lstrip().startswith("{"):
+        try:
+            found.append(_decode_json(response))
+        except ValueError:
+            pass
+    return next((one["repair"] for one in found if isinstance(one, dict) and isinstance(one.get("repair"), dict)),
+                None)
+
+
+def on_tool(event: dict) -> dict:
+    """``PostToolUse``: when a G6 reply carries a repair the agent makes itself (``repair.by`` is ``agent``), one short
+    line of ``additionalContext`` with its code and step, once per code in a session; nothing for any other reply,
+    another server's tool, or with ``G6_HINTS=off``."""
+    try:
+        name = str(event.get("tool_name") or "")
+        session = event.get("session_id")
+        if name in {prefix + tool for prefix in G6_SERVER_PREFIXES for tool in ("g6_review_patch", "g6_library")}:
+            from g6.distill.surface import record_reproduction
+            record_reproduction(event)
+        if os.environ.get(HINTS, "").strip().lower() == "off" or not isinstance(session, str) or not session \
+                or not re.fullmatch(tool_matcher(), name):
+            return {}
+        repair = _repair(event.get("tool_response"))
+        line = repair_line(name, repair) if repair else ""
+        if not line:
+            return {}
+        code = repair["code"]
+        seen = folder(session) / "repair_hints.json"
+        try:
+            codes = set(_decode_json(seen.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            codes = set()
+        if code in codes:
+            return {}
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(json.dumps(sorted(codes | {code})), encoding="utf-8")
+        return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}}
+    except Exception:  # noqa: BLE001 - optional context must never fail a tool hook, including recursion errors
+        return {}
+
+
+HOOKS = {"prompt": on_prompt, "stop": on_stop, "tool": on_tool}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -257,8 +403,10 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get(CHILD) or not args or args[0] not in HOOKS:
         return 0
     try:
-        said = HOOKS[args[0]](json.loads(sys.stdin.buffer.read().decode("utf-8")))
+        said = HOOKS[args[0]](_decode_json(sys.stdin.buffer.read().decode("utf-8")))
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, the person's turn ends
+        if args[0] == "tool":
+            return 0                 # this optional hint has no completion-loop verdict
         why = " ".join(f"{type(exc).__name__}: {exc}".split())
         print(f"G6's completion loop stopped, so this work is not tested: {why}"[:300], file=sys.stderr)
         return 1

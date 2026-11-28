@@ -50,13 +50,6 @@ if not hasattr(domains, "WordProblems"):
 
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
 
-#: A known limit of 0.3.0 (lead ruling 2026-11-15), failing on purpose and in the safe direction: nothing is sent.
-#: Every case of the marked test fails, so it is marked whole; a strict mark fails the run if it starts to pass.
-CONSENT_LOCK_LIMIT = pytest.mark.xfail(strict=True, reason=(
-    "lead ruling 2026-11-15, 0.3.0 known limit: the bound consent admission holds its lock through the send and _HELD "
-    "is thread-local, so an inner send on its own thread waits; changes only with core/cloud_consent.py at a later "
-    "issuance."))
-
 
 @pytest.fixture(autouse=True)
 def _no_key_file(monkeypatch):
@@ -708,7 +701,6 @@ def test_two_threads_of_nested_calls_take_no_more_than_was_reserved():
     assert all("TICK_BUDGET_SPENT" in outcome for outcome in outcomes if outcome != "answer")
 
 
-@CONSENT_LOCK_LIMIT
 @pytest.mark.usefixtures("consented_provider_fakes")
 def test_a_send_made_inside_a_watched_send_on_a_thread_of_its_own_never_waits_for_it(monkeypatch, host_folders):
     """The identical request, sent from a thread the program's own step started with the call's context, while the send it

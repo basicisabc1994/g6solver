@@ -41,10 +41,12 @@ interpreter the runner uses, bound to what the dialog showed (``person_terms``):
 and checks it again under the folder's lock before it runs or records anything. ``enrol``, ``resume`` and ``demote`` on
 the command line record nothing and say so: there is no terminal fallback and no agent answer.
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
 """
 from __future__ import annotations
+
+from g6.core.decoder_limits import json_value as _decode_json
 
 import argparse
 import contextlib
@@ -859,9 +861,11 @@ def act_main() -> int:
     is not known (``recorded`` is ``None``)."""
     unsafe = _launch_risk()
     try:
-        request = json.loads(sys.stdin.read())
+        request = _decode_json(sys.stdin.read())
         reply = as_recorded(request, _blocked(CACHED_BYTECODE, unsafe[:500])) if unsafe else act(request)
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         reply = _blocked(CANNOT_OPEN, f"the request could not be read: {type(exc).__name__}", recorded=None)
     sys.stdout.write(json.dumps(reply, default=str) + "\n")
     return 1 if reply["completion_state"] == "blocked-escalated" else 0

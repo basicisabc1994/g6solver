@@ -23,6 +23,8 @@ rows that show it, and which the mission's standard left out, with why. It too a
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import functools
 import json
 import os
@@ -100,8 +102,11 @@ def _candidates(missions: MissionStore, mission: dict) -> list[dict]:
         "SELECT episode_id, task_id, task_kind, code, source, detail_json, at FROM episodes"
         " WHERE venture_id=? AND task_id=? AND task_kind=? ORDER BY rowid",
         (mission["venture_id"], mission["mission_id"], LEARNING_KIND)).fetchall()
-    return [{"episode_id": r[0], "task_id": r[1], "task_kind": r[2], "code": r[3], "source": r[4],
-             "detail": json.loads(r[5] or "{}"), "at": r[6]} for r in rows]
+    try:
+        return [{"episode_id": r[0], "task_id": r[1], "task_kind": r[2], "code": r[3], "source": r[4],
+                 "detail": _decode_json(r[5] or "{}"), "at": r[6]} for r in rows]
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def assemble(rows: dict[str, list]) -> dict:
@@ -136,7 +141,10 @@ def _closed(rows: dict) -> Outcome | None:
 
 
 def _calls(run: dict) -> list[dict]:
-    return [c for c in json.loads(run.get("calls_json") or "[]") if isinstance(c, dict)]
+    try:
+        return [c for c in _decode_json(run.get("calls_json") or "[]") if isinstance(c, dict)]
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def _objective(rows: dict) -> dict:
@@ -170,8 +178,11 @@ def _workers(rows: dict) -> dict:
 
 def _capabilities(rows: dict) -> dict:
     planned = sorted({".".join(c) for p in rows["plans"][-1:] for u in p["plan"].units for c in u.capabilities})
-    allowed = sorted({".".join(pair) for w in rows["instances"]
-                      for pair in json.loads(w["spec_json"] or "{}").get("allowed") or []})
+    try:
+        allowed = sorted({".".join(pair) for w in rows["instances"]
+                          for pair in _decode_json(w["spec_json"] or "{}").get("allowed") or []})
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     called = [{"run_id": r["run_id"], "capability": f"{c.get('component')}.{c.get('op')}",
                "contract_sha256": c.get("contract_sha", ""), "refused": bool(c.get("refused"))}
               for r in rows["runs"] for c in _calls(r)]
@@ -217,11 +228,14 @@ def _evidence(rows: dict) -> dict:
 
 
 def _verdict(rows: dict) -> dict:
-    checks = [{"unit": v["unit_key"], "verifies": v["verifies_key"], "artifact_id": v["artifact_id"],
-               "verifier_kind": v["verifier_kind"], "executed": bool(v["executed"]),
-               "independent": bool(v["independent"]), "model_free": bool(v["model_free"]),
-               "model_calls": v["model_calls"], "result": v["result"], "state": v["state"],
-               "reasons": json.loads(v["reasons_json"] or "[]")} for v in rows["verdicts"]]
+    try:
+        checks = [{"unit": v["unit_key"], "verifies": v["verifies_key"], "artifact_id": v["artifact_id"],
+                   "verifier_kind": v["verifier_kind"], "executed": bool(v["executed"]),
+                   "independent": bool(v["independent"]), "model_free": bool(v["model_free"]),
+                   "model_calls": v["model_calls"], "result": v["result"], "state": v["state"],
+                   "reasons": _decode_json(v["reasons_json"] or "[]")} for v in rows["verdicts"]]
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     closed = _closed(rows)
     if not (checks or closed):
         return _absent("the mission has not closed and no check has judged an output")

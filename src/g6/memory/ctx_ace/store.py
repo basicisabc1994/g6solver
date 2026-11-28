@@ -28,6 +28,8 @@ checked before anything is written.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import re
@@ -143,8 +145,8 @@ class Store:
                 unreadable.append(f"{row['id']}: edited after it was kept")
                 continue
             try:
-                record = MemoryRecord.model_validate(json.loads(row["body"]))
-            except (ValueError, ValidationError):
+                record = MemoryRecord.model_validate(_decode_json(row["body"]))
+            except (ValueError, ValidationError, RecursionError, MemoryError):
                 unreadable.append(f"{row['id']}: no longer a record")
                 continue
             if record.id != row["id"]:
@@ -182,7 +184,10 @@ class Store:
                     if _digest(row["body"]) != row["sha256"]:
                         raise StoreError(STORE, f"record {record.id} was edited after it was kept, so it is not "
                                                 "served; forget it by its id and keep it again")
-                    return MemoryRecord.model_validate(json.loads(row["body"])), False
+                    try:
+                        return MemoryRecord.model_validate(_decode_json(row["body"])), False
+                    except (RecursionError, MemoryError):
+                        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
                 count, total = conn.execute("SELECT COUNT(*), COALESCE(SUM(LENGTH(body)), 0) FROM records").fetchone()
                 if count >= MAX_RECORDS:
                     raise StoreError(FULL, f"the store holds {count} records, its most; forget some first")
@@ -196,7 +201,10 @@ class Store:
 
     def search(self, query: str, top_k: int = 5) -> Found:
         """The records most relevant to ``query`` by BM25 alone, best first; see the module docstring."""
-        records, unreadable = self.load()
+        try:
+            records, unreadable = self.load()
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         by_id = {r.id: r for r in records}
         ranked = TextRetriever([(r.id, r.text) for r in records]).search(query, top_k=max(1, len(records)))
@@ -217,7 +225,10 @@ class Store:
         """Records with one of ``record_ids`` (when given), one of ``tags`` (when given) and of ``kind`` (when given),
         newest first. Proposed lessons are held back unless ``proposed``, which lists only them, for a person to
         review."""
-        records, unreadable = self.load()
+        try:
+            records, unreadable = self.load()
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         wanted, tagged = set(record_ids), set(tags)
         current, stale, held = [], [], 0
@@ -244,7 +255,10 @@ class Store:
                                         "everything")
         if not reason.strip():
             raise StoreError(NO_REASON, "no reason was given for forgetting")
-        records, _ = self.load()
+        try:
+            records, _ = self.load()
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         wanted, tagged = set(record_ids), set(tags)
         doomed: list[MemoryRecord | str] = []
@@ -285,7 +299,10 @@ class Store:
                                        "a tool cannot approve one")
         if not reason:
             raise StoreError(REVIEWER, "say why the lesson is approved: the reason is kept with the approval")
-        records, _ = self.load()
+        try:
+            records, _ = self.load()
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         record = next((r for r in records if r.id == record_id_), None)
         if record is None:
             raise StoreError(NOT_FOUND, f"no readable record {record_id_} is kept")
@@ -310,7 +327,10 @@ class Store:
     def status(self) -> dict[str, object]:
         """How many records the store keeps, of each kind and state, how many cannot be read, and how many bytes they
         take of the most the store holds."""
-        records, unreadable = self.load()
+        try:
+            records, unreadable = self.load()
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         at = self.clock()
         try:
             size = self._db().execute("SELECT COALESCE(SUM(LENGTH(body)), 0) FROM records").fetchone()[0]

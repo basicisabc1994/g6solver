@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-26",
+  "before_any_arm": true,
+  "reason": "an honesty copy fix in the review route's own section of the using-g6 skill (its link to deliver.md); no session has run; re-frozen before any arm",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "9f13fb2998d4f974bc56d735f4b00013367fbd60f687e63d13b4ee8c55f61b64"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "ce8a43afce147516a2059ab7e722981309ad35dea8a9d1a06850495a83f1e6c1"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-9f13fb2998d4.json",
+    "frozen.json": "frozen.retired-3765d39af99b.json"
+  },
+  "routes": {
+    "review": {
+      "before": "1e7756c513fb71202ff6846e2081c7982460d873f28d252688c0794b37585188",
+      "after": "976542ae3e11b6f0e2f42195218cc538acf4e43aaadb159e45e8f93d4e839048"
+    }
+  },
+  "tasks": "every development task of the previous list, unchanged",
+  "ruling": "coordinator, 2026-11-26: accept the using-g6 link-text fix the honesty check asks for and rebind the review route before any session runs; the routing trials have run no session and ship as not yet measured (owner ruling, 2026-11-26); the honesty check takes no exemption",
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No other route digest, task, moment task, final task or held-out item is changed by this amendment."
+  ]
+}

@@ -14,6 +14,8 @@ strength or confidence. Worth comes only from the paired evaluator's receipts.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 import os
@@ -59,8 +61,8 @@ def _trigger_ok(trigger: str) -> bool:
         return True
     if trigger.startswith("condition_keys:"):
         try:
-            keys = json.loads(trigger.removeprefix("condition_keys:"))
-        except ValueError:
+            keys = _decode_json(trigger.removeprefix("condition_keys:"))
+        except (ValueError, RecursionError, MemoryError):
             return False
         return isinstance(keys, list) and all(isinstance(key, str) and key for key in keys)
     return bool(_KEY_VALUE.match(trigger))
@@ -117,11 +119,13 @@ class StrategyArtefact:
     def from_bytes(cls, data: bytes) -> "StrategyArtefact":
         """The artefact whose byte form is exactly ``data``; ``StrategyError`` for anything else."""
         try:
-            body = json.loads(data.decode("ascii"))
+            body = _decode_json(data.decode("ascii"))
             found = cls(**{**body, "config": tuple(tuple(pair) for pair in body["config"])})
         except StrategyError:
             raise
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError, RecursionError, MemoryError) as exc:
+            if isinstance(exc, (RecursionError, MemoryError)):
+                exc = ValueError("a JSON record exceeds decoder limits")
             raise StrategyError(BYTES, f"not a strategy artefact: {type(exc).__name__}") from None
         if found.to_bytes() != data:
             raise StrategyError(BYTES, "not a strategy artefact in its canonical byte form")

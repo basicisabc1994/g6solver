@@ -1,6 +1,10 @@
 # Component certificates bind exact bytes: source/data/checks must check out identically on every platform.
 src/g6/** text=auto eol=lf
 
+# The plugin ships G6's using-g6 skill byte for byte (tests/skills/test_plugin_skill.py), so its copy checks out as the
+# source's does.
+plugins/g6/skills/** text=auto eol=lf
+
 # Vendored third-party files keep their upstream bytes: git never rewrites their line endings.
 src/g6/skills/vendor/** -text
 

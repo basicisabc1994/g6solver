@@ -7,7 +7,8 @@ credit is :meth:`g6.learning.TheoryStore.record_paired_outcome`.
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -22,8 +23,8 @@ def trigger_matches(trigger: str, task_meta: Mapping[str, Any] | None) -> bool:
     """``"always"`` matches every task; ``"key:value"`` matches when ``task_meta[key]`` equals ``value`` (any case)."""
     if trigger.startswith("condition_keys:"):
         try:
-            keys = json.loads(trigger.removeprefix("condition_keys:"))
-        except (ValueError, TypeError):
+            keys = _decode_json(trigger.removeprefix("condition_keys:"))
+        except (ValueError, TypeError, RecursionError, MemoryError):
             return False
         if not isinstance(keys, list) or not all(isinstance(k, str) and k for k in keys):
             return False

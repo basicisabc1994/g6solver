@@ -113,6 +113,9 @@ OWNED = {
     'snapshot.py:_has_record': '_taken receives only the detached snapshot/fresh root',
     'snapshot.py:view': '_bounded_view detaches the root; recursion shares its scope',
     'snapshot.py:_unique': 'native JSON parser over text bounded by json_reply',
+    # rc-030 fix round (B11): the characters of the reply text json_reply has already admitted (its cap and text());
+    # it counts brackets outside strings and holds no value
+    'snapshot.py:_nesting': 'characters of the reply text json_reply admitted, counted; no value is held',
     'snapshot.py:issue': 'set() creates an empty owned issuance index; digest walks the issued value',
     'adaptation.py:judged_files': 'fixed tuple of bridge/G6 judge functions',
     'adaptation.py:_declared': 'owned ADAPTABLE paths and judge identities',
@@ -151,7 +154,7 @@ def walk_sites():
         recursive = [n for n in nodes if isinstance(n, ast.Call)
                      and isinstance(n.func, ast.Name) and n.func.id == fn.name]
         native = [n for n in nodes if isinstance(n, ast.Call)
-                  and ast.unparse(n.func) in ('json.dumps', 'json.loads', 'dataclasses.asdict', 'asdict', 'dict.__repr__',
+                  and ast.unparse(n.func) in ('json.dumps', 'json.loads', '_decode_json', 'dataclasses.asdict', 'asdict', 'dict.__repr__',
                       'list', 'dict', 'tuple', 'set', 'frozenset', 'sorted', 'sum', 'any', 'all', 'map', 'filter',
                       'zip', 'enumerate')]
         native += [n for n in nodes if isinstance(n, ast.Dict) and None in n.keys]
@@ -198,6 +201,15 @@ def test_every_child_walk_has_a_route_and_unknown_walks_fail():
         fn = ast.parse('def added(value):\n snapshot(None)\n for child in value:\n  print(child)').body[0]
         classify('engine.py:added', fn, [fn.body[1]], [])
     assert CHECKED_ROUTES <= set(listed), 'remove or reclassify a route when its traversal changes'
+
+
+def test_a_new_guarded_decode_still_needs_a_child_route(monkeypatch):
+    fn = ast.parse('def added(raw):\n    return _decode_json(raw)\n').body[0]
+    monkeypatch.setitem(globals(), '_functions', lambda: [('engine.py', 'added', fn, False)])
+    [(name, found, loops, native)] = list(walk_sites())
+    assert native == [fn.body[0].value]
+    with pytest.raises(AssertionError, match='unclassified'):
+        classify(name, found, loops, native)
 
 
 def test_preflight_is_before_the_first_call_on_a_value():

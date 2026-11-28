@@ -8,6 +8,8 @@ A pack whose text trips ``g6.learning``'s secret scan is refused on export and o
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -47,8 +49,10 @@ def write_pack(pack: dict[str, Any], path: str | Path) -> list[str]:
 def read_pack(path: str | Path) -> tuple[dict[str, Any] | None, list[str]]:
     try:
         text = Path(path).read_text(encoding="utf-8")
-        pack = json.loads(text)
-    except (OSError, ValueError) as exc:
+        pack = _decode_json(text)
+    except (OSError, ValueError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return None, [f"not a readable pack: {type(exc).__name__}"]
     problems = []
     if not isinstance(pack, dict) or pack.get("format") != FORMAT:

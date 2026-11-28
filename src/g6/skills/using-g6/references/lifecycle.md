@@ -1,5 +1,8 @@
 # The full lifecycle with G6
 
+A standard of done, fixed before the work and confirmed by the person: `g6_premortem`, then the
+`g6_mission_*` tools.
+
 Each stage of a coding agent's work is paired with its superpowers skill, its G6 step, and the principle from G6's
 essays (`/essays/`) that it puts into practice. The superpowers skills say how to work; G6 checks the work at each
 point, independently of the agent doing it.
@@ -35,6 +38,7 @@ point, independently of the agent doing it.
    state. G6 searches the model and replays traces on real code. Only a reproduced trace is a code finding.
 6. **Repair.** A proposed check's reproduction is a test file: add it to the repository's tests and list its node
    id, so the person sees the fix pass the original counterexample.
+   When a G6 reply carries repair, follow its step; if by is person, tell the person and stop.
 7. **Honesty.** G6 cannot judge usability by itself; acceptance tests and the person's confirmation do. The outcome
    is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope (every
    stated requirement passed a stated check the patch did not write; completeness is not established). If no check
@@ -65,16 +69,18 @@ Insufficient evidence blocks nothing, and the mission says so: tell the person. 
 moves to a focused brief, then to the person. You repair; G6 never writes
 code. Merging stays the person's separate decision. `g6_mission_status` and `g6_mission_certificate` read the mission;
 the tools that change it return a job, so poll `metaharness_job`. An `R3` mission's patch approval is not over MCP yet:
-its status names the terminal command for the person. The tools that run code need host permission workforce.mission,
+tell the person and stop. The tools that run code need host permission workforce.mission,
 which the person grants; never change permissions yourself.
 
 ## The review-until-clean loop, over MCP
 
-Claude Code's plugin runs this loop from its Stop hook. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
+Claude Code's plugin runs this loop from its Stop hook once the person has approved a reviewer; until then the hook runs a
+model-free patch review. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
 file, call `g6_review_until_clean` when you finish, with the folder, the task and one session name for the task, then poll
 `metaharness_job`. Repeat the same task on each call: another is refused. It needs the host permission
-`patch_review.review`. Another model family reads your patch without your reasoning, and must state a rule, reasons and a
-test. `continue` gives that finding when its test fails on your patch: check it against the task, then repair the cause, or
+`patch_review.review`. Codex reads your patch without your reasoning (another model family only if you are not Codex), and
+must state a rule, reasons and a test. `continue` gives that finding when its test fails at the parent and on your patch (one
+that fails only on your patch is a note): check it against the task, then repair the cause, or
 leave the code as it was, and call again, with `reason` in one line if you leave it: only a reason rejects a finding, and a
 call with neither gets the same finding back. `wait` means another step is running, so wait for its result, or that your
 reason was a question, which rejects nothing, so ask the person first. A fresh review reads each repair, at most 3 repairs. `stop` gives the report: show it as it is, and `ending` says how the run ended: clean,

@@ -22,3 +22,9 @@ tests/coding_agent_gate/test_new_test_markers.py b75b4b1492815f09c939364f3738e84
 # A scoring amendment to click's own tests (pallets/click, BSD-3-Clause), kept byte for byte as a record of the worked
 # examples' round 3 (validation/worked_examples/amendments/click-3678.md); line 71 adds a filterwarnings decorator.
 validation/worked_examples/amendments/click-3678.patch efdaeb6b07a43d6268542270c3303d17ec2438063af04e47796fbc3d865e84db personal-email
+#
+# Placeholder paths, not a real user (rc-030 integration, 2026-11-27): a Windows folder under a made-up account that the
+# isolation refusal text names, and the sign-in folder a research mission must refuse to mount. Neither is anyone's
+# real path; each is the input its test needs, written plainly.
+tests/core/test_isolation_refusal_for_agent.py 05821cd4d217dbeac08a9d330a68b743d80d9e499f4149068d495d0c97dc0d0f windows-user-path
+tests/distill/test_research_runner_adversarial.py 34789d97e338f5c81c7e7bd0d6945770d7e907dc0c954d12898ace04868041b7 windows-user-path

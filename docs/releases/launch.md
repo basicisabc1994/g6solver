@@ -1,67 +1,67 @@
-# G6 0.2.0: patch review for Claude Code and Codex
+# G6 0.3.0: patch review, consent and the improvement loop over MCP
 
-Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
+Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.
+
+This version is not yet tagged or published: no tag, nothing on PyPI. Merging, tagging, publishing and deploying the
+site are the owner's steps. The full preparation note is [v0.3.0.md](v0.3.0.md); the notes for 0.2.0 are
+[v0.2.0.md](v0.2.0.md).
 
 ## What ships
+
+The MCP server is the main surface. It goes from 20 tools to 56; the core library keeps 38 components.
 
 - **Patch review.** A coding agent calls `g6_review_patch` before it says a Python change is done. G6 runs the tests
   that check each stated requirement inside an operating-system boundary, compares the changed tests, test helpers
   and test-runner files with the base commit for the signs of weakening it knows how to find, runs the other tests
   that touch the changed modules, and returns one outcome: test integrity compromised, defect detected, insufficient
-  evidence, or supported within scope. The reply's readable report (`assessment.report`) puts what G6 reproduced
-  first, then what is not established, then what the person decides. Over MCP the reply is compact, so that it fits
-  in a client's tool result; the full assessment is saved in G6's state folder. A caller may also give proposed
-  checks and template instances; neither ever passes a requirement.
-- **Setup for both clients.** `g6 setup --client claude --allow patch_review.review` (or `--client codex`) registers
-  the installation with the client, installs the `using-g6` skill for it, allows patch review, and ends by showing the
-  first review call. When the client already has an entry called `g6`, setup stops and says how to replace it.
-- **The skill.** `using-g6` tells the agent to review a Python patch before saying the task is done, to state the
-  task as numbered requirements with their checks, to show the report verbatim, and to repair: fix what G6
-  reproduced, add each earlier reproduction as a stated check, review again, and stop after three rounds, when a round
-  changes nothing, or when the report says only the person can decide. It never calls a patch `verified`, and never
-  merges.
-- **The rest of the library**, as the README's status table describes it.
+  evidence, or supported within scope. `g6 setup --client claude --allow patch_review.review` (or `--client codex`)
+  registers the installation with the client, installs the `using-g6` skill for it and allows patch review.
+- **Consent before any cloud model** (`g6_cloud_grant`, `g6_cloud_grants`, `g6_cloud_revoke`, `g6_disclosures`). No
+  user data reaches a cloud model unless the person granted it, per source and per provider, in the client's own
+  dialog. Without a grant the work stays local, or the result is withheld. One check covers every path that can reach
+  a model: G6's own model calls, `g6_invoke` and `g6 invoke`, the Python API `g6.invoke`, the cognitive bridge, and the
+  self-improvement loop's Claude Code and Codex sessions. A disclosure record says what was sent.
+- **The self-improvement loop, over MCP** (`g6_improve_*`). A person agrees in the client's dialog to each start,
+  enrolment, resume and demotion; status only reads, and the stop needs no dialog. A frozen file that changes, a
+  provider refusal, a missing consent grant or a record that cannot be written stops the loop, kept as a safety stop
+  for a person to resume.
+- **Allowances** (`g6_allowances`): both providers' quota windows and advisory pacing. Unknown, stale or unbound
+  readings never recommend more use.
+- **Behaviour questions** (`g6_confirm_behaviour`): one question about a task, answered in the client's dialog. A
+  confirmed answer becomes a check that every later patch review of the task runs.
+- **Missions and review** (`g6_mission_*`, `g6_premortem`, `g6_review_until_clean`): a coding task carried to an
+  evidenced result, with the reviewer loop that ends clean or says why not.
+- **The Context Engine** (`g6_knowledge_*`): knowledge search over folders the person names in `G6_KNOWLEDGE_ROOTS`.
+  Adding a source asks the person to accept a preview in the dialog.
+- **The workflow record** (`g6_feedback`, `g6_suggestion_decide`, `g6_workflow_*`): on by default, off when
+  `G6_WORKFLOW_RECORD=off` is set where the server is registered.
+- **Routing**: the `using-g6` skill routes to every tool that ships.
 
 Merging stays the person's decision.
 
-## Fixed before release
-
-- **A security fix, found by a worked example.** `g6 setup` registered G6's MCP server as `python -c ...`. Claude
-  Code and Codex start the server in the project's folder, and `-c` puts that folder first on Python's import path.
-  So a project whose top-level package had the name of one of G6's dependencies replaced that dependency inside G6's
-  own server: in pydantic's repository the server did not start, and in starlette's repository it imported and ran
-  the repository's `starlette`, outside any boundary, with the person's rights. Setup now starts the server with
-  `python -P`, which keeps the project's folder off the import path. An entry made before this fix keeps the old
-  command: remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run `g6 setup` again.
-- **No network request when the server starts.** FastMCP, the library G6's MCP server is built on, asked PyPI for
-  its latest version each time the server started, and read its settings from a `.env` file in the folder the server
-  started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
-  turns the version check off and reads no such file; what a person sets in the environment
-  (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
-- **A meta-harness workflow a project ships is never confirmed for the person.** G6 finds workflows in the project's
-  folder, and a workflow's confirmation lived in its own files there, so a project could ship one confirmed under any
-  name, and G6 ran it. A confirmation now counts only when G6 recorded it in its own state folder when a person
-  confirmed; and the tools that run a workflow's code over MCP are refused unless the person allows them in
-  `G6_MCP_SENSITIVE` (`metaharness.run`, `metaharness.evaluate_start`, `metaharness.evaluate`).
-- **A false alarm on pdm-backend's build output, found by a worked example.** pdm-backend's editable install writes a
-  git-ignored `.pdm-build/` folder with a `.pth` file in it, which Python never reads from there, and G6 counted it as
-  a file that could change the tests. G6 now leaves `.pdm-build/` out of its scan of ignored files, as it does
-  `build/` and `dist/`.
-
 ## What does not ship
 
-- **G6's own model calls in patch review.** Patch review makes no model call unless the caller turns on
-  `search={"propose": true}`. Elsewhere in the library, a step that needs a model uses the provider the person chose,
-  in their key file or with `G6_LLM_PROVIDER`; none is chosen by default. The proposer that asks a model for checks
-  is in the code and off by default, and the launch skill does not use it. It has had one development smoke run and
-  no study, so nothing is claimed for it.
 - **V9 and V10**, the studies of patch review: both are registered, and neither has run. Nothing here says how often
   patch review finds a defect, or whether it shortens a person's work.
-- **The plugins and hooks** for Claude Code and Codex.
+- **The study's execution and capture code**: excluded, and tested unreachable.
+- **Section 15** (intent to formal property): its tool is not built, and its must-close findings stay with it.
+- **Section 14 slices S6 and S7.**
 - **Venture**, the third work mode.
 - **The continuous integration check** that would run patch review on a pull request.
 
+## Not yet measured
+
+These parts ship switched on, and their measurement has not run. A passing test establishes only the behaviour it
+covers; none of these is claimed to improve outcomes: the self-improvement loop, allowance pacing against real
+provider windows, consent in a real client's dialog across Claude Code and Codex, the `using-g6` routing, the Context
+Engine's retrieval quality, the workflow record's suggestions, and behaviour questions with real people.
+
 ## Limits
+
+[v0.3.0-known-limits.md](v0.3.0-known-limits.md) lists every reproduced finding that ships as a known limit. Each one
+fails in the safe direction (G6 refuses, withholds or reports less), needs code already running in G6's own process,
+is a narrow platform edge ending in an error, is a narrowed race, or needs a certificate-bound file. The limits beyond
+that list are in [v0.3.0.md](v0.3.0.md). These still hold from 0.2.0:
 
 - **Isolation depends on the platform.** Linux confines the code G6 runs with bubblewrap (install the `bubblewrap`
   package); Windows with an AppContainer, after the one-time access grant `g6 doctor` prints. Patch review needs an
@@ -78,10 +78,8 @@ Merging stays the person's decision.
   runs).
 - **Python first.** Patch review runs pytest on Python repositories only.
 - **Files git ignores.** G6 does not compare files git ignores, so an untracked, git-ignored file the tests could load
-  puts test integrity in doubt. A `.py` file named like any module in the repository counts, wherever it is, so a
-  data fixture called `a.py` can raise it. The reply names each such file once; if they belong to the project, commit
-  them before the change under review, otherwise remove them or move them out of the repository, then review again.
-  A file the patch itself adds under an ignored path, with `git add -f`, is part of the change and is judged as one.
+  puts test integrity in doubt. The reply names each such file once; if they belong to the project, commit them before
+  the change under review, otherwise remove them or move them out of the repository, then review again.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot
   show that the tests are as strong as before.

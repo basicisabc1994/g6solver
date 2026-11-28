@@ -610,6 +610,26 @@ def test_a_defect_inside_the_declared_coverage_is_detected_and_named(repo, monke
     assert runs.calls == [("in_place", (ADD, NEGATIVE))]   # tier 2 skipped after a defect
 
 
+def test_a_failed_stated_check_says_how_it_failed_masked_and_short(repo, monkeypatch):
+    """Dogfood pass 2 (2026-11-26): stated checks failed inside the container ("cannot lock ref 'HEAD'"), and the reply
+    named only node ids, so neither the agent nor the person could tell an environment failure from a defect. The line
+    the check raised is quoted, with secrets and home and temporary roots masked (``g6.context.redact``), and short."""
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    home = str(Path.home())
+    raised = f"subprocess.CalledProcessError: token=abcd1234secret git init -q in {home}{os.sep}repo " + "x" * 2000
+    message = f"def test_negative():\n>       assert add(-2, -3) == -5\nE       {raised}\n\ntest_calc.py:9: Error"
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD], [NEGATIVE], messages={NEGATIVE: message})})
+    got = review(repo)
+    detail = next(r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "check_failed")
+    # fails if the reply carries node ids only (the test's own words are dropped)
+    assert "CalledProcessError" in detail and "git init -q" in detail, detail
+    # fails if the quote leaks a secret or the person's home folder, or runs to the message's length
+    assert "abcd1234secret" not in detail and home not in detail
+    assert len(detail) <= len(f"{NEGATIVE}: failed (failed: {NEGATIVE})") + 20 + patch_review.MAX_FAILURE_EXCERPT
+    defects = got["assessment"]["completion"]["defects_reproduced"]["stated_and_repository_checks"]
+    assert [found["detail"] for found in defects] == [detail]
+
+
 @pytest.mark.parametrize("verdict, outcome, check", [
     ("failed", "defect_detected", "failed"),
     # review I5: corrected. This case expected a defect from a run out of time, which says nothing against the patch:
@@ -1073,7 +1093,7 @@ def test_the_check_provenances_later_phases_use_are_named_and_unused():
     import typing
 
     assert typing.get_args(patch_review.CheckProvenance) == (
-        "stated", "derived", "structural", "proposed", "adopted_proposal")
+        "stated", "derived", "structural", "proposed", "adopted_proposal", "library")
     assert typing.get_args(patch_review.RequirementProvenance) == (
         "stated", "repository_stated", "person_confirmed", "inferred", "model_hypothesis")
     assert patch_review.NORMATIVE == {"stated", "repository_stated", "person_confirmed"}

@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.guidance_expectations import LEAN_ACTION, no_setup
 from pydantic import ValidationError
 
 import g6.lean
@@ -219,7 +220,12 @@ def test_m1_lean_missing_says_how_to_install_lean(no_lean) -> None:
     result = search._prove("2 + 2 = 4", check=check_proof)
     _blocked(result, LEAN_MISSING)
     action = result.warning_card["suggested_action"]
-    assert "elan" in action and LEAN_ENV in action and "never installs" in action
+    assert action == LEAN_ACTION
+    no_setup(result.model_dump(mode="json"))
+    from g6.lean.envelope import INSTALL_LEAN
+    from g6.lean import __g6_outside__
+    assert "elan" in INSTALL_LEAN and LEAN_ENV in INSTALL_LEAN and "never installs" in INSTALL_LEAN
+    assert any(program.describe()["install"] == INSTALL_LEAN for program in __g6_outside__)
 
 
 def test_m2_the_search_has_one_deadline_and_each_check_gets_what_is_left(monkeypatch: pytest.MonkeyPatch) -> None:

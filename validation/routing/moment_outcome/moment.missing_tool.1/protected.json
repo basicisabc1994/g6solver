@@ -1,0 +1,6 @@
+{
+  "protected": [
+    "shop/__init__.py"
+  ],
+  "why": "total and its tests change, and the README may describe the new line format; the package file stays as it is."
+}

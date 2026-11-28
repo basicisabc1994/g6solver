@@ -10,6 +10,7 @@ from g6.code.adapt_healing import cases
 from g6.code.meta_programming import runner
 from g6.code.meta_programming.block import MetaProgrammingInput, run_tests_op
 from g6.core import confine
+from tests.guidance_expectations import UNCONFINED_WARNING, isolation_record, no_setup
 
 OFF = "unavailable: switched off by this test"
 CODE = "def add(a, b):\n    return a + b\n"
@@ -26,7 +27,9 @@ def test_meta_programmings_test_run_keeps_its_isolation() -> None:
     ran = runner.run_tests(CODE, TESTS, "calc", timeout_s=30)
     # fails if run_tests drops the sandbox run's isolation record
     assert ran["status"] == "ok" and ran["isolation"]["why"] == OFF
-    assert ran["isolation"]["warning"] == confine.UNCONFINED_WARNING
+    assert ran["isolation"]["warning"] == UNCONFINED_WARNING
+    isolation_record(ran["isolation"])
+    no_setup(ran)
 
 
 def test_meta_programmings_run_tests_op_puts_it_in_its_evidence() -> None:

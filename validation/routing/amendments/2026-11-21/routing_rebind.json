@@ -1,0 +1,85 @@
+{
+  "date": "2026-11-21",
+  "before_any_arm": true,
+  "reason": "tool and route text changed by the 0.3.0 wiring merges; re-frozen before any F0 arm runs",
+  "previous_pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "7337dbe982f5b19d964dc6ee611d63c92379c8008d807a2b49f2da21c1b47070"
+  },
+  "pins": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "a7c5e8f6d7e05668d47681a0d4510536bb531c935d047795be672a4f3aa1d8bd"
+  },
+  "retired": {
+    "tasks.json": "tasks.retired-7337dbe982f5.json",
+    "frozen.json": "frozen.retired-76b7a6f05b98.json"
+  },
+  "routes": {
+    "abstraction": {
+      "before": "11a14bc37ac59cc9370e95456bd650011ddc554c184f87eb2ebc5f656d424532",
+      "after": "96c00a1a9ef26903f84becfd4b5482a82bfdb0e75b198ae0ba0a3f50a3436529"
+    },
+    "compose": {
+      "before": "d90d091640a37bb559235e731181a79fae90f1b994f1b83022aa805c1c699609",
+      "after": "945db46322406bf4447f3a7ae70c55aedf2e7494755141cae51760ffbffad221"
+    },
+    "consent": {
+      "before": "3360654006772c5e2626c414ffa2778657227e26951628276a59360707c4a788",
+      "after": "013bb1f0dc10102278d594d0b953e1652896a4a1140bf58e2a373f7c0e8d9ab4"
+    },
+    "context": {
+      "before": "66003f951cf38da41b1c95b2fe8b0d7732dff33e17e87117813f394149a38316",
+      "after": "dfb8cc3ced54f9806960993bd32a5a4b1e1b29e65ec3158666a27d56138a663a"
+    },
+    "discover": {
+      "before": "55eea337b12dafb332b57d7ab55d2b69d4816a655a882e9d4c59238a50877216",
+      "after": "e3a616e571b6f4de20f9e90a7bf509a46e8e35f819932b062ffd7c3f174059be"
+    },
+    "every-route": {
+      "before": "a105d1f2011c76b9a71e24a316f636afabeac48c220ba86e464344660d4043fb",
+      "after": "542bc7d1e448e7cf8c0f72860607546531d7b6a0aad116c028bd2672d750de9b"
+    },
+    "fit": {
+      "before": "c3d3cb9291adaa9d9ad233005b4acc736dda151bd1cb3b47f6ff8d0121a18e1e",
+      "after": "a8a80df1036be09fd4a70361ca5f46d4a1fb5e49499fc1c6dc994c6e82715b36"
+    },
+    "improve": {
+      "before": "e46df0b0267ca882d45ad425c355577f18098432c85a0f4698bc18c6c4fff0cd",
+      "after": "4ab748fce09ac96b20c43f45a8fad8028efe3fc1c5c94ba9438892368751fe69"
+    },
+    "mission": {
+      "before": "fce2993cda07d4bf78389e78be9990176611427f7ebd8e5764c3ac8348a4d1ce",
+      "after": "e0f1296a758e75e3deca555cf71f980077c1d169ec25d40a6338696f369bb400"
+    },
+    "question": {
+      "before": "133db5f589550897612fe06c903e7313625f2301a7b5f396bc42ed523a40b020",
+      "after": "2cf1e1e8af8d0e96fb39540b38d6dc20ee7fb24df50eaba66d8c569243633436"
+    },
+    "review": {
+      "before": "b5dc78389fe3561d0a93ca828b877f1c488bd8c9fdbaebfb35c471508284a218",
+      "after": "1e7756c513fb71202ff6846e2081c7982460d873f28d252688c0794b37585188"
+    },
+    "rules": {
+      "before": "9fe7060163867a43058c643bc66e107e89c81a0a5c56e67aed34b37442b3c431",
+      "after": "701615705f3cf10070b83026b1e5586da2cd1006ac821a9fa5cfd55a508a258e"
+    },
+    "select": {
+      "before": null,
+      "after": "79c843d9b7e799f97da17797146fb1e0f6f9edf931a2e502dfa204603f6a18e0"
+    },
+    "workflow": {
+      "before": "9274f49f91d2e127d767cddd31d30c05328c55ac282487a8852de5e0eb88a492",
+      "after": "9ce5e3ef60995bbfc0a09cab005beb28101071642ef3b744030b18847a24c6e8"
+    }
+  },
+  "tasks": "unchanged: every development task of the previous list, and no other",
+  "select": {
+    "bound": "the select route's digest is bound, so a later change to it unbinds its tasks",
+    "tasks": "none yet: the select route has no development task",
+    "why": "the development drafts in amendments/2026-11-17/select_tasks.unbound.json use the fixtures fees, notes_m, rules_m, stock, which the 2026-11-17 registration keeps apart from the development cohort (moment fixtures do not join the development inventory; tests/validation/test_routing_research_audit.py), so they were not extracted. The lead writes the select route's development tasks on development fixtures, or the owner rules that the drafts' fixtures may join; either is a later amendment."
+  },
+  "rulings": [
+    "No bar changes: gates.json and its pin are unchanged.",
+    "No task is added, removed or changed by this re-freeze."
+  ]
+}

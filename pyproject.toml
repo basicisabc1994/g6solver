@@ -13,7 +13,7 @@ requires-python = ">=3.12,<3.14"
 authors = [{ name = "G6 contributors" }]
 keywords = ["agents", "harness-engineering", "metacognition", "reliability", "mcp", "llm"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -128,7 +128,7 @@ dev =["pytest>=8", "ruff>=0.6", "import-linter>=2.1"]
 all = ["g6[mcp,abstraction,anthropic,formal,optim,cas,db,image,procedural,audio]"]
 
 [project.scripts]
-g6 = "g6.cli:main"
+g6 = "g6.cli:entrypoint"
 g6-mcp = "g6.mcp:main"
 
 [project.urls]
@@ -150,7 +150,8 @@ markers = ["heavy: slow or resource-hungry; run weekly in CI"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = ["src/g6/**/vendor"]
+# Reviewer-evidence folders are kept as the reviewer wrote them and run apart from the suite, never blocking (ci.yml).
+extend-exclude = ["src/g6/**/vendor", "tests/_review_*"]
 
 [tool.ruff.lint]
 # Correctness rules only; style is not enforced on code ported from the archive.
@@ -166,14 +167,14 @@ source_modules = ["g6.core"]
 forbidden_modules = ["g6.harness", "g6.research", "g6.operator", "g6.mcp", "g6.cli", "g6.bundles", "g6.metaharness"]
 
 # The meta-harness is a layer on top of G6 (META_HARNESS_PLAN.md 4.6): it imports components, none imports it, and only
-# the MCP surface exposes it. tests/metaharness checks that this list names every package except mcp and metaharness;
-# a family package (the second block) covers every extension in it.
+# the MCP surface exposes it. tests/metaharness checks every package except mcp and metaharness;
+# a family package covers every extension in it. The self-model reuses pure lessons through core.
 [[tool.importlinter.contracts]]
 name = "the meta-harness is a layer on top: MCP and CLI consent entry points"
 type = "forbidden"
 source_modules = [
   "g6.abstraction", "g6.action_gating", "g6.action_logic", "g6.algebra", "g6.algorithm_design", "g6.bundles", "g6.causal",
-  "g6.cegis", "g6._allowance", "g6._context_engine",
+  "g6.cegis", "g6._agentic", "g6._allowance", "g6._context_engine",
   "g6.cli",
   "g6.coding_agent_gate", "g6.cognitive_bridge", "g6.complexity",
   "g6.context", "g6.core", "g6.csf", "g6.datalog", "g6.debate", "g6.distillation", "g6.epistemic_integrity",
@@ -182,12 +183,27 @@ source_modules = [
   "g6.intent_engine",
   "g6.invariants", "g6.lean", "g6.learning", "g6.llm_router", "g6.model_checking", "g6.navigator", "g6.operator",
   "g6.optimisation", "g6.prolog", "g6.reasoning", "g6.reliability_pipeline",
-  "g6.research", "g6.safety_engine", "g6.self_maintenance", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
+  "g6.research", "g6.safety_engine", "g6.self_maintenance", "g6.self_model", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
   "g6.agents", "g6.code", "g6.cogarch", "g6.deploy", "g6.domains", "g6.embodied", "g6.integrations", "g6.jobs",
   "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
 ]
 forbidden_modules = ["g6.metaharness"]
-ignore_imports = ["g6.cli -> g6.metaharness.surface"]
+# g6.distill, the learning library, sits above this layer beside g6.mcp (deliberate since 64c4db67, 2026-11-18): it
+# imports the meta-harness's gate, evaluation and schema, each edge named below, and harness.library_review_gate
+# reaches its acceptance gate lazily. Moving those gate pieces below the layer is planned for 0.3.1 (KNOWN_LIMITS.md).
+ignore_imports = [
+  "g6.cli -> g6.metaharness.surface",
+  "g6.distill.acceptance_gate -> g6.metaharness.gate",
+  "g6.distill.acceptance_gate -> g6.metaharness.evaluate",
+  "g6.distill.acceptance_gate -> g6.metaharness.schema",
+  "g6.distill.meta.policy_gate -> g6.metaharness.api",
+  "g6.distill.meta.policy_gate -> g6.metaharness.evaluate",
+  "g6.distill.meta.policy_gate -> g6.metaharness.gate",
+  "g6.distill.meta.policy_gate -> g6.metaharness.schema",
+  "g6.distill.meta.policy_gate -> g6.metaharness.select",
+  "g6.distill.meta.policy_gate -> g6.metaharness.tick_rca",
+  "g6.harness.library_review_gate -> g6.distill.acceptance_gate",
+]
 
 [[tool.importlinter.contracts]]
 name = "the meta-harness imports no research code (founder decision A1)"

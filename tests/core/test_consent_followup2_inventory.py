@@ -10,15 +10,15 @@ from g6.mcp import improve
 # Each matching function is listed, including false positives. A newly added
 # call or environment builder fails the inventory until its purpose is named.
 PLACES = {
+    # the agentic kernel merge (334c6254): G6's own child, -I under confinement, a kept-variable environment
+    "_agentic/_child.py": ("launch", "isolated override-kernel worker, component protocol"),
     "agents/_runtime/cli.py": ("clean_environment environment locate run", "outside agent CLI, not a loop child"),
     "algebra/runner.py": ("_environment _execute run_sage", "isolated algebra worker and outside Sage, component protocol"),
     "algorithm_design/autonomous.py": ("_run", "reply envelope named env, no child"),
     "bundles/server.py": ("caller_from_settings", "outside model CLI configuration"),
     "cegis/runner.py": ("_call", "isolated fixed CEGIS worker, component protocol"),
     "cli/setup.py": ("register_clients", "outside client registration command"),
-    "code/_build.py": ("run_checks", "candidate code under core sandbox"),
     "code/_roots.py": ("load", "configuration reader, no child"),
-    "code/adapt_library_synthesizer/ingestion.py": ("pdf_text", "PDF parser under core sandbox"),
     "code/swe_diagnostics/read.py": ("detect_build_env", "repository dependency description, no child"),
     "code/swe_diagnostics/block.py": ("detect_build_env", "repository dependency description, no child"),
     "cogarch/cog_arch_aixi/agent.py": ("episode environment register_environment unregister_environment", "simulation environment, no child"),
@@ -42,8 +42,10 @@ PLACES = {
                                                                 "loop children's one transport since the issuance window"),
     "core/process_tree.py": ("__init__", "generic process transport, takes caller environment"),
     "core/sandbox.py": ("run_script", "isolated candidate scripts, deliberately imports sandbox code"),
+    # b076aa08: the one receiver of core sandbox's run, for code/_build.run_checks, the library synthesizer's
+    # pdf_text and distillation's run_batch (candidate code and the PDF parser, still under core sandbox)
+    "core/guidance_builders.py": ("script_run", "core sandbox's run, its constructed text marked for the agent"),
     "csf/rollback.py": ("_git", "outside Git"),
-    "distillation/sandbox.py": ("run_batch", "candidate scripts under core sandbox"),
     "formal/four_valued.py": ("evaluate _env", "logic environment, no child"),
     "harness/completion_loop.py": ("run", "reply envelope named env, no child"),
     "harness/patch_review.py": ("_reply", "reply envelope named env, no child"),
@@ -70,15 +72,22 @@ PLACES = {
     "harness/behaviour_runner.py": ("run", "repository behaviour scenario, confined, deliberately imports the copy"),
     "evidence/mapping.py": ("Row About", "evidence record field named environment, no child"),
     "sources/ctx_git/config.py": ("load", "configuration reader, no child"),
-    "sources/ctx_git/runner.py": ("clone_session run session", "outside Git"),
+    # session and clone_session now take their environment from _prepared, built by safe_git_env (5bfe22fc)
+    "sources/ctx_git/runner.py": ("run", "outside Git"),
     "sources/ctx_vision/ocr.py": ("read", "outside OCR program"),
     "workforce/_certificate_formal.py": ("check", "certificate scripts under core sandbox"),
     "workforce/_certificate_runner.py": ("observe", "certificate scripts under core sandbox"),
     "workforce/api.py": ("bind", "HTTP service configuration, no child"),
-    "workforce/repo_tests.py": ("_bounded _git _linked_to_g6 _run child_env _repo_env _environment_of", "repository test Python, deliberately imports repository code; Git"),
+    "workforce/_collection_effects.py": ("_scan _environment", "AST binding environment and a static reading of "
+                                                               "os.environ writes in repository source, no child"),
+    "workforce/repo_tests.py": ("_bounded _git _linked_to_g6 _run child_env _repo_env _environment_of _compile_collection_sources environment", "repository test Python, deliberately imports repository code; Git (environment: _git's own builder over safe_git_env, 9d9ff131)"),
     "workforce/service.py": ("bind certificates_enabled readiness_enabled", "HTTP service configuration, no child"),
     "workforce/truth.py": ("_run_owned run_isolated run_suite", "repository test Python, deliberately imports repository code"),
     "workforce/trace.py": ("_environment", "trace environment description, no child"),
+    # the distill merges: a self-model record's field named environment (27362c3a), and a mission's container
+    # description, a field named environment (de9ce646); neither starts a child
+    "self_model/model.py": ("SelfModel", "self-model record field named environment, no child"),
+    "distill/missions.py": ("Mission", "mission container description, a field named environment; no child started here"),
     "workforce/verify.py": ("_git head_snapshot", "outside Git"),
 }
 

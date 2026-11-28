@@ -75,3 +75,28 @@ __all__ = [
     "evaluate_constraints", "execute_step", "plan_run", "profile_for", "red_flags", "solve",
     "summarize_agentic_evidence",
 ]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_SOLVER_CHECKED_DRAFT": "none",
+    "G6_E_SOLVER_CHECK_FAILED": "none",
+    "G6_E_SOLVER_CONSTRAINT_UNEVALUABLE": "none",
+    "G6_E_SOLVER_EMPTY_GOAL": "input",
+    "G6_E_SOLVER_HISTORY_ABOVE_THRESHOLD": "none",
+    "G6_E_SOLVER_HISTORY_DECLINE": "none",
+    "G6_E_SOLVER_HISTORY_DRY_RUN": "none",
+    "G6_E_SOLVER_HISTORY_FAILED": "none",
+    "G6_E_SOLVER_HISTORY_INSUFFICIENT": "none",
+    "G6_E_SOLVER_HISTORY_RECORDED": "none",
+    "G6_E_SOLVER_HISTORY_REGRESSION": "none",
+    "G6_E_SOLVER_HISTORY_TREND": "none",
+    "G6_E_SOLVER_INCOMPLETE": "none",
+    "G6_E_SOLVER_NO_ANSWER": "none",
+    "G6_E_SOLVER_PRODUCTION_UNSUPPORTED": "person",
+    "G6_E_SOLVER_REFUSED": "none",
+    "G6_E_SOLVER_SIGNATURE_UNVERIFIABLE": "person",
+    "G6_E_SOLVER_STEP_FAILED": "none",
+    "G6_E_SOLVER_UNCHECKED": "none",
+    "G6_E_SOLVER_UNKNOWN_STEP": "input",
+}

@@ -6,23 +6,39 @@ standard"): the claim, the standard it was held to, each piece of evidence with 
 used the evidence, the computed verdict, and whether the ledger's chain and references still check out."""
 from __future__ import annotations
 
+from g6.core.ledger import LedgerError
+from g6.evidence.mapping import read_about, read_binding
+
 import hashlib
 from typing import Any
 
 from .claims import evaluate_claim
+from .custody import fixture_contaminated
 from .records import digest
 
 
 def _body_ok(ledger: Any, kind: str, ident: str) -> bool:
-    entry = ledger.entry(kind, ident)
+    try:
+        entry = ledger.entry(kind, ident)
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
     return digest(entry["body"]) == entry["body_sha256"]
 
 
 def trace_claim(ledger: Any, claim_id: str) -> dict:
-    claim = ledger.get("claim", claim_id)
-    problems = list(ledger.verify())
-    standard = next((e for e in ledger.entries() if e["kind"] == "standard"
-                     and e["body"]["standard_sha256"] == claim["standard_sha256"]), None)
+    try:
+        claim = ledger.get("claim", claim_id)
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
+    try:
+        problems = list(ledger.verify())
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
+    try:
+        standard = next((e for e in ledger.entries() if e["kind"] == "standard"
+                         and e["body"]["standard_sha256"] == claim["standard_sha256"]), None)
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
     standard_out = None
     if standard is not None:
         text = standard["body"]["text"]
@@ -36,28 +52,43 @@ def trace_claim(ledger: Any, claim_id: str) -> dict:
     evidence = []
     for eid in claim["evidence_ids"]:
         try:
-            body = ledger.get("evidence", eid)
+            try:
+                body = ledger.get("evidence", eid)
+            except (RecursionError, MemoryError):
+                raise LedgerError("a stored JSON record exceeds decoder limits") from None
         except KeyError:
             problems.append(f"evidence {eid!r} named by the claim is not in the ledger")
             continue
         control = None
         if body["negative_control_ref"]:
             try:
-                cbody = ledger.get("evidence", body["negative_control_ref"])
+                try:
+                    cbody = ledger.get("evidence", body["negative_control_ref"])
+                except (RecursionError, MemoryError):
+                    raise LedgerError("a stored JSON record exceeds decoder limits") from None
                 control = {"evidence_id": body["negative_control_ref"], "result": cbody["result"],
                            "scope": cbody["scope"], "hash_ok": _body_ok(ledger, "evidence", body["negative_control_ref"])}
             except KeyError:
                 problems.append(f"negative control {body['negative_control_ref']!r} is not in the ledger")
+        parts, _ = read_about(read_binding(body["source_ref"]))
         evidence.append({"evidence_id": eid, "purpose": body["purpose"], "role": roles.get(eid, "ignored"),
                          "oracle_category": body["oracle_category"],
                          "result": body["result"], "scope": body["scope"], "source_ref": body["source_ref"],
                          "fixture_version": body["fixture_version"], "known_limitations": body["known_limitations"],
                          "hash_ok": _body_ok(ledger, "evidence", eid), "negative_control": control,
-                         "contaminated": body["fixture_version"] in contaminated})
+                         # Trace metadata retains incidents against either name, even when custody refuses the record.
+                         "contaminated": (fixture_contaminated(parts.fixture, contaminated)
+                                          or fixture_contaminated(body["fixture_version"], contaminated))})
     cited = set(claim["evidence_ids"])
-    episodes = [{"episode_id": e["id"], "outcome_state": e["body"]["outcome_state"], "head": e["body"]["head"],
-                 "known_unknowns": e["body"]["known_unknowns"]}
-                for e in ledger.entries() if e["kind"] == "episode" and cited & set(e["body"]["evidence_refs"])]
-    return {"claim": claim, "standard": standard_out, "evidence": evidence, "episodes": episodes, "verdict": verdict,
-            "limits": verdict["limits"], "ledger_head": ledger.head(), "ledger_ok": not problems, "problems": problems,
-            "anchored": getattr(ledger, "expect_head", None) is not None}
+    try:
+        episodes = [{"episode_id": e["id"], "outcome_state": e["body"]["outcome_state"], "head": e["body"]["head"],
+                     "known_unknowns": e["body"]["known_unknowns"]}
+                    for e in ledger.entries() if e["kind"] == "episode" and cited & set(e["body"]["evidence_refs"])]
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None
+    try:
+        return {"claim": claim, "standard": standard_out, "evidence": evidence, "episodes": episodes, "verdict": verdict,
+                "limits": verdict["limits"], "ledger_head": ledger.head(), "ledger_ok": not problems, "problems": problems,
+                "anchored": getattr(ledger, "expect_head", None) is not None}
+    except (RecursionError, MemoryError):
+        raise LedgerError("a stored JSON record exceeds decoder limits") from None

@@ -26,8 +26,9 @@ _PACKAGE = Path(g6.harness.workflow.__file__).parent
 
 
 def _off(monkeypatch, value):
-    if value is None:
+    if value is None:      # unset with an off default: the default is on since the owner's ruling of 2026-11-25
         monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+        monkeypatch.setattr(policy, "ON_BY_DEFAULT", False)
     else:
         monkeypatch.setenv(policy.RECORD_ENV, value)
     assert policy.enabled()[0] is False
@@ -193,7 +194,7 @@ def test_every_writer_in_the_package_is_classified_and_the_admitted_ones_pass_th
             assert "admit(" not in source, name
     # a ledger is built in the store module only, so every entry is appended through Chain.open or Chain.keep
     assert {module for (module, name), calls in found.items() if "ChainLedger" in calls} == {"_store"}
-    assert set(policy.WRITTEN_WHEN_OFF) == {policy.INSPECTION, policy.RECEIPTS}
+    assert set(policy.WRITTEN_WHEN_OFF) == {policy.INSPECTION, policy.RECORD_MD, policy.RECEIPTS}
 
 
 def _function(module: str, name: str):

@@ -79,10 +79,13 @@ def test_each_limit_is_answered_by_components_that_exist(client):
 def test_the_two_parts_and_where_the_components_came_from_are_on_the_home_page_and_the_components_page(client):
     home = _text(client.get("/").content.decode().split('id="two-parts"', 1)[1].split("</section>", 1)[0])
     assert "The meta-harness learns" in home and "The components know how AI fails" in home
-    assert "batteries included" in home and "250 million tokens" in home and "a periodic table of intelligence" in home
+    # plan revision 8, E: the "250 million tokens" figure has no record behind it, so it stays out of the copy
+    assert "batteries included" in home and "a periodic table of intelligence" in home
+    assert "reviewing how agents fail" in home and "250 million" not in home
     components = _text(client.get("/components/").content.decode().split('class="wrap page-hero"', 1)[1]
                        .split("</header>", 1)[0])
-    assert "one of G6's two parts" in components and "250 million tokens" in components
+    assert "one of G6's two parts" in components and "failure traces were reviewed" in components
+    assert "250 million" not in components
 
 
 def test_the_home_page_says_how_g6_learns_differently_and_points_to_the_theory(client):
@@ -90,8 +93,9 @@ def test_the_home_page_says_how_g6_learns_differently_and_points_to_the_theory(c
     section = page.split('id="learning"', 1)[1].split("</section>", 1)[0]
     text = _text(section)
     for part in ("learns explicitly, through the harness", "From its own experiments", "From plain words",
-                 "With a model of itself", "nothing in its design caps how far it can go"):
+                 "With a model of itself", "how far it gets has not been measured in general"):
         assert part in text, part
+    assert "nothing in its design caps" not in text          # plan revision 8, E: no unmeasured reach claim
     assert 'href="/research/#theory"' in section and 'id="theory"' in client.get("/research/").content.decode()
 
 
@@ -100,3 +104,36 @@ def test_no_page_calls_a_result_a_proof_of_concept(client):
     for path in public_paths():
         text = _text(client.get(path).content.decode()).lower()
         assert "proof of concept" not in text and "proof-of-concept" not in text, path
+
+
+def test_the_home_and_research_pages_claim_no_more_than_the_code_does(client):
+    # plan revision 8, E (review 2 of the entry branch): the home page's answers say what the FAQ says
+    answers = {limit["key"]: limit["answer"] for limit in narrative.LIMITS}
+    assert "checks each claim against your sources" not in answers["hallucination"]
+    assert "word by word" in answers["hallucination"] and "not a reading of meaning" in answers["hallucination"]
+    assert "forgets nothing" not in answers["learning"] and "rolled back" in answers["learning"]
+    assert "gates every action" not in answers["safety"] and "actions that go through it" in answers["safety"]
+    assert "answers each limit" not in narrative.__doc__
+    home = _text(client.get("/").content.decode())
+    assert "Every action gated" not in home and "Actions that go through G6 are gated" in home
+    research = _text(client.get("/research/").content.decode())
+    assert "when G6 engineers the harness" not in research and "Larger models engineer the harness" not in research
+
+
+def test_the_home_page_scopes_approval_labels_and_judging_to_what_the_code_does(client):
+    # review 3 of the entry branch: a new meta-harness version goes live only on a person's yes (its drift monitor may
+    # move back to an approved one by itself); a decision is blocked when the judging code differs from what was
+    # confirmed (it is not out of reach); the three labels come with results through G6's doors, not every result
+    home = _text(client.get("/").content.decode())
+    for overclaim in ("Nothing changes until you say yes", "Every change is recorded, and can be rolled back",
+                      "can never touch the checks that judge it", "Every result carries one of three labels",
+                      "Every change still needs your approval"):
+        assert overclaim not in home, overclaim
+    assert "A new version goes live only when you say yes" in home
+    assert "differs from the code you confirmed" in home
+    # Follow-up review 3 F5: only checks/work tools carry completion_state; discovery replies do not.
+    # Keep the MCP scope from review 1; the frozen command line still prints only its result field.
+    assert "Results of G6's checks and work tools returned over its MCP server carry one of three labels" in home
+    assert "MCP server or CLI carries" not in home
+    assert "An operation that fails while running is reported as a failure" in home
+    assert "the meta-harness puts no new version live without your approval" in home

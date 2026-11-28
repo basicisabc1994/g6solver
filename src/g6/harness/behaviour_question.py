@@ -42,6 +42,8 @@ question pending (``PENDING``), reported, to be answered later.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import builtins
 import re
@@ -125,7 +127,10 @@ def encoded(value: Any) -> str:
 
 def decoded(text: str) -> Any:
     """A value ``encoded`` wrote, read back: the one reader of the probe's text."""
-    return json.loads(text)
+    try:
+        return _decode_json(text)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 # --- candidates ---------------------------------------------------------------------------------------------------------
@@ -215,6 +220,12 @@ class Candidate:
             if source != "differential" or not isinstance(probe_sha256, str) or not _HEX64.fullmatch(probe_sha256):
                 raise CandidateRefused("a probe digest names G6's differential runner")
             record["probe_sha256"] = probe_sha256
+        # Caller text that crossed G6's MCP ingress carries G6's own reply receipt; the record holds plain str.
+        from g6.core.external_data import PlainTextLimit, plain_text
+        try:   # a bounded walk: a record holding itself, or past the limits, is refused as input
+            record = plain_text(record)
+        except PlainTextLimit as exc:
+            raise CandidateRefused(f"a candidate is JSON data: {exc}") from None
         for name in ("requirement_id", "function", "cited", "scope", "rule"):
             if type(record[name]) is not str:
                 raise CandidateRefused(f"a candidate's {name} is text")

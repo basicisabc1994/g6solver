@@ -42,3 +42,27 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["BRAVE_KEY", "SEARCHERS", "SEARXNG", "SENSITIVE_OPS", "BraveSearcher", "CtxSearchBlock", "CtxSearchInput",
            "SearchRefused", "SearchResult", "SearxngSearcher", "search", "web"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_KNOWLEDGE_SEARCHED_WEB": "none",
+    "G6_E_KNOWLEDGE_SEARCH_AUTH_FAILED": "none",
+    "G6_E_KNOWLEDGE_SEARCH_BACKEND": "none",
+    "G6_E_KNOWLEDGE_SEARCH_BACKENDS": "none",
+    "G6_E_KNOWLEDGE_SEARCH_BLOCKED": "person",
+    "G6_E_KNOWLEDGE_SEARCH_EMPTY": "none",
+    "G6_E_KNOWLEDGE_SEARCH_ENGINES_FAILED": "none",
+    "G6_E_KNOWLEDGE_SEARCH_HTTP_ERROR": "none",
+    "G6_E_KNOWLEDGE_SEARCH_INPUT": "input",
+    "G6_E_KNOWLEDGE_SEARCH_NOT_ALLOWED": "person",
+    "G6_E_KNOWLEDGE_SEARCH_NOT_FOUND": "none",
+    "G6_E_KNOWLEDGE_SEARCH_PARSE_FAILED": "none",
+    "G6_E_KNOWLEDGE_SEARCH_PARTIAL": "none",
+    "G6_E_KNOWLEDGE_SEARCH_RATE_LIMITED": "retry",
+    "G6_E_KNOWLEDGE_SEARCH_REFUSED": "none",
+    "G6_E_KNOWLEDGE_SEARCH_REJECTED": "none",
+    "G6_E_KNOWLEDGE_SEARCH_SERVER_ERROR": "none",
+    "G6_E_KNOWLEDGE_SEARCH_TIMEOUT": "person",
+    "G6_E_KNOWLEDGE_SEARCH_TOO_LARGE": "person",
+}

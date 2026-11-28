@@ -13,6 +13,8 @@ outcome is ``{"ok": value}`` or ``{"error": message}``; values are JSON.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import builtins
 import itertools
 import json
@@ -65,7 +67,10 @@ def _compiled(sketch: dict, control: dict[int, Any]):
 
 
 def _json(value: Any) -> Any:
-    return json.loads(json.dumps(value, allow_nan=False))
+    try:
+        return _decode_json(json.dumps(value, allow_nan=False))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def same(a: Any, b: Any) -> bool:
@@ -177,7 +182,10 @@ def _search(request: dict) -> dict:
 
 
 def main() -> int:
-    request = json.loads(sys.stdin.read())
+    try:
+        request = _decode_json(sys.stdin.read())
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     _limit(int(request.get("mem_mb", 512)), int(request.get("cpu_s", 30)))
     op = request.get("op")
     reply = _evaluate(request) if op == "evaluate" else _search(request) if op == "search" else {

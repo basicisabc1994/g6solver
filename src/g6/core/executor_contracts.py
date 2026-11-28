@@ -7,6 +7,8 @@ The existing workforce authorizes dispatch and independently judges artifacts.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import hashlib
 import json
 from datetime import datetime
@@ -51,7 +53,10 @@ def _json(text: str) -> str:
     def invalid(value):
         raise ValueError(f"non-finite JSON constant {value}")
 
-    value = json.loads(text, parse_constant=invalid)
+    try:
+        value = _decode_json(text, parse_constant=invalid)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     if not isinstance(value, (dict, list)):
         raise ValueError("the payload must be a JSON object or array")  # noqa: TRY004 - Pydantic validation error
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
@@ -162,8 +167,11 @@ class InferenceRequest(Record):
     @field_validator("settings_json")
     @classmethod
     def settings_object(cls, value):
-        if not isinstance(json.loads(value), dict):
-            raise ValueError("settings must be a JSON object")  # noqa: TRY004 - Pydantic validation error
+        try:
+            if not isinstance(_decode_json(value), dict):
+                raise ValueError("settings must be a JSON object")  # noqa: TRY004 - Pydantic validation error
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return value
 
 

@@ -13,7 +13,8 @@ What a result can say, and nothing more:
   candidates' child (``G6_E_ISOLATION_UNAVAILABLE``; never a search result).
 
 ``boundary["isolation"]`` says how the candidates' children ran (``g6.core.confine.summary`` of every run: the first
-that was not confined, else the first).
+that was not confined, else the first); inside the agentic kernel's confined child, where candidates run in that
+child's process (``runner.inside_kernel_child``), it is that child's record.
 
 ``completion_state`` is ``qualified-draft`` for the first and ``blocked-escalated`` otherwise, never ``verified``
 (audit 027: the archive's ``verified`` was vacuous on reachable paths); ``to_envelope`` gives the library envelope.
@@ -24,12 +25,13 @@ its ``NoCounterexample`` lets the result stand; its ``Inconclusive`` makes the r
 verifier's degradation reason first in ``reason`` (audit 027, CG-008). ``boundary["verifier"]`` records what it said.
 """
 from __future__ import annotations
+from g6.core.guidance_builders import confine_summary
 
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from g6.cegis.runner import Runner, RunnerRefused, RunnerTimeout, SubprocessRunner
+from g6.cegis.runner import Runner, RunnerRefused, RunnerTimeout, default_runner
 from g6.cegis.sketch import Control, Sketch
 from g6.cegis.verify import (
     Counterexample,
@@ -108,7 +110,7 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
 def _cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner | None, max_iterations: int,
            timeout_s: float, max_exhaustive: int, verifier: Verifier | None,
            runs: list[dict[str, Any]]) -> CegisResult:
-    runner = runner or SubprocessRunner()
+    runner = runner or default_runner()
     started = time.monotonic()
     inputs = domain.inputs()
     cases = answered(oracle, inputs)
@@ -125,7 +127,7 @@ def _cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runne
         boundary = {"domain": domain.describe(), "answered": len(cases), "skipped": skipped, "compared": compared,
                     "search": methods[-1] if methods else None, "examples": len(examples),
                     "elapsed_s": round(time.monotonic() - started, 3), "model_calls": 0,
-                    "isolation": confine.summary(runs)}
+                    "isolation": getattr(runner, "isolation", None) or confine_summary(runs)}
         if verifier is not None:  # audit 027, CG-004: what the verifier said in this run, not a default
             boundary["verifier"] = dict(said)
         program = sketch.instantiate(control) if control is not None else ""

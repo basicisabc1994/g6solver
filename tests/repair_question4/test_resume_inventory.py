@@ -148,10 +148,12 @@ def test_differential_patch_observation_receives_the_review_copy_binding(tmp_pat
     assert seen and all(binding is before for binding in seen)
 
 
-def test_owned_probe_can_be_saved_and_shown_through_the_product_dialog(tmp_path, monkeypatch):
+def test_owned_probe_can_be_saved_and_shown_through_the_product_dialog(tmp_path, monkeypatch, accepted_cloud_dialog):
     import asyncio
     import subprocess
+    from g6.core import cloud_consent as cloud
     from g6.core import confine
+    from g6.core.storage import g6_home
     from g6.mcp import review_reply
     from g6.workforce import repo_tests
     from tests.repair_question2.helpers import Dialog
@@ -180,7 +182,13 @@ def test_owned_probe_can_be_saved_and_shown_through_the_product_dialog(tmp_path,
     custody = json.loads(Path(saved).with_suffix('.observations.json').read_bytes())
     assert len(custody['executions']['difference']) == 3
     dialog = Dialog(action='decline')
-    got = asyncio.run(behaviour.confirm(dialog, str(root), TASK, review_job=job, template_instances=[instance]))
+    # a known client asks (since 107f3bac an unknown one is refused before a question) and reads the saved review
+    # under its sources (ac7ee88b), which the person shared with it
+    accepted_cloud_dialog(cloud.repository_source(g6_home() / 'reviews'), 'openai:codex', text=job)
+    with cloud.collect_sources() as capture:
+        capture.client = ('openai:codex', dialog.session)
+        capture.supplied.add(cloud.input_source(json.dumps({'repo': str(root), 'task': TASK}, sort_keys=True)))
+        got = asyncio.run(behaviour.confirm(dialog, str(root), TASK, review_job=job, template_instances=[instance]))
     assert got['status'] == behaviour.PENDING, got
     assert len(dialog.messages) == 1
     assert "Evidence (G6's own runs in a review):" in dialog.messages[0]

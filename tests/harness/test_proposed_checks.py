@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,7 +37,7 @@ TESTS = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 ADD = "test_calc.py::test_add"
 R1 = [{"id": "R1", "text": "add returns the sum of two integers", "checks": [ADD]}]
 COMPLETION = {"demonstrated", "not_established", "defects_reproduced", "preservation", "test_adequacy",
-              "open_questions", "activities"}
+              "open_questions", "activities", "neighbourhood"}
 
 
 def check(ident, intent, file, source, requirement="R1", test=""):
@@ -618,6 +619,8 @@ def test_a_change_check_that_failed_on_the_patch_keeps_its_failure_when_the_base
     (repo / "calc.py").write_text(INCOMPLETE)
     Tiers(monkeypatch)
     stage = Stage(monkeypatch, {NEGATIVE["source"]: {"patch": "failed", "base": "passed"}}, advance=10.0)
+    # db861331 reserves closing time. Share the stage clock so setup cannot consume the patch run's margin.
+    monkeypatch.setattr(patch_review, "time", SimpleNamespace(monotonic=verification_search._clock))
     got = review(repo, timeout_s=12, proposed_checks=[NEGATIVE])
     found = _activity(got, "c-neg")
     assert found["result"] == "unconfirmed_failure", found

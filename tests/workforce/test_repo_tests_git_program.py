@@ -49,7 +49,9 @@ def test_a_git_exe_in_the_current_folder_is_never_the_git_that_runs(repo, tmp_pa
 
 def test_no_argv_g6_starts_begins_with_a_bare_git():
     # the list form was already guarded (test_outside's test_programs_are_found_only_through_this_module); a tuple too
-    bare = re.compile(r"""[\[(]\s*["']git(?:\.exe)?["']\s*,""")
+    # a tool's outside=("git",) in skills/corpus.py (7c4b8882) names the program it needs, for the selector; it is
+    # no argv and starts nothing
+    bare = re.compile(r"""(?<!outside=)[\[(]\s*["']git(?:\.exe)?["']\s*,""")
     hits = [f"{path.relative_to(SRC).as_posix()}:{number}" for path in sorted(SRC.rglob("*.py"))
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if bare.search(line)]
     assert hits == []

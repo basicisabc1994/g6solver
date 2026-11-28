@@ -197,6 +197,30 @@ def _seeded_controls(wf, mission_id: str, standard: dict, sha: str) -> None:
             "executed": True, "killed": True}, idem_key=f"coding:control:mutant:{node}")
 
 
+def workflow_justification(missions, mission_id: str, standard: dict) -> dict:
+    """Task-local workflow citations, read only; no workforce workflow writer exists."""
+    from g6.harness.workflow import evidence
+
+    try:
+        mission = missions.get(mission_id)
+        repo = bench._repo(standard["repository"], mission["venture_id"])
+        held = evidence.read(repo, mission["objective"]) if repo is not None else {}
+        refs = held.get("justification") or []
+        if refs:
+            from g6.core import cloud_consent as cloud
+            from g6.harness.workflow.record import workflow_source
+            project = held["events"][0]["project"]
+            cloud.record_sources((cloud.Source.text(workflow_source(project), "certificate-task-events",
+                                                    json.dumps(refs, sort_keys=True)),))
+        incomplete = evidence.check_counts([evidence.Event.from_body(e) for e in evidence.matched(held)])[
+            "identities_incomplete"]
+        return {"events": refs, **({"note": "no recorded events for this task"} if not refs else {}),
+                **({"identities_incomplete": True,
+                    "note": "check identities are incomplete; omitted findings remain unresolved"} if incomplete else {})}
+    except Exception:  # noqa: BLE001 - absent record custody never becomes a certificate observation
+        return {"events": [], "note": "no recorded events for this task"}
+
+
 def certify(missions, ledger, mission_id: str) -> Certificate:
     """The certificate for the patch's latest bytes under the mission's frozen standard (``CertificateRefused`` when the
     records cannot support one: no frozen standard event or no patch)."""
@@ -246,11 +270,13 @@ def certify(missions, ledger, mission_id: str) -> Certificate:
     artifact = Artifact(latest["sha256"], f"worker:{latest['producer']}", at[latest["artifact_id"]])
     # EVIDENCE-01: the controls and receipts G6's runs recorded for this mission go to a ledger the issuer resolves
     # them in; a repeated id is refused, never resolved twice.
-    observed = ChainLedger()
     try:
+        observed = ChainLedger()
         certificates.record(observed, *(c for found in controls.values() for c in found), *receipts)
     except LedgerError as exc:
         raise certificates.CertificateRefused([str(exc)]) from None
+    except (RecursionError, MemoryError):
+        raise certificates.CertificateRefused(["a recorded control or receipt exceeds the decoder's limits"]) from None
     return certificates.issue(facts, artifact, checks, receipts, decisions=_approved(missions, mission_id, facts.gates),
                               ledger=observed)
 
@@ -283,7 +309,8 @@ def decided(missions, ledger, mission_id: str, outcome: Outcome, *, unchecked: t
                   if v["artifact_id"] == latest["artifact_id"] and v["executed"] and v["result"] == "pass"}
         all_passed = checks <= passed
     gaps = "; ".join(subject for subject, _ in cert.gaps)[:300]
-    found: dict[str, Any] = {"certificate": cert.as_dict()}
+    found: dict[str, Any] = {"certificate": cert.as_dict(), "justification": workflow_justification(
+        missions, mission_id, missions.acceptance(mission_id).metadata["coding"])}
     recorded = recorder_gap(cert)
     if recorded:  # beside the issuer's certificate, whose fields its digest and verify() bind
         found["certificate_gaps"] = [["receipts", recorded]]

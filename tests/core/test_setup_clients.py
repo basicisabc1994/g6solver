@@ -10,6 +10,7 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     from g6.cli import setup
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CODEX_HOME", raising=False)   # setup offers Codex an AGENTS.md block: only in this home
     monkeypatch.setattr(setup, "isolation", lambda *a: 0)
     monkeypatch.setattr(setup, "STEPS", ())   # STEPS holds the isolation step itself, as imported
     calls = []
@@ -27,6 +28,7 @@ def _registering(tmp_path, monkeypatch, returncode=0):
     from g6.cli import setup
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CODEX_HOME", raising=False)   # setup offers Codex an AGENTS.md block: only in this home
     monkeypatch.setattr(setup, "isolation", lambda *a: 0)
     monkeypatch.setattr(setup, "STEPS", ())   # STEPS holds the isolation step itself, as imported
     monkeypatch.setattr("g6.core.outside.find_program", lambda name: f"C:/tools/{name}.exe")

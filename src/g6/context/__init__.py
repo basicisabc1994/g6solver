@@ -84,3 +84,38 @@ __all__ = ["compress", "fuse", "RerankDecision", "validate_rerank_decision", "AU
            "build_packet", "estimate_tokens", "find_conflicts", "load_handle", "merge_context_items", "prune_packet",
            "rescore_packet", "score_packet", "scrub", "select_within_budget", "subagent_packet",
            "synthesize_subagent_results", "validate_name"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_CONTEXT_AUTHORITY_CONFLICT": "person",
+    "G6_E_CONTEXT_BUDGET_EXCEEDED": "person",
+    "G6_E_CONTEXT_BUDGET_TOO_SMALL": "person",
+    "G6_E_CONTEXT_COMPRESSION_BUDGET": "person",
+    "G6_E_CONTEXT_COMPRESSION_INPUT": "input",
+    "G6_E_CONTEXT_EMPTY_RETRIEVAL": "none",
+    "G6_E_CONTEXT_FUSION_BUDGET": "person",
+    "G6_E_CONTEXT_FUSION_INPUT": "input",
+    "G6_E_CONTEXT_HANDLE_ESCAPES_ROOT": "input",
+    "G6_E_CONTEXT_HANDLE_INVALID": "input",
+    "G6_E_CONTEXT_HANDLE_NOT_CANDIDATE": "none",
+    "G6_E_CONTEXT_HANDLE_NOT_FOUND": "input",
+    "G6_E_CONTEXT_RERANKER_FALLBACK": "none",
+    "G6_E_CONTEXT_RERANKER_USED": "none",
+    "G6_E_CONTEXT_RERANK_INVALID": "input",
+    "G6_E_CONTEXT_RETRIEVAL_TRUNCATED": "none",
+    "G6_E_CONTEXT_ROOT_MISSING": "none",
+    "G6_E_CONTEXT_STALE": "person",
+    "G6_E_CONTEXT_SUMMARY_FALLBACK": "none",
+    "G6_E_CONTEXT_TASK_MISSING": "input",
+    "G6_E_CONTEXT_UNREADABLE_FILES": "none",
+    "G6_E_CONTEXT_UNSAFE_NAME": "none",
+    "G6_E_CONTEXT_UNSAFE_PATH": "none",
+    "G6_E_CONTEXT_UNTRUSTED_TEXT": "person",
+    "G6_E_CONTEXT_UNVERIFIED": "none",
+    "G6_E_CONTEXT_WINDOW_COMPRESSED": "none",
+    "G6_E_CONTEXT_WINDOW_COUNT": "none",
+    "G6_E_CONTEXT_WINDOW_ESTIMATE": "none",
+    "G6_E_CONTEXT_WINDOW_TOO_SMALL": "none",
+    "G6_E_CONTEXT_WINDOW_TRIMMED": "none",
+}

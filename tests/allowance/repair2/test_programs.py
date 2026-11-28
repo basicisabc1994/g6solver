@@ -148,7 +148,7 @@ TAKEN = {
     "store.py": {"os": {"fsync", "replace", "environ", "path"}},
 }
 OWN = {"g6.allowance", "g6._allowance", "g6._allowance.advice", "g6._allowance.programs", "g6._allowance.readers",
-       "g6._allowance.store", "g6.self_maintenance.usage"}
+       "g6._allowance.store", "g6.self_maintenance.usage", "g6._decoder_limits"}
 
 
 def test_the_feature_starts_two_programs_and_each_is_resolved_first():

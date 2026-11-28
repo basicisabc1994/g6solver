@@ -357,6 +357,10 @@ def test_k_host_configuration_path_cannot_inherit_named_repository_scope(tmp_pat
     monkeypatch.setattr(loop, 'critic_host', lambda: None)
     monkeypatch.setattr(loop, 'scout_host', lambda: None)
     monkeypatch.setattr(loop.keys, 'path', lambda: Path('PLANTED_UNSHARED_HOST_CONFIGURATION'))
+    # The owner's ruling R1 (38628f4c): with no reviewer approved the step runs the model-free review, whose report
+    # names the key file; the review and the patch's text are stood in for here.
+    monkeypatch.setattr(loop.repo_tests, 'diff_text', lambda *a: 'patch')
+    monkeypatch.setattr(loop, 'review_patch', lambda repo, **asked: {'assessment': {'report': 'THE REVIEW'}})
     server = build_server()
     @server.tool()
     def local_review(repo: str, task: str) -> dict:

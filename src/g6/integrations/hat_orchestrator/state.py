@@ -2,6 +2,8 @@
 """Bounded typed state with atomic replacement and a fail-closed cross-process writer lock."""
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import os
 from contextlib import contextmanager
@@ -78,7 +80,10 @@ class Store:
             content = stream.read(self.max_bytes + 1)
         if len(content) > self.max_bytes:
             raise Refusal(RESOURCE_LIMIT, "Orchestrator state exceeds 1 MiB; ask the operator to archive records.")
-        return Snapshot.model_validate(json.loads(content))
+        try:
+            return Snapshot.model_validate(_decode_json(content))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @property
     def backup_path(self):
@@ -116,7 +121,10 @@ class Store:
             content = stream.read(65_537)
         if len(content) > 65_536:
             raise Refusal(RESOURCE_LIMIT, "Operator roster exceeds 64 KiB.")
-        return Policy.model_validate(json.loads(content))
+        try:
+            return Policy.model_validate(_decode_json(content))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
     @contextmanager
     def transaction(self):

@@ -1,8 +1,19 @@
 # Developer quickstart
 
-**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+**Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 G6 is a Python library (3.12 or 3.13). Every component works on its own and declares any other component it uses.
+
+For the agentic library route (`from g6._agentic.kernel import run`), the trust boundary is the process. Your
+responders, validators and caller objects run with your own authority in your process. The kernel's original-first
+execution, seals and digests, single use, authority record, confined child and prohibition on using substitutes as
+evidence apply against the MCP client, model replies and child; they do not defend against Python you run in the
+same process on your own objects. Callable pins check accidental changes on a best-effort basis. Code reached through a responder's module globals, and functions held in
+defaults, dictionary values, partial arguments, tuples or lists in closures, instance attributes or a followed class's
+properties, are not followed (review 3 F1: `default_function`, `dict_value`,
+`partial_argument`); in-process seal discovery and rewriting with `gc.get_referrers` is also outside the boundary
+(F4). Over MCP, `g6_agentic_run` accepts data only and builds a caller from G6's own provider callers; a client cannot
+supply a responder, validator or caller object. A substitute remains qualified-draft at best.
 `g6.harness` is the one place they are composed: a standard (a goal and its checks) runs through intake, plan,
 execute, adjudicate and remember.
 
@@ -99,15 +110,22 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
-56 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`;
+70 MCP tools: six discovery tools, `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_select`, which proposes a few checked next calls for the agent's situation and reroutes after a refusal;
 `g6_allowances` for both providers' quota windows and advisory pacing; `g6_review_patch`;
-`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
+`g6_review_until_clean`; `g6_agentic_run`, which runs a confined model substitute for a declared part after a declared limit or computation failure, or replaces a successful answer when the caller names a part. Remote admission records provider consent; local admission records local model; process callers record allowed in code; refusal records refused by the consent check. The model is named and the original answer kept beside it; `g6_premortem` and six `g6_mission_*` tools for a coding mission; `g6_confirm_behaviour`, one behaviour question for the person; six `g6_improve_*` tools for G6's self-improvement loop;
 thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow); four sharing tools,
 `g6_cloud_grant`, `g6_cloud_revoke`, `g6_cloud_grants` and `g6_disclosures` ([cloud sharing consent](#cloud-sharing-consent));
 eleven `g6_knowledge_*` tools for the Context Engine, which searches the person's own folders on their machine;
 and five tools for [the workflow record](#the-workflow-record), `g6_workflow_export`, `g6_workflow_correct`,
-`g6_workflow_delete`, `g6_suggestion_decide` and `g6_feedback`. The agent finds a component
-by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
+`g6_workflow_delete`, `g6_suggestion_decide` and `g6_feedback`.
+Twelve distillation routes record failures (`g6_failure_record`), manage training-only synthesis jobs
+(`g6_distill_start`, `g6_distill_job`), inspect the library and request decisions (`g6_library`,
+`g6_library_decide`), read a self-model and simulate with trusted host inputs (`g6_self_model`, `g6_simulate`),
+record capability requests (`g6_extend`), and control bounded host research (`g6_research_start`,
+`g6_research_stop`, `g6_research_status`, `g6_research_digest`). Research requires owner authority and trusted
+host capabilities; predictions and requests grant no admission authority. The agent finds a component
+by describing its task, reads what the component can do and how mature it is, then calls one op. Replies from
+G6's checks and work tools on the MCP server carry
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.
 
@@ -252,7 +270,7 @@ nothing. A local loopback model needs no cloud grant. Claude Code and Codex sign
 ## The workflow record
 
 G6 can keep a local record of its own review work on a task (runs, rounds, questions, tool calls and their times). It is
-off until the person sets `G6_WORKFLOW_RECORD=on` where the server is registered. It is the person's data and has its own
+on by default; the person turns it off with `G6_WORKFLOW_RECORD=off` where the server is registered. It is the person's data and has its own
 source, `workflow:<the repository's identifier>`, which a grant for the repository does not cover.
 
 - `g6_workflow_export(repo)` writes `inspection.json` for the person to open; the reply never repeats the file.

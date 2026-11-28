@@ -13,7 +13,7 @@ from g6.mcp import build_server, review_loop
 from g6.mcp.cloud_consent import request_grant
 
 
-@pytest.mark.parametrize('change', ['none', 'report', 'state'])
+@pytest.mark.parametrize('change', ['none', 'report', 'state', 'declined'])
 @pytest.mark.parametrize('detail', ['full', 'compact'])
 def test_completed_review_keeps_granted_report_but_never_relabels_replacements(tmp_path, monkeypatch, change, detail):
     class Dialog:
@@ -46,10 +46,13 @@ def test_completed_review_keeps_granted_report_but_never_relabels_replacements(t
     server = build_server()
     async def run():
         context = SimpleNamespace(session=Dialog(), request_id='grant')
+        # Only the named sources are shared: the call's own input goes back to the client that sent it.
         for scope in ('shared-document', 'completion_history', 'host_configuration', 'jobs',
-                      cloud.repository_source(repo), cloud.input_source(task),
-                      cloud.input_source(json.dumps(args, sort_keys=True))):
+                      cloud.repository_source(repo)):
             assert (await request_grant(context, scope, 'openai:codex'))['status'] == 'granted'
+        if change == 'declined':
+            # the person's explicit "no" for the call's input still withholds the reply
+            cloud.revoke(cloud.input_source(json.dumps(args, sort_keys=True)), 'openai:codex')
         async with Client(server, client_info=Implementation(name='codex', version='test')) as client:
             handle = (await client.call_tool('g6_review_until_clean', args)).data['job_id']
             for _ in range(100):

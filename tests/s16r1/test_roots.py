@@ -125,9 +125,32 @@ SOURCE_SITES = {
     'g6.mcp.consent_controls.public_instructions',
     'g6.mcp.consent_transport._Stream.send',
     'g6.mcp.consent_transport._Stream.send.handoff',
-    'g6.mcp.mission.reply',
+    # 0b400900 (rc-030): the one guarded freeze of a reply moved into core (external_data.freeze_output, which detached
+    # calls); mcp.mission.reply now takes its sources through detached and calls no consent builder itself, so it left
+    # the list. Planted case: tests/core/test_repair_external_guidance.py,
+    # test_default_filter_preserves_existing_source_custody (a bound source survives the freeze).
+    'g6.core.external_data.freeze_output',
+    # 2026-11-16 (repair 1): g6_confirm_behaviour's read of a saved review carries that review's recorded sources
+    # (planted in tests/s16r3/test_review_binding_reaches_confirm.py)
+    'g6.mcp.behaviour._carried',
+    # Repair 2: asked entries retain the capture's sources and exact input ids; pending_sources restores them only
+    # for the original provider/session, and _shared runs the common pre-dialog refusal check. Planted cases:
+    # tests/s16r3/test_question_source_store.py (lost identity, other session/provider, legacy and revokes), and
+    # tests/s16r3/test_pending_question_sources.py (MCP retries, restart, and no dialog on refusal).
+    # Reply follow-up: the sources an asked entry retains are built by asking_sources, which _provenance records and
+    # g6_confirm_behaviour checks before it spends anything (tests/_review_reply4, tests/s16r3/test_reply_followup.py).
+    'g6.harness.question_store.asking_sources',
+    'g6.harness.question_store.pending_sources',
+    'g6.mcp.behaviour._shared',
     'g6.mcp.review_reply.finish',
+    # 2026-11-16: a saved review's sources, recorded beside it and read back by finish; a record that does not read
+    # back is the storage folder's source (planted in tests/s16r3/test_review_reaches_asker.py)
+    'g6.mcp.review_reply.record',
+    'g6.mcp.review_reply.carried',
     'g6.metaharness.jobs.Jobs._run',
+    # 2026-11-16 (repair 1): the submitting call's inputs as the sources of a reply derived from its job, for the same
+    # session and provider only (planted in tests/s16r3/test_review_reaches_asker.py)
+    'g6.metaharness.jobs.Jobs.origin_inputs',
     'g6.metaharness.jobs.Jobs._status_reply',
     'g6.metaharness.jobs.Jobs.start',
     'g6.metaharness.jobs.Jobs.status',
@@ -186,6 +209,24 @@ SOURCE_SITES = {
     'g6.mcp.workflow._noted',
     'g6.mcp.workflow._reply',
     'g6.mcp.workflow.attach',
+    # The owner's decision 1 (2026-11-16): G6's built-in catalogue is public, and an installed extension's text carries
+    # component_catalogue. Planted cases: tests/core/test_catalogue_exemption.py (without the grant an extension is
+    # left out of g6_components and g6_find and g6_describe of it is withheld; with it, shown and disclosed).
+    'g6.mcp.catalogue.carry',
+    # 3d45b793: a withheld reply's repair block reads its sources' ids to keep a sharing dialog the person declined
+    # closed in that session; it builds no source and sends nothing. Planted cases: tests/core/test_mcp_repair.py (a
+    # withheld reply carries the person's dialog) and tests/core/test_repair_boundaries_review1.py.
+    'g6.mcp.repair.consent_block',
+    # rc030-card (end-of-task card, from wire-evidence-fu2): each cited task event set is bound to the project's
+    # workflow source ("card-events", "certificate-task-events"), and evidence.read cites nothing when the asking
+    # client lacks that grant. Planted cases: tests/_review_evid_1/test_evidence_boundaries.py (unshared is withheld),
+    # tests/_review_evid_3/test_review3_boundaries.py (withheld cites nothing), tests/workflow/test_evidence_routes.py
+    # (refresh keeps the producer's own sources). evidence.outcome_sources builds no source: it is listed only because
+    # it takes a parameter named sources (check-file digests) in a module that imports cloud_consent's sha256.
+    'g6.mcp.workflow.finishing.refresh',
+    'g6.harness.completion_loop._record_report',
+    'g6.workforce.coding_certificate.workflow_justification',
+    'g6.harness.workflow.evidence.outcome_sources',
 }
 
 
@@ -537,10 +578,16 @@ def test_supplied_pointer_and_mismatched_input_bytes_cannot_grant(tmp_path):
         pass
 
 
-def test_retained_literal_is_not_supplied_again_by_polling_a_handle():
+@pytest.mark.parametrize('poller', ['same-session', 'other-session', 'other-provider'])
+def test_retained_literal_is_not_supplied_again_by_polling_a_handle(poller):
+    # Ruling of 2026-11-16: a job's own literal goes back to the session and provider that submitted it (it discloses
+    # nothing new); polling the handle from any other session or provider supplies nothing.
     from g6.metaharness.jobs import Jobs
-    from g6.mcp.cloud_consent import protect_reply
+    from g6.mcp.cloud_consent import client_provider, protect_reply
     session = SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(name='codex')))
+    other = SimpleNamespace(client_params=SimpleNamespace(clientInfo=SimpleNamespace(
+        name='claude-code' if poller == 'other-provider' else 'codex')))
+    polling = session if poller == 'same-session' else other
     literal = cloud.Source.text(cloud.input_source('PRIVATE_EARLIER_ARGUMENT'), 'argument', 'PRIVATE_EARLIER_ARGUMENT')
     jobs = Jobs()
     try:
@@ -550,12 +597,16 @@ def test_retained_literal_is_not_supplied_again_by_polling_a_handle():
             started = jobs.start(lambda: cloud.bind_output({'text': 'PRIVATE_EARLIER_ARGUMENT'}, (literal,)))
         jobs.close()
         with cloud.collect_sources() as capture:
-            capture.client = 'openai:codex', session
+            capture.client = client_provider(SimpleNamespace(session=polling)), polling
             reply = jobs.status(started['job_id'])
-            refused = protect_reply(SimpleNamespace(session=session), reply, cloud.output_sources(reply),
-                                    supplied=capture.supplied)
-            assert 'PRIVATE_EARLIER_ARGUMENT' not in str(refused)
-            assert literal.source_id not in capture.supplied
+            shown = protect_reply(SimpleNamespace(session=polling), reply, cloud.output_sources(reply),
+                                  supplied=capture.supplied)
+            if poller == 'same-session':
+                assert shown['result'] == {'text': 'PRIVATE_EARLIER_ARGUMENT'}
+                assert capture.supplied == {literal.source_id}
+            else:
+                assert 'PRIVATE_EARLIER_ARGUMENT' not in str(shown)
+                assert literal.source_id not in capture.supplied
         fresh = Jobs()
         try:
             assert fresh.status(started['job_id'])['ok'] is False
@@ -596,10 +647,13 @@ def test_local_sdk_can_use_new_unknown_sources():
 
 def test_operational_declarations_match_package_only_producers():
     operational = {name for name, contract in declarations.TOOLS.items() if contract.classes == ('g6_operational',)}
-    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke'}
-    # Read the actual producer bodies: fixed HELP, dialog adapter, ledger revocation.
+    # g6_components: G6's built-in catalogue is public (owner, 2026-11-16); an extension stays behind its grant.
+    # g6_self_model: G6's stop switch, its autonomy authority level and fixed 'unknown' readings, with their
+    # field provenance and a digest; nothing from the person (distill_backend.Service._local_snapshot).
+    assert operational == {'g6_help', 'g6_cloud_grant', 'g6_cloud_revoke', 'g6_components', 'g6_self_model'}
+    # Read the actual producer bodies: fixed HELP, dialog adapter, ledger revocation, gated listing.
     bodies = {}
-    for rel in ('src/g6/mcp/__init__.py', 'src/g6/mcp/cloud_consent.py'):
+    for rel in ('src/g6/mcp/__init__.py', 'src/g6/mcp/cloud_consent.py', 'src/g6/mcp/distill.py'):
         for node in ast.walk(ast.parse((ROOT / rel).read_text(encoding='utf-8'))):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in operational:
                 bodies[node.name] = ast.unparse(node)
@@ -607,7 +661,8 @@ def test_operational_declarations_match_package_only_producers():
     assert 'discovery.HELP' in bodies['g6_help']
     assert 'request_grant' in bodies['g6_cloud_grant']
     assert 'revoke' in bodies['g6_cloud_revoke']
-    assert 'source:component_catalogue' in declarations.TOOLS['g6_components'].classes
+    assert 'shown_components()' in bodies['g6_components']
+    assert 'backend.self_model' in bodies['g6_self_model']
 
 
 def operational_factories():
@@ -654,6 +709,9 @@ OPERATIONAL_FACTORIES = {
     # design section 17: a bad argument's fixed refusal, and the fixed refusal while suggestions are not admitted
     'g6.mcp.workflow._refused',
     'g6.mcp.workflow.decide',
+    # the override kernel's tool: its fixed refusal while agentic.run is not allowed, and the door's refusal of a
+    # sensitive op the person has not allowed (as invoke_reply does), neither carrying source content
+    'g6.mcp.agentic.register.g6_agentic_run',
 }
 
 

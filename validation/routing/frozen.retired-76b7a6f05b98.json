@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "7337dbe982f5b19d964dc6ee611d63c92379c8008d807a2b49f2da21c1b47070"
+  },
+  "reason": "2026-11-21 before any arm: tool and route text changed by the 0.3.0 wiring merges; re-frozen before any F0 arm runs. The bars are unchanged; the task-list pin follows the re-frozen list.",
+  "digest": "76b7a6f05b989762aa014b8a3fbd1cbd9d4979afb2c65012f8c2e8fe029b9463"
+}

@@ -13,6 +13,7 @@ This assumes a trusted client and host. Python callers and a same-user shell are
 """
 from __future__ import annotations
 
+import json
 import importlib.util
 import os
 import sys
@@ -233,7 +234,10 @@ class Surface:
             proposal = got["proposal"]
             key = f"{proposal.digest()}:{session}"
             if not mh.ledger.has(PROPOSED_BY, key):
-                mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
+                try:
+                    mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return as_json(got)
 
     @_surface_operation
@@ -266,7 +270,10 @@ class Surface:
         for proposal in made:
             key = f"{proposal.digest()}:{session}"
             if not mh.ledger.has(PROPOSED_BY, key):
-                mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
+                try:
+                    mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
+                except (RecursionError, MemoryError):
+                    raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         return as_json(got)
 
     @_surface_operation
@@ -327,7 +334,10 @@ class Surface:
         from g6.core.ledger import digest
         consent_id = digest(consent)
         if not mh.ledger.has("client_consent", consent_id):
-            mh.ledger.append("client_consent", consent_id, consent)
+            try:
+                mh.ledger.append("client_consent", consent_id, consent)
+            except (RecursionError, MemoryError):
+                raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         result = as_json(mh.activate(decision_digest, accepted_by=answer.strip(),
                                      candidate_digest=decision.candidate_digest))
         if result.get("warning_card", {}).get("code") == "G6_E_META_ACTIVATED":

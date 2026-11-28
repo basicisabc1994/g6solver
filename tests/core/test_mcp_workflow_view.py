@@ -200,6 +200,8 @@ def test_the_stop_hook_shows_the_report_first_and_the_block_only_with_the_grant(
 @pytest.mark.parametrize("name,value", [(policy.RECORD_ENV, "off"), (policy.RECORD_ENV, None), (view.VIEW_ENV, "off")])
 def test_with_the_record_or_the_view_off_every_path_is_exactly_as_before(repo, tmp_path, monkeypatch, name, value):
     monkeypatch.delenv(name, raising=False) if value is None else monkeypatch.setenv(name, value)
+    if value is None:      # unset with an off default: the default is on since the owner's ruling of 2026-11-25
+        monkeypatch.setattr(policy, "ON_BY_DEFAULT", False)
     with cloud.collect_sources():
         _as("openai:codex")
         reply = {"assessment": ASSESSMENT}
@@ -211,3 +213,17 @@ def test_with_the_record_or_the_view_off_every_path_is_exactly_as_before(repo, t
     assert said == {"systemMessage": REPORT}
     if name == policy.RECORD_ENV:
         assert not (tmp_path / "g6-home" / "workflow").exists()
+
+
+def test_by_default_the_record_is_kept_and_every_reply_is_as_before(repo, tmp_path, monkeypatch):
+    # owner ruling, 2026-11-25: with nothing set the record is on, and the optional view stays off
+    monkeypatch.delenv(policy.RECORD_ENV, raising=False)
+    monkeypatch.delenv(view.VIEW_ENV, raising=False)
+    with cloud.collect_sources():
+        _as("openai:codex")
+        done = tools.finishing(_finish, str(repo), TASK_TEXT)({"assessment": ASSESSMENT}, "job-1")
+        assert done == {"assessment": {"report": REPORT, "outcome": "defect_detected"}, "job_id": "job-1"}
+    said = _stop_hook(repo, tmp_path, monkeypatch, loop.Step(loop.STOP, text=REPORT, ending="clean"))
+    assert said == {"systemMessage": REPORT}
+    project, task = adapters.identities(repo, TASK_TEXT)
+    assert rec.ProjectRecord(project).events(task=task)

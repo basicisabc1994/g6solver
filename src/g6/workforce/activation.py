@@ -21,6 +21,8 @@ Not ported: the archive's ``python -m ... activation`` command (the CLI surface 
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Mapping
 from types import SimpleNamespace
@@ -387,7 +389,10 @@ def _history(missions: MissionStore) -> dict:
             " AND (json_extract(e.detail_json, '$.refs.learning_decision') IS NOT NULL"
             " OR json_extract(e.detail_json, '$.refs.learned_probe_promoted') IS NOT NULL) ORDER BY e.at, e.rowid",
             (missions.owner,)).fetchall():
-        refs = json.loads(detail or "{}")["refs"]
+        try:
+            refs = _decode_json(detail or "{}")["refs"]
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
         approved = refs.get("learned_probe_promoted") or {}
         decision = refs.get("learning_decision") or {
             "evidence": [{"key": approved.get("key")}],

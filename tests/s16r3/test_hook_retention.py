@@ -60,4 +60,7 @@ def test_every_literal_completion_file_producer_is_in_the_inventory():
                      'integrations/hat_orchestrator/state.py': {'state.json'},
                      # 018b67b (section 17 S2): ``_report_ref`` writes nothing and reads report.md only to put its
                      # sha256 in a workflow record reference; none of the report's text leaves it.
-                     'harness/workflow/adapters.py': {'report.md'}}
+                     'harness/workflow/adapters.py': {'report.md'},
+                     # 61e71811: self-rectification intake reads the reports of G6's own review loops
+                     # (review-*/.review/report.md) for their findings; it writes no completion file.
+                     'distill/findings.py': {'report.md'}}

@@ -1,0 +1,8 @@
+{
+  "retired": {
+    "bars_digest": "9ece1f1270b5c92be487a94db62aff4f8a7a01958b343a856d6080547620f043",
+    "tasks_digest": "2f2a93b80275212d0824539160be44155376f34b2d04e652bf7d0de40e6e694f"
+  },
+  "reason": "the end-of-task card fold (claude/rc030-card) rewrites the workflow tools' own text that the workflow route binds; no session has run; re-frozen before any arm",
+  "digest": "4c8196f57e258a670436e75dc1a258f0ba0816413b256db7230989b9d767364b"
+}

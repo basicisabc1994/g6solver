@@ -7,6 +7,9 @@ older ``g6-mcp``, or a tool the host did not allow). Removing the tool here leav
 
     python -P validation/routing/server.py <server id>      # G6_ROUTING_WITHHOLD=tool,tool
 
+Before each moment session the runner also builds it in its own process, in that session's G6 home, to ask whether a
+review's reply would come back there (``probe``); the home is made again before the session starts.
+
 Which G6 serves: the runner binds its tasks to the ``g6`` package it imported and hands this process that package's
 digest (``G6_ROUTING_G6``). This process is started by the client and imports whatever ``g6`` its interpreter finds;
 when that package's digest is another, it serves nothing and exits. Either way it writes which package it found to
@@ -93,6 +96,78 @@ def admit(server_id: str, environ: Any = None) -> tuple[str, bool]:
         Path(home, SERVED.format(server=server_id)).write_text(
             json.dumps({"server": server_id, "g6": found, "serves": serves}), encoding="utf-8")
     return found, serves
+
+
+#: The task a probe's review states: no session's own, so the probe's arguments are no session's.
+PROBE_TASK = "routing trial probe: does a review's reply come back from this G6 home"
+#: A client of the trials -> (the name it gives the server, the provider G6 reads from that name).
+PROBE_CLIENTS = {"claude_code": ("claude-code", "anthropic:claude_code"), "codex": ("codex", "openai:codex")}
+
+
+def probe(server_id: str, repo: str, client: str, seconds: float = 240.0) -> dict[str, Any]:
+    """Ask this process's G6 home (``G6_HOME``) whether a review's reply comes back to ``client``: G6's own server,
+    built as a trial session's is, takes one ``g6_review_patch`` on ``repo`` from that client over an in-memory MCP
+    connection and its job is polled once it ends. The caller allows the review (``G6_MCP_SENSITIVE``) and switches
+    model calls off. ``reply`` is ``returned``, ``withheld`` (G6's consent check withheld the poll's reply),
+    ``unfinished`` or ``error``; ``named`` is every source the withheld reply names, ``unshared`` those this home's
+    decisions do not share with the provider (the poll's own arguments aside: they are its literal input; and the
+    review call's own literal inputs that no decision names, which admission admits for the session that sent them),
+    and ``review_input`` the source of the review call's own arguments."""
+    import asyncio
+    import json
+    import re
+    import time
+
+    from fastmcp import Client
+    from mcp.types import Implementation
+
+    from g6.core import cloud_consent as cloud
+    from g6.core.llm import LLMError
+
+    name, provider = PROBE_CLIENTS[client]
+    args = {"repo": str(repo), "task": PROBE_TASK}
+    found: dict[str, Any] = {"reply": "error", "provider": provider, "code": "", "named": [], "unshared": [],
+                             "review_input": cloud.input_source(json.dumps(args, sort_keys=True))}
+
+    async def ask() -> tuple[dict[str, Any], str]:
+        async with Client(build(server_id), client_info=Implementation(name=name, version="routing-probe")) as mcp:
+            job = (await mcp.call_tool("g6_review_patch", args)).data
+            ident, ends = str(job.get("job_id", "")), time.monotonic() + seconds
+            reply = job
+            while ident and time.monotonic() < ends:
+                reply = (await mcp.call_tool("metaharness_job", {"job_id": ident})).data
+                if reply.get("status") not in ("pending", "running"):
+                    break
+                await asyncio.sleep(0.2)
+            return reply, ident
+
+    try:
+        reply, ident = asyncio.run(ask())
+    except Exception as exc:  # noqa: BLE001 - whatever stops the probe, the session does not start on it
+        return {**found, "why": type(exc).__name__}
+    inner = reply.get("result") if isinstance(reply.get("result"), dict) else reply
+    found["code"] = str((inner.get("warning_card") or {}).get("code", "")) if isinstance(inner, dict) else ""
+    if reply.get("status") in ("pending", "running") or not ident:
+        return {**found, "reply": "unfinished" if ident else "error"}
+    if not (isinstance(inner, dict) and inner.get("cloud_consent_code") == cloud.REQUIRED):
+        return {**found, "reply": "returned"}
+    said = re.search(r"Withheld source identifiers: (.*?)\. Provider:", str(inner.get("error", "")))
+    named = [part.strip() for part in said.group(1).split(",")] if said else []
+    own = cloud.input_source(json.dumps({"job_id": ident}, sort_keys=True))
+    # The review call's own literal inputs (its arguments, and each text in them, as G6's server counts them) are shared
+    # with the session that sent them while no decision names them, as admission admits them; once the person revokes
+    # one, it is unshared.
+    literal = {found["review_input"], *(cloud.input_source(value) for value in args.values())}
+
+    def undecided(source: str) -> bool:
+        try:
+            return not cloud.preview(source, provider)[1]
+        except LLMError:   # sharing state G6 cannot read admits nothing: the input counts as unshared
+            return False
+
+    return {**found, "reply": "withheld", "named": named,
+            "unshared": [source for source in named if source != own and not cloud.is_granted(source, provider)
+                         and not (source in literal and undecided(source))]}
 
 
 def main() -> None:

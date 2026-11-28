@@ -12,6 +12,8 @@ standard's archive key ``harness_intelligence`` is kept for compatibility only.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import hashlib
 import json
@@ -138,9 +140,9 @@ def construct_replay_check(task: str, *, module: str, function: str,
                 expected = ast.literal_eval(node.test.comparators[0])
                 # JSON round-trip disallows sets, bytes and non-string mapping keys.
                 values = [state, event, expected]
-                if json.loads(json.dumps(values, allow_nan=False)) != values:
+                if _decode_json(json.dumps(values, allow_nan=False)) != values:
                     continue
-            except (TypeError, ValueError, SyntaxError, RecursionError):
+            except (TypeError, ValueError, SyntaxError, RecursionError, MemoryError):
                 continue
             if not (isinstance(state, dict) and isinstance(event, dict) and isinstance(expected, dict)
                     and state != expected and isinstance(event.get("id"), str) and 0 < len(event["id"]) <= 128):

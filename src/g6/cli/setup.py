@@ -116,7 +116,7 @@ def main(args: argparse.Namespace, *, ask: Ask = input, say: Say = print) -> int
             return 2
     clients = list(dict.fromkeys(getattr(args, "client", [])))
     if clients:
-        code = register_clients(args, clients, say)
+        code = register_clients(args, clients, say, ask)
         if code:
             return code
     return 0
@@ -148,8 +148,267 @@ def configure_model(provider: str) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def register_clients(args, clients: list[str], say: Say) -> int:
-    """Explicit registration via the clients' CLIs; never parses or overwrites their config files."""
+class _LeftAlone(Exception):
+    """Why setup leaves the person's ``AGENTS.md`` as it is."""
+
+
+def _read(target) -> tuple[int, int, bytes, int] | None:
+    """The file as G6 may write over it: its identity (device and file number), bytes and permission bits (the mode
+    the replacement copies, so a mode changed after the copy is a change too); ``None`` when there is no
+    file. ``_LeftAlone`` for a file G6 does not change: a link, junction or other reparse point, not a plain file,
+    hard-linked to another name, read-only (no write access, no owner write bit, or Windows' read-only attribute),
+    unreadable, or not UTF-8 text without NUL. Setup runs this same check at its first read and again before it
+    writes, so the two cannot drift: the file it replaces is one it would have agreed to change at the start."""
+    import stat
+
+    try:
+        status = os.stat(target, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _LeftAlone(f"it could not be read ({type(exc).__name__})") from None
+    attributes = getattr(status, "st_file_attributes", 0)
+    if stat.S_ISLNK(status.st_mode) or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise _LeftAlone("it is a link to another file")
+    if not stat.S_ISREG(status.st_mode):
+        raise _LeftAlone("it is not a plain file")
+    if status.st_nlink > 1:
+        raise _LeftAlone("it is hard-linked to another name")
+    if (not os.access(target, os.W_OK) or not status.st_mode & stat.S_IWUSR
+            or attributes & stat.FILE_ATTRIBUTE_READONLY):
+        raise _LeftAlone("it is read-only")
+    try:
+        data = target.read_bytes()
+    except OSError as exc:
+        raise _LeftAlone(f"it could not be read ({type(exc).__name__})") from None
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
+    try:
+        text = data[len(bom):].decode("utf-8")
+    except UnicodeDecodeError:
+        raise _LeftAlone("it is not UTF-8 text") from None
+    if "\x00" in text:
+        raise _LeftAlone("it is not UTF-8 text")
+    return status.st_dev, status.st_ino, data, stat.S_IMODE(status.st_mode)
+
+
+def _agents_update(data: bytes | None, block: str) -> bytes:
+    """The file's bytes (``None`` when there is no file) with G6's block in place: the block written in the file's own
+    newline style, as exactly one ``AGENTS_BEGIN ... AGENTS_END`` pair replaced, or appended where there is none;
+    every other byte (newlines, a byte-order mark, trailing blank lines) as it was. ``_LeftAlone`` for a file G6
+    cannot change that way. The newline style is the file's first line end of any kind (``\\r\\n``, ``\\n`` or a lone
+    ``\\r``), and a marker counts only at column zero with at most trailing spaces or tabs, ended by any of them.
+    Only certain line shapes before or inside the block (anywhere when appending) allow an edit: blank lines,
+    column-zero headings and markers, plain paragraphs and list text at zero to three spaces, nested bullets in
+    two-space steps, plain separators after blanks, front matter delimiters, and column-zero CommonMark fences
+    with literal contents. Every other shape refuses the edit."""
+    import re
+    from g6.mcp.instructions import AGENTS_BEGIN, AGENTS_END
+
+    if data is None:
+        return block.encode("utf-8") + b"\n"
+    bom = b"\xef\xbb\xbf" if data.startswith(b"\xef\xbb\xbf") else b""
+    first = re.search(rb"\r\n|\r|\n", data)
+    newline = first.group() if first else b"\n"
+    written = block.encode("utf-8").replace(b"\n", newline)
+    # A marker counts only at column zero outside a fenced code block:
+    # one quoted inside a line, or shown in a fence (CommonMark's fence lines), is the person's text, not G6's block.
+    # A line ends at any line end, so mixed line ends still work. The file's initial byte-order mark is its encoding
+    # signature, not part of the first line.
+    parts = re.split(rb"(\r\n|\r|\n)", data[len(bom):])
+    lines = parts[::2]
+    # Recognise only the delimiters, not arbitrary YAML as safe Markdown. Interior lines still pass the allow-list.
+    front_matter_end = next((i for i, line in enumerate(lines[1:], 1)
+                             if line.rstrip(b" \t") in (b"---", b"...")), None) if lines[0] == b"---" else None
+    begins, ends, fence, start = [], [], None, len(bom)
+    uncertain, previous_text, previous_blank = [], False, True
+    previous_item_indent = previous_item_content = None
+    for index, (line, end) in enumerate(zip(lines, [*parts[1::2], b""])):
+        stop = start + len(line)
+        prior_item_indent = previous_item_indent
+        prior_item_content = previous_item_content
+        if line.strip(b" \t"):
+            previous_item_indent = previous_item_content = None
+        if fence:
+            # Contents of an open fence are literal, whatever their indentation or Markdown-like text.
+            closing = re.fullmatch(rb" {0,3}(`{3,}|~{3,})[ \t]*", line)
+            if closing and closing.group(1)[:1] == fence[:1] and len(closing.group(1)) >= len(fence):
+                fence = None
+            previous_text = False
+        elif line.rstrip(b" \t") == AGENTS_BEGIN.encode():
+            begins.append((start, stop))
+            previous_text = False
+        elif line.rstrip(b" \t") == AGENTS_END.encode():
+            ends.append((start, stop))
+            previous_text = False
+        else:
+            opening = re.fullmatch(rb"(`{3,}|~{3,})(.*)", line, re.S)
+            heading = re.match(rb"#{1,6}(?:[ \t]|$)", line)
+            prose = re.fullmatch(rb" {0,3}([^ \t<>].*)", line)
+            item = re.fullmatch(rb"( *)(?:[-+*]|[0-9]{1,9}\.)( +)([^ \t].*|)", line)
+            item_indent = len(item.group(1)) if item else 0
+            certain_item = item and (item_indent <= 3 or (
+                prior_item_indent is not None and prior_item_content is not None
+                and prior_item_indent % 2 == item_indent % 2 == 0
+                and (item_indent <= prior_item_indent or prior_item_content <= item_indent <= prior_item_content + 3)))
+            text = prose.group(1) if prose else b""
+            if not line.strip(b" \t") or heading:
+                previous_text = False
+            elif index == front_matter_end:
+                previous_text = False
+            elif opening and not (opening.group(1)[:1] == b"`" and b"`" in opening.group(2)):
+                fence = opening.group(1)
+                previous_text = False
+            elif re.fullmatch(rb"([-_*])(?:[ \t]*\1){2,}[ \t]*", text):
+                if previous_blank and re.fullmatch(rb"([-_*])\1{2,}[ \t]*", text):
+                    previous_text = False
+                else:
+                    uncertain.append(start)  # spaced breaks and possible setext underlines stay refused
+            elif previous_text and re.fullmatch(rb"(?:=+|-+)[ \t]*", text):
+                uncertain.append(start)      # a setext underline changes the preceding text's block
+            elif certain_item and not re.match(rb"(?:`{3,}|~{3,}|[<>]|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", item.group(3)):
+                previous_text = True        # backticks elsewhere in the item's text are plain text
+                previous_item_indent = item_indent
+                # CommonMark nests at the parent's content column plus at most three spaces; four more is code.
+                if len(item.group(2)) <= 4:
+                    previous_item_content = len(line) - len(item.group(3))
+            elif (prose and not re.match(rb"(?:`{3,}|~{3,}|[-+*](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$))", text)):
+                previous_text = True
+            else:
+                uncertain.append(start)
+        previous_blank = not line.strip(b" \t")
+        start = stop + len(end)
+    boundary = ends[0][1] if len(begins) == len(ends) == 1 and ends[0][0] > begins[0][0] else len(data)
+    if any(position <= boundary for position in uncertain):
+        raise _LeftAlone("its code-block shape is uncertain, so G6 cannot safely locate or append its block")
+    if not begins and not ends and fence:
+        raise _LeftAlone("it ends inside an open code fence, so a block added at its end would be part of the fence")
+    if not begins and not ends:
+        body = data[len(bom):]
+        gap = b"" if not body or body.endswith(newline * 2) else newline if body.endswith(newline) else newline * 2
+        return data + gap + written + newline
+    if len(begins) != 1 or len(ends) != 1 or ends[0][0] < begins[0][0]:
+        raise _LeftAlone(f"its g6:begin and g6:end lines do not make exactly one block ({len(begins)} begin, "
+                         f"{len(ends)} end)")
+    return data[:begins[0][0]] + written + data[ends[0][1]:]
+
+
+def _remove(name: str, say: Say, identity: tuple[int, int] | None = None) -> None:
+    """Unlink the temporary name, never raising; chmod only the recorded, single-link plain file before unlinking.
+    A replaced name or unknown identity gets only an unlink attempt, and is named to the person when it stays.
+    Another program writing in the same client home can still swap the name between lstat and chmod: the identity
+    check takes no lock, the same trust-boundary limit as codex_agents' last-check/rename window."""
+    import stat
+
+    try:
+        status = os.lstat(name)
+        if (identity == (status.st_dev, status.st_ino) and stat.S_ISREG(status.st_mode)
+                and not getattr(status, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                and status.st_nlink == 1):
+            os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        say(f"G6 could not remove its temporary file {name} ({type(exc).__name__}); you can delete it.")
+
+
+def _terminal() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def codex_agents(ask: Ask, say: Say) -> None:
+    """Offer G6's instructions to Codex as a delimited block in the person's own ``AGENTS.md`` (in ``CODEX_HOME``,
+    else ``~/.codex``): shown first, written only on a yes, and only the block's bytes change (``_agents_update``).
+    A file G6 cannot change that way (a lone begin or end line, two blocks, an open code fence at its end, not UTF-8,
+    not a plain file, a link, read-only or unreadable), setup's own question with no terminal to answer it, anything
+    but a yes, or a write that fails: the file stays byte for byte as it was, no temporary file is left (or one that
+    cannot be removed is named), and the person is told why and shown the block to add by hand. Setup goes on either
+    way.
+
+    The file may change while setup waits at its question (the person saves it in an editor, makes it read-only or
+    links it, or another program does). So after the yes, and once more just before the replace, G6 runs the whole
+    check of its first read again (``_read``: kind, links, link count, write access, text) and compares identity
+    (device and file number) and bytes with what it read before asking; any difference leaves the file as it now is
+    and the person is shown the block to add by hand. The temporary file takes the file's mode only after the first of
+    those checks passes, and is removed (made writable only when its identity still matches) or named to the person.
+    What remains: a change that lands between that last check and the rename is lost or overwritten, a window of one
+    rename, since no lock is
+    taken on the person's file. The file's mode is copied; Windows attributes (hidden, say), ACLs and NTFS alternate
+    data streams are not kept, as the new file replaces the old one."""
+    import tempfile
+    from pathlib import Path
+    from g6.mcp.instructions import agents_block
+
+    target = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "AGENTS.md"
+    block = agents_block()
+
+    def by_hand(why: str) -> None:
+        say(f"G6 left {target} as it was: {why}. To give Codex G6's instructions, add this block to it yourself:"
+            f"\n\n{block}\n")
+
+    changed = "it changed while setup waited, and G6 writes only over the file it showed you the change for"
+    try:
+        seen = _read(target)
+        updated = _agents_update(seen[2] if seen else None, block)
+    except _LeftAlone as why:
+        by_hand(str(why))
+        return
+    if seen is not None and updated == seen[2]:
+        return
+    if ask is input and not _terminal():
+        by_hand("no terminal is attached to answer whether to write it, so nothing was asked or written")
+        return
+    say(f"G6 can tell Codex when to call it with this block in {target}; the rest of the file stays as it is:\n\n"
+        f"{block}\n")
+    try:
+        reply = ask(f"Write this block to {target}? Replacing the file does not keep Windows attributes, access rules "
+                    "or extra NTFS data streams attached to it. [y/N] ")
+    except (EOFError, OSError):
+        reply = ""
+    if reply.strip().lower() not in ("y", "yes"):
+        say(f"Nothing was written to {target}.")
+        return
+    name = None
+    identity = None
+    try:
+        if _read(target) != seen:
+            by_hand(changed)
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-agents-")
+        with os.fdopen(fd, "wb") as stream:
+            status = os.fstat(stream.fileno())
+            identity = status.st_dev, status.st_ino
+            stream.write(updated)
+        if seen is not None:
+            import shutil
+            shutil.copymode(target, name)
+        if _read(target) != seen:           # the last check, just before the replace
+            by_hand(changed)
+            return
+        os.replace(name, target)
+        name = None
+    except _LeftAlone as why:
+        by_hand(f"{why} now, which it was not when setup read it")
+        return
+    except OSError as exc:
+        by_hand(f"writing it failed ({type(exc).__name__})")
+        return
+    finally:
+        if name is not None:
+            _remove(name, say, identity)
+    say(f"Wrote G6's block to {target}.")
+
+
+def register_clients(args, clients: list[str], say: Say, ask: Ask = input) -> int:
+    """Explicit registration via the clients' CLIs; never parses or overwrites their config files. For Codex it also
+    offers G6's block for the person's ``AGENTS.md`` (``codex_agents``), written only on their yes."""
     import re
     import subprocess
     from g6.cli import main as cli
@@ -192,6 +451,8 @@ def register_clients(args, clients: list[str], say: Say) -> int:
         cli(["skills", "install", "--user", "--client", client, "--force"])
         if earlier:
             say(f"Replaced the earlier copy of the {skills.GUIDE} skill for {client} with this version's.")
+        if client == "codex":
+            codex_agents(ask, say)
         say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "
             "the project's folder never replace G6's own. Restart the client to load it.")
     say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")

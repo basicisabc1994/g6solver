@@ -64,3 +64,25 @@ __g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["COGNEE", "COGNEE_KEY", "SEARCH_TYPES", "SENSITIVE_OPS", "URL_ENV", "Cognee", "CogneeError", "CogneeInput",
            "CtxCogneeBlock"]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_MEMORY_COGNEE_ADDED": "none",
+    "G6_E_MEMORY_COGNEE_AMBIGUOUS": "none",
+    "G6_E_MEMORY_COGNEE_FORGET_NOT_DONE": "none",
+    "G6_E_MEMORY_COGNEE_FORGET_UNCHECKED": "none",
+    "G6_E_MEMORY_COGNEE_FORGOTTEN": "none",
+    "G6_E_MEMORY_COGNEE_FOUND": "none",
+    "G6_E_MEMORY_COGNEE_GRAPH": "none",
+    "G6_E_MEMORY_COGNEE_HELD": "none",
+    "G6_E_MEMORY_COGNEE_NOT_BUILT": "none",
+    "G6_E_MEMORY_COGNEE_REPLY": "none",
+    "G6_E_MEMORY_COGNEE_REPORTED": "none",
+    "G6_E_MEMORY_DRY_RUN": "none",
+    "G6_E_MEMORY_NOT_FOUND": "none",
+    "G6_E_MEMORY_NO_QUERY": "input",
+    "G6_E_MEMORY_NO_REASON": "input",
+    "G6_E_MEMORY_NO_TARGET": "input",
+    "G6_E_MEMORY_NO_TEXT": "input",
+}

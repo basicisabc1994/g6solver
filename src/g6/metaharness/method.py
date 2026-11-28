@@ -14,6 +14,7 @@ the ledger as one ``tuning_run`` row.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -177,5 +178,8 @@ def _finish(mh: Any, run: TuningRun, outcome: str) -> TuningRun:
     run.outcome = outcome
     body = run.to_dict()
     if mh.ledger is not None:   # an invalid workflow has no ledger: the run is returned, not recorded
-        mh.ledger.append("tuning_run", f"{len(mh.ledger.rows('tuning_run')) + 1}:{digest(body)}", body)
+        try:
+            mh.ledger.append("tuning_run", f"{len(mh.ledger.rows('tuning_run')) + 1}:{digest(body)}", body)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return run

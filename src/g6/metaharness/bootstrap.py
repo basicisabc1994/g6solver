@@ -9,7 +9,8 @@ others. Every output is an untrusted draft: the result is ``qualified-draft`` at
 """
 from __future__ import annotations
 
-import json
+from g6.core.decoder_limits import json_value as _decode_json
+
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -33,8 +34,8 @@ class BootstrapResult:
 
 def _array(raw: str, cap: int) -> tuple[str, ...]:
     try:
-        value = json.loads(raw)
-    except (ValueError, TypeError):
+        value = _decode_json(raw)
+    except (ValueError, TypeError, RecursionError, MemoryError):
         return ()
     if not isinstance(value, list):
         return ()

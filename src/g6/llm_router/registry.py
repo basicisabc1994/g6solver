@@ -12,6 +12,8 @@ as ``None``, never as a number, and a profile with no price at all is unknown, n
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -277,14 +279,20 @@ class CognitiveTaskRegistry:
 @lru_cache(maxsize=1)
 def _committed() -> tuple[dict[str, Any], tuple[ModelProfile, ...]]:
     text = resources.files(__package__).joinpath("data", "model_profiles.json").read_text(encoding="utf-8")
-    raw = json.loads(text)
+    try:
+        raw = _decode_json(text)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     return {k: v for k, v in raw.items() if k != "models"}, tuple(ModelProfile.from_dict(r) for r in raw["models"])
 
 
 def table() -> dict[str, Any]:
     """What the committed table says about itself: ``about``, ``prices_as_of``, ``prices``, ``scores``, ``changes``
     and ``unknown_price`` (a fresh copy)."""
-    return json.loads(json.dumps(_committed()[0]))
+    try:
+        return _decode_json(json.dumps(_committed()[0]))
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 def default_registry() -> CognitiveTaskRegistry:

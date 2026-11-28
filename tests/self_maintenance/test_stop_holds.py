@@ -501,6 +501,9 @@ OPENS = {
     ("g6/self_maintenance/envelope.py", "_ask_to_stop"): "writes a stop: the journal line, then the STOP file",
     ("g6/self_maintenance/envelope.py", "_establish_stop"): "a stop's canonical record, and, when that cannot be made, a "
                                                             "line of G6's own in the journal",
+    ("g6/mcp/workflow.py", "_self_changes"): "asks only whether a folder is a loop (settings and cycle log present) "
+                                              "before the end-of-task card reads its adoption lineage (f7639fc9); no "
+                                              "stop decision is made from it",
     ("g6/mcp/improve.py", "_log"): "the records for a person's act and a stop's receipt, read by a row's identity; no "
                                    "stop decision is made from it",
     ("g6/mcp/improve.py", "_stop_before"): "what a stop's receipt compares with: the start it ends and whether a STOP "
@@ -1120,10 +1123,12 @@ def test_every_refusal_of_the_dialog_and_the_start_is_made_by_the_one_maker():
     builders = sorted(name for name in reached if _calls(functions[name]) & {"_blocked", "blocked_reply", "_envelope"}
                       and name != "_watch")
     # ``_restated`` says a reply the maker made again, its state and code kept, once the start's row is read back.
-    assert builders == ["_refusal", "_restated"], builders           # no refusal is built anywhere else
+    # cb107cba (owner ruling 2026-11-26): a network or device folder is refused on its words before any reading exists,
+    # so `_refusal` (which needs a reading) cannot make it; `_elsewhere_folder` is that one refusal.
+    assert builders == ["_elsewhere_folder", "_refusal", "_restated"], builders   # no refusal is built anywhere else
     listed = {name: _returns_in_order(functions[name]) for name in ("asked", "start", "_cannot_start", "_watch", "_failed")}
     assert listed == {
-        "asked": ["cannot", "cannot", "made", "refusal", "refusal"],
+        "asked": ["away", "cannot", "cannot", "made", "refusal", "refusal"],
         "start": ["refusal", "cannot", "cannot", "refusal", "refusal", "refusal", "refusal", "watched", "refusal"],
         "_cannot_start": ["refusal", "refusal", "refusal", "refusal", "refusal", "(None, settings)"],
         "_watch": ["refusal", "started", "started"],
@@ -1260,8 +1265,12 @@ def test_every_statement_of_the_dialog_and_the_start_runs_inside_the_one_handler
         [handler] = tries[0].handlers
         assert isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
         assert [ast.unparse(part)[:len(maker)] for part in handler.body] == [maker]
-        return [ast.unparse(node) for node in body[:-1]                     # nothing before it touches a file
-                if {ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)} - {"Path"}]
+        # nothing before it touches a file. `_elsewhere_folder` (cb107cba) refuses a network folder on its words, before
+        # any file system call (tests/workforce/test_repo_tests_network_paths.py records every one): moved inside the
+        # handler, a fault would reach `_failed`, whose reading opens the very share the check exists to avoid.
+        return [ast.unparse(node) for node in body[:-1]
+                if {ast.unparse(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)}
+                - {"Path", "_elsewhere_folder"}]
 
     assert outside(inspect.getsource(improve.asked)) == [] and outside(inspect.getsource(improve.start)) == []
     assert outside(inspect.getsource(improve.status), "return _unread_status(") == []     # status, the follow-up's review 2

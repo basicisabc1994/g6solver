@@ -64,6 +64,8 @@ binding that does not read as one (``UnreadableBinding``) are different results,
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import json
 import math
 import re
@@ -237,6 +239,17 @@ MAPPING: dict[str, Row] = {row.kind: row for row in (
         "classification only", "the caller or a model", "after tier 2", "a proposed check never passes a requirement"),
     Row("adopted_proposal", "patch_review", "", "none yet", "none yet", "none yet", "none yet", "none yet",
         "none yet", "none yet", "none yet", "kept for verification search's later phases; no check has it yet"),
+    # 64c4db67: an admitted library method run on the patch's test files (harness.library_review_gate.apply_review)
+    Row("library", "patch_review", "", "the patch's test files before and after, as the review's related texts",
+        "none: the method is admitted code run by the confined executor; no model reads the patch",
+        "none: it names no requirement", "the library entry's id and candidate id, at its authority (A1 or A2)",
+        "the confined executor the acceptance gate uses",
+        "the entry's held-out evaluation at admission: the lower 95% bound of its precision on its held-out units, "
+        "recorded in the library and not rerun in the review",
+        "an independently gated library method, admitted by the acceptance gate; never the patch's author",
+        "after the stated checks' run (tier 2); the library's authority snapshot is checked again before it reports",
+        "a concern from an admitted A2 entry is the review's defect, any other concern a lead; it never passes a "
+        "requirement (not a pass)"),
     Row("person_confirmed", "patch_review", "independent_executable",
         "the artefact the person's answer was asked about, and each later patch it is enforced on",
         "none: the person's answer, not a model, fixes the expected outcome",
@@ -320,9 +333,9 @@ def strict_json(text: str) -> object:
     """``text`` read as JSON, strictly: a repeated key, NaN, an infinity or a number too large to be finite is a
     ``ValueError``, never the last value given or a number that is not one."""
     try:
-        return json.loads(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
-    except RecursionError:
-        raise ValueError("it is nested too deeply") from None
+        return _decode_json(text, object_pairs_hook=_no_repeat, parse_constant=_no_constant, parse_float=_finite)
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("it is nested too deeply", "", 0) from None
 
 
 def read_binding(text: object) -> CheckBinding | UnreadableBinding | None:
@@ -742,20 +755,29 @@ def issue_records(facts: MissionFacts, artifact: Artifact, records: Iterable[Sou
     # every record read: each caveat keeps the id refuse() gave it unless an accepted check or receipt has it (_fresh)
     taken = {*checks, *receipts}
     kept = [(*_named(check, receipt, _fresh(taken, check.check_id)), rec, codes) for check, receipt, rec, codes in kept]
-    ledger = ChainLedger()
+    try:
+        ledger = ChainLedger()
+    except (RecursionError, MemoryError):
+        raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     # the ledger's own order is the order G6 observed things in, the one each record's position states
     record(ledger, *sorted([*controls.values(), *(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                            key=lambda item: (item.seq, isinstance(item, Receipt))))
     for receipt, rec in receipts.values():
         parts, _ = about(rec)
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
-            "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
-            parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
-            **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
+        try:
+            ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
+                "source_kind": rec.kind, "issuer_kind": checks[receipt.check_id].kind, "environment_sha256":
+                parts.environment, "model_sha256": rec.model_sha256, "scope": parts.scope,
+                **({"binding": rec.binding.to_dict()} if rec.binding else {})}, extra))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     for _, receipt, rec, codes in kept:   # what a refused record observed, and why it was refused, in words
-        ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
-            "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
-            "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes]}, extra))
+        try:
+            ledger.append(PROVENANCE_KIND, receipt.receipt_id, _provenance({
+                "source_kind": str(rec.kind), "issuer_kind": CAVEAT_KIND, "kept_as": "caveat",
+                "record_id": str(rec.record_id), "refused": [[str(code), str(why)] for code, why in codes]}, extra))
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
     certificate = issue(facts, artifact, [*checks.values(), *(c for c, _, _, _ in kept)],
                         [*(r for r, _ in receipts.values()), *(r for _, r, _, _ in kept)],
                         decisions=decisions, ledger=ledger)

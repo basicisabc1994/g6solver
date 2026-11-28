@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import contextlib
 import errno
 import functools
@@ -225,7 +227,7 @@ class Coordination:
             if not os.path.lexists(path):
                 return None
             plain_file(path)
-            found = json.loads(path.read_text(encoding="utf-8"))
+            found = _decode_json(path.read_text(encoding="utf-8"))
             if not isinstance(found, dict):
                 raise ValueError("not an object")
             name = found["path"]
@@ -243,7 +245,7 @@ class Coordination:
             if found["expires_at"] <= found["acquired_at"] or found.get("unreadable"):
                 raise ValueError("invalid lifetime")
             return found
-        except (OSError, ValueError, KeyError, TypeError, OverflowError, WorkspaceRefused):
+        except (OSError, ValueError, KeyError, TypeError, OverflowError, WorkspaceRefused, RecursionError, MemoryError):
             return {"path": rel or f"(unreadable lock {path.stem[:12]})", "claimed_holder": "",
                     "token_sha256": "", "acquired_at": 0, "expires_at": 0, "unreadable": True}
 
@@ -345,8 +347,8 @@ class Coordination:
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
-            except ValueError:
+                entry = _decode_json(line)
+            except (ValueError, RecursionError, MemoryError):
                 unreadable += 1
                 continue
             if isinstance(entry, dict):

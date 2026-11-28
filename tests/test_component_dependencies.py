@@ -47,7 +47,8 @@ def _actual(name: str) -> set[str]:
         for dotted in _IMPORT.findall(f.read_text(encoding="utf-8")):
             found.add(_component(dotted))
             todo += _shared(dotted)
-    return found - {name, "core", REFS[name].family}
+    # g6._streams, the process's one owner of stdout and stderr (aa609081), is kernel code like core, not a component
+    return found - {name, "core", "_streams", REFS[name].family}
 
 
 def _declared(name: str) -> set[str]:

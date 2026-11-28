@@ -51,3 +51,12 @@ __all__ = [
     "Hypothesis", "Obligation", "Requirement", "Snapshot", "StateVariable", "build_atlas", "impact_cone",
     "propose_simplifications",
 ]
+
+#: How each refusal this component writes is repaired (``g6.core.refusals``): code -> who fixes it, and
+#: G6's words where they are not the class's own. A census test holds every code it writes to one entry.
+__g6_refusals__ = {
+    "G6_E_COMPLEXITY_ATLAS": "none",
+    "G6_E_COMPLEXITY_IMPACT": "none",
+    "G6_E_COMPLEXITY_INPUT_INVALID": "input",
+    "G6_E_COMPLEXITY_SIMPLIFY": "none",
+}

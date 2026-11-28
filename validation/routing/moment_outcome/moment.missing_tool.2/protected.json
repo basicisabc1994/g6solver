@@ -1,0 +1,7 @@
+{
+  "protected": [
+    "README.md",
+    "cases.json"
+  ],
+  "why": "Only the classifier changes: the labelled cases are data the change must not rewrite, and the README stays."
+}

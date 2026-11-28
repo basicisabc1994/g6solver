@@ -5,7 +5,7 @@ evidence, checks and action control. Its north star is **AI for AI**: agents con
 propose redesigns and test hypotheses against frozen checks, with evaluation and activation outside the candidate's
 writable scope. Components and workflow tools are available today; benefits for a particular application require testing.
 
-**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+**Beta. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 
 The first use is a check on a coding agent's work. Before your agent (Claude Code or Codex) says a Python change is
 done, it calls `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
@@ -13,7 +13,8 @@ looks for signs that the tests were weakened, and returns a report your agent sh
 what G6 reproduces and asks again. Merging stays your decision. Patch review makes no model call unless the caller
 turns one on.
 
-Every result carries one of three labels, and G6 never upgrades a label it did not earn:
+Results of G6's checks and work tools returned over G6's MCP server carry one of three labels, and G6 never upgrades a label it did not earn.
+These replies carry `completion_state`; discovery replies such as `g6_components` and `g6_find` do not.
 
 | Label | Meaning |
 |---|---|
@@ -32,8 +33,9 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
   reply says what was claimed. No component you can reach through those doors has such a re-check yet, so nothing that comes
   through them is `verified` today; the one path that can be is G6's file-integrity check (`g6.integrity`) called
   from Python with your own pin. `get_registry().invoke` is the raw library call beneath the doors: it returns a
-  component's own answer, unchecked. From the MCP server, `g6 invoke` and `g6.invoke`, `ok` is false whenever the
-  state is `blocked-escalated`; a blocked result keeps its answer in `result`. G6 re-checks artifacts with its own
+  component's own answer, unchecked. In replies from the MCP server and Python's `g6.invoke`, `ok` is false whenever
+  the state is `blocked-escalated`; a blocked result keeps its answer in `result`. The command line prints the result alone
+  and exits with code 1 for a blocked reply. G6 re-checks artifacts with its own
   code; it does not defend against malicious code in its own process.
 - **Checks are hashed first.** In the harness, each check's source text is hashed before the work runs, so editing a
   check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
@@ -41,7 +43,7 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 - **Results are published, misses included,** on the [Research](site/docs/research.md) page, as a worked example.
 - **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose, and to a
   cloud model only with your grant ([consent](#use-it)).
-- **Small parts.** 38 components in the core harness, each usable on its own, extensions that join the library one at
+- **Small parts.** 40 components in the core harness, each usable on its own, extensions that join the library one at
   a time, and 11 bundles that package them for one problem each.
 
 ## Install
@@ -105,14 +107,19 @@ everything the task needs. Merging needs your separate decision. The patch's own
 in the repository's own environment (its `.venv`, which the agent can change): a patch written to defeat the checks
 can make them report a pass, and G6 does not catch that.
 
+The advisory change map reads static named calls from collected or explicitly selected test bodies. Its
+`exercised` answer carries the same-process limit: repository code running inside the collection child can make
+a check look exercised. The pre-launch read restores answers for ordinary repositories; it is not authority
+against repository code written to deceive collection. A static named call can be reachable without running.
+
 Not a programmer? Ready-made **bundles** (double-click apps) are described in the
 [install guide](site/docs/install.md).
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 56 tools.
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets 70 tools.
 
-- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`.
+- Discovery and composition: `g6_help`, `g6_find`, `g6_components`, `g6_describe`, `g6_invoke`, `g6_compose`; `g6_agentic_run` lets a model stand in for a declared part after a declared limit or computation failure, or replace a successful answer when the caller names a part. Remote admission records provider consent; local admission records local model; process callers record allowed in code; refusal records refused by the consent check. The reply names the model and keeps the original answer beside it.
 - Patch review and missions: `g6_review_patch`, `g6_review_until_clean`, `g6_premortem`, `g6_mission_*` (six).
 - Consent: `g6_cloud_grant`, `g6_cloud_grants`, `g6_cloud_revoke`, `g6_disclosures`.
 - The self-improvement loop: `g6_improve_*` (six). A person agrees in the client's dialog to each start, enrolment,
@@ -122,18 +129,20 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
   checked in every later review of that task.
 - The Context Engine: `g6_knowledge_*` (11), a local index of folders under the roots listed in
   `G6_KNOWLEDGE_ROOTS` where the server is registered. Adding a folder asks the person to accept a preview.
-- The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; off unless `G6_WORKFLOW_RECORD=on`
-  is set where the server is registered.
+- The workflow record: `g6_workflow_*`, `g6_suggestion_decide`, `g6_feedback`; on by default, off when
+  `G6_WORKFLOW_RECORD=off` is set where the server is registered.
 - The meta-harness: `metaharness_*` (13), for constructing, measuring and revising applications.
+- Learning from failures: `g6_failure_record`, `g6_distill_start`, `g6_distill_job`, `g6_library`,
+  `g6_library_decide`, `g6_self_model`, `g6_simulate`, `g6_extend`, and the research runner's `g6_research_*`
+  (four), which refuse until research authority is turned on and a host runner is attached.
 
 Long runs return job IDs; poll `metaharness_job`. A tool that runs code or starts the loop needs a permission given
 with `g6 setup --allow` (the loop's: `metaharness.improve`). [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent.
 
 **Consent.** No user data reaches a cloud model unless the person granted it, per source and per provider, in the
 client's own dialog (`g6_cloud_grant`); without a grant the work stays local or the result is withheld. One check
-covers G6's own model calls, `g6_invoke` and `g6 invoke`, the cognitive bridge and the loop's Claude Code and Codex
-sessions. One path, the Python API `g6.invoke`, lives in a certificate-bound file and is put through the check at the
-certificate issuance window, before the tag.
+covers G6's own model calls, `g6_invoke` and `g6 invoke`, the Python API `g6.invoke`, the cognitive bridge and the
+loop's Claude Code and Codex sessions.
 
 Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values
 are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code
@@ -193,8 +202,9 @@ separate account to enforce that separation.
 
 The public `v0.1.0` tag is immutable. [The launch release notes](docs/releases/launch.md) say what ships, what does
 not, and its limits; [the v0.1.1 release gates](docs/releases/v0.1.1.md) list the checks required before
-recommending a new release. 0.3.0 is in preparation, not published (no tag, nothing on PyPI):
-[its note](docs/releases/v0.3.0.md) and [known limits](docs/releases/v0.3.0-known-limits.md).
+recommending a new release. 0.3.0 is the first beta, installed from this repository (nothing on PyPI):
+[its release notes](docs/releases/v0.3.0.md) and [known limits](docs/releases/KNOWN_LIMITS.md). macOS is out of
+scope for 0.3.0.
 
 ## What is in it
 
@@ -209,7 +219,8 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
   - Reasoning and search: `reasoning`, `debate`, `abstraction`, `algorithm_design`, `cognitive_bridge`.
   - Formal methods, shown together on the Components page: `formal`, `algebra`, `lean`, `model_checking`,
     `datalog`, `prolog`, `cegis`, `csf`, `causal`, `optimisation`, `graph_reasoning`.
-  - Governed learning: `learning`, `self_training`, `distillation`, `metaharness`, `self_maintenance`.
+  - Governed learning: `learning`, `self_training`, `distillation`, `distill`, `self_model`, `metaharness`,
+    `self_maintenance`.
 - **The harness** (`g6.harness`): the one place components are composed. A standard (goal plus checks) runs through
   intake, plan, execute, adjudicate and remember.
 - **Extensions**: components outside the core, each with its tests, its skill and the
@@ -232,7 +243,7 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 
 | Capability | Label |
 |---|---|
-| Result labels and the envelope on every return, checked by `g6.invariants` | `implemented` |
+| Result labels and envelopes for results of checks and work tools returned over the MCP server, checked by `g6.invariants` | `implemented` |
 | Claim checking against your sources (`grounding.check_claim`) | `implemented`. Studied on one public dataset; the result is on the [Research](site/docs/research.md) page |
 | Action gating: allow, ask a person, or block (`action_gating`) | `implemented`. Studied on a public agent benchmark; the result, its miss included, is on the [Research](site/docs/research.md) page |
 | End-to-end harness: frozen checks, adjudication, memory of failed checks (`g6.harness`) | `implemented` |
@@ -244,12 +255,15 @@ recommending a new release. 0.3.0 is in preparation, not published (no tag, noth
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
 | Completion loop (`g6_review_until_clean`) | `implemented`. Measured on seven training bugs only |
-| Consent before any cloud model (`g6_cloud_*`) | `implemented`; `g6.invoke` joins before the tag. Not yet measured in a real client's dialog |
+| Stop hook in Claude Code's plugin: a model-free patch review by default, with the end-of-task card | `implemented`. Not yet measured |
+| Consent before any cloud model (`g6_cloud_*`) | `implemented`, `g6.invoke` included. Not yet measured in a real client's dialog |
 | Self-improvement loop (`g6_improve_*`) | `implemented`. Not yet measured: an unattended week, adoption |
 | Allowances; behaviour questions | `implemented`. Not yet measured against real provider windows, or with real people |
 | Context Engine (`g6_knowledge_*`) | `implemented`, search by words. Retrieval quality not yet measured |
-| Workflow record | `implemented`, off by default. Its suggestions not yet measured |
+| Workflow record | `implemented`, on by default (`G6_WORKFLOW_RECORD=off` turns it off). Its suggestions not yet measured |
 | `using-g6` routing to every tool | `implemented`. No routing session run yet |
+| Learning from failures: the library of learned checking methods and G6's model of itself (`g6_failure_record`, `g6_distill_*`, `g6_library*`, `g6_self_model`) | `implemented`. Not yet measured: the distillation study has not run |
+| Research runner (`g6_research_*`) | `wired-but-inert`: off until research authority is turned on and a host runner is attached |
 | G6 maintains its own repository through its self-improvement loop | `aspirational`: the loop runs but pushes nothing; pull requests are designed, and being built in the open |
 
 Until a pre-registered study says otherwise, treat G6 as careful engineering, not as a proven uplift. The studies run

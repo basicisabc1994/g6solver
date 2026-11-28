@@ -4,41 +4,56 @@
 A job may carry ``compact``: run in the job once its operation returns, with the result and the job's id, it gives the
 reply ``status`` returns by default; ``status(..., detail="full")`` returns the result itself. Should ``compact`` fail,
 ``status`` returns the result itself."""
+from g6.core.decoder_limits import json_value as _decode_json
+
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
 import json
+import re
 from g6.core import cloud_consent as cloud
 from g6.core.ledger import digest
 from threading import Lock
 from uuid import uuid4
 
-from g6.core.door import blocked_reply
+from g6.core.guidance_builders import blocked_reply
+from g6.core.agent_guidance import reply_for_agent
+from g6.core.external_data import freeze_output, receipts, restore
+
 
 DETAILS = ("compact", "full")
+#: An exact caller-supplied input (``cloud_consent.input_source``).
+_INPUT = re.compile(r"input:[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
 class _FrozenResult:
     body: str
     body_sha256: str
+    external: tuple = ()
 
     @classmethod
     def of(cls, value):
-        body = json.dumps(value, separators=(',', ':'), allow_nan=False)
-        return cls(body, cloud.sha256(body))
+        body = json.dumps(reply_for_agent(value), separators=(',', ':'), allow_nan=False)
+        return cls(body, cloud.sha256(body), receipts(value))
 
     @classmethod
-    def completed(cls, ident, result_body):
-        body = json.dumps({"ok": True, "job_id": ident, "status": "completed"},
-                          separators=(',', ':'))[:-1] + ',"result":' + result_body + '}'
-        return cls(body, cloud.sha256(body))
+    def completed(cls, ident, result_body, *, authored_envelope=True, external=()):
+        # Legacy flag grants no exemption. Raw JSON always has default ownership.
+        try:
+            result = restore(_decode_json(result_body), external)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
+        return cls.of({"ok": True, "job_id": ident, "status": "completed", "result": result})
 
     def read(self):
         body, expected = self.body, self.body_sha256
         if cloud.sha256(body) != expected:
             raise ValueError('retained result digest mismatch')
-        return json.loads(body)
+        try:
+            return restore(_decode_json(body), self.external)
+        except (RecursionError, MemoryError):
+            raise json.JSONDecodeError("a JSON record exceeds decoder limits", "", 0) from None
 
 
 class Jobs:
@@ -47,6 +62,7 @@ class Jobs:
         self._jobs = {}
         self._compact = {}
         self._provenance = {}
+        self._refreshers = {}
         self._lock = Lock()
 
     def start(self, operation, *, compact=None):
@@ -62,6 +78,7 @@ class Jobs:
                     del self._jobs[oldest]
                     self._compact.pop(oldest, None)
                     self._provenance.pop(oldest, None)
+                    self._refreshers.pop(oldest, None)
             ident = uuid4().hex
             self._jobs[ident] = self._pool.submit(context.run, self._run, operation, compact, ident, origin)
         return cloud.bind_output({"ok": True, "job_id": ident, "status": "pending",
@@ -75,23 +92,41 @@ class Jobs:
             capture.client, capture.supplied = origin[0], set(origin[1])
             try:
                 result = operation()
-                body, known, metadata = cloud.freeze_output(result)
+                prepare = getattr(compact, "prepare", None)
+                refresh = getattr(compact, "refresh", None)
+                strip = getattr(compact, "strip", None)
+                if callable(prepare) and callable(refresh) and callable(strip):
+                    result = prepare(result, ident)
+                    with self._lock:
+                        self._refreshers[ident] = refresh
+                body, known, metadata = freeze_output(result)
                 refs = cloud.boundary_sources(carried=(*(known if known is not None else
                     cloud.current_sources() or (cloud.UNKNOWN,)), *capture.sources))
                 metadata = shown_metadata = _FrozenResult.of(metadata)
                 shown_refs = refs
                 # Freeze before a compactor can mutate the producer's object.
-                full = _FrozenResult.completed(ident, body)
+                # Default prose filtering has already run on the frozen bytes.
+                # Only exact external receipts can exempt data in either poll.
+                # A card is refreshed on each poll, so the retained snapshot holds none.
+                retained_body = (json.dumps(strip(_decode_json(body)), separators=(',', ':'), allow_nan=False)
+                                 if callable(strip) else body)
+                full = _FrozenResult.completed(ident, retained_body, external=receipts(result))
                 if compact:
                     try:
                         # A compactor must render the full snapshot, not reread
                         # the producer's mutable result under its old receipt.
-                        detached = cloud.bind_output(json.loads(body), refs, metadata=metadata.read())
+                        # A result's process-local custody (a review's task binding) goes with the copy.
+                        custody = getattr(result, "custody", None)
+                        copy = restore(_decode_json(body), receipts(result))
+                        detached = cloud.bind_output(custody(copy) if callable(custody) else copy, refs,
+                                                     metadata=metadata.read())
                         shown = compact(detached, ident)
-                        body, known, shown_metadata = cloud.freeze_output(shown)
+                        body, known, shown_metadata = freeze_output(shown)
                         shown_refs = cloud.boundary_sources(carried=(*refs, *(known or ()), *capture.sources))
                         shown_metadata = _FrozenResult.of(shown_metadata)
-                        shown = _FrozenResult.completed(ident, body)
+                        retained_body = (json.dumps(strip(_decode_json(body)), separators=(',', ':'), allow_nan=False)
+                                         if callable(strip) else body)
+                        shown = _FrozenResult.completed(ident, retained_body, external=receipts(shown))
                     except Exception:
                         shown = full
                         shown_refs, shown_metadata = refs, metadata
@@ -101,6 +136,12 @@ class Jobs:
             except Exception as exc:
                 # Exception objects can mutate too. Polling never formats them.
                 refs = shown_refs = cloud.boundary_sources(carried=(cloud.UNKNOWN, *capture.sources))
+                # A refusal that renders itself (a learning library's partial or committed write) keeps its own reply;
+                # duck-typed, so the meta-harness imports nothing from the library above it (DECISIONS #21).
+                render = getattr(exc, 'g6_refusal', None)
+                if callable(render):
+                    metadata = shown_metadata = _FrozenResult.of({'error_code': exc.code})
+                    return _FrozenResult.of({**render(), 'job_id': ident, 'status': 'failed'})
                 metadata = shown_metadata = _FrozenResult.of({'error_code': 'G6_E_JOB_FAILED'})
                 try:
                     message = f"[G6_E_JOB_FAILED] {type(exc).__name__}: {exc}"
@@ -113,7 +154,25 @@ class Jobs:
                         "sources": tuple(capture.sources), "origin": origin, "review_unsent": capture.review_unsent,
                         "metadata": {'full': metadata, 'compact': shown_metadata}}
 
-    def _status_reply(self, ident, result, detail):
+    def origin_inputs(self, ident):
+        """The exact inputs of the call that submitted finished job ``ident``, as the sources of a reply derived from
+        it, when the asking call comes from the same client session and provider: they count as supplied for that
+        call, and nothing else does. Each is carried, so a person's decision on any one of them (a revoke for this
+        provider) withholds the reply at admission. Nothing for a job with no origin, nor for any other session or
+        provider, whose reply is answered as before."""
+        capture = cloud.current_capture()
+        with self._lock:
+            stored = self._provenance.get(ident, {})
+        asker, asked = stored.get("origin") or (None, frozenset())
+        if asker is None or capture is None or capture.client is None \
+                or asker[0] != capture.client[0] or asker[1] is not capture.client[1]:
+            return ()
+        inputs = sorted(source for source in asked if _INPUT.fullmatch(source))
+        capture.supplied.update(inputs)
+        return tuple(cloud.Source(source, cloud.sha256("submitting-call-input"), source.removeprefix("input:"))
+                     for source in inputs)
+
+    def _status_reply(self, ident, result, detail, fresh=()):
         capture = cloud.current_capture()
         if capture is None:
             return result
@@ -122,7 +181,8 @@ class Jobs:
         cloud.record_sources(stored.get("sources", ()))
         public = result.get("status") in ("pending", "running")
         refs = () if public else cloud.boundary_sources(
-            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ())))
+            carried=(*stored.get(detail, (cloud.UNKNOWN,)), *stored.get('sources', ()),
+                     *fresh, *self.origin_inputs(ident)))
         cloud.bind_output(result, refs)
         try:
             metadata = stored['metadata'][detail].read()
@@ -133,7 +193,7 @@ class Jobs:
         if result['status'] == 'failed':
             # This code describes the host's failed future, not its opaque
             # exception text. Withholding that text must retain the stable code.
-            metadata['error_code'] = 'G6_E_JOB_FAILED'
+            metadata.setdefault('error_code', 'G6_E_JOB_FAILED')
         capture.job = {"job_id": ident, "status": result["status"], "digest": digest(result),
                        "review_unsent": stored.get("review_unsent", False),
                        "metadata": metadata}
@@ -161,10 +221,19 @@ class Jobs:
             shown = self._compact.get(ident, result) if detail == "compact" else result
         try:
             reply = shown.read()
+            with self._lock:
+                refresh = self._refreshers.get(ident)
+            fresh = ()
+            if reply.get("status") == "completed" and callable(refresh):
+                reply["result"] = refresh(reply["result"], ident, detail=detail)
+                # The refreshed card's sources come from one checked snapshot of it, never a later live receipt read.
+                _body, known, _metadata = freeze_output(reply["result"])
+                fresh = tuple(known or ())
         except (AttributeError, TypeError, ValueError):
             reply = {**blocked_reply(cloud.WITHHELD), "job_id": ident, "status": "failed"}
             cloud.bind_output(reply, (cloud.UNKNOWN,))
-        return self._status_reply(ident, reply, detail)
+            fresh = ()
+        return self._status_reply(ident, reply, detail, fresh)
 
     def close(self):
         self._pool.shutdown(wait=True)

@@ -19,6 +19,8 @@ A verdict names its failure KIND with the codes the failure taxonomy (S5) uses.
 """
 from __future__ import annotations
 
+from g6.core.decoder_limits import json_value as _decode_json
+
 import ast
 import json
 import re
@@ -411,8 +413,10 @@ def result_schema(path: Path) -> Verdict:
     if not path.exists():
         return Verdict(False, "VERIFY_SCHEMA", f"{path.name} was not written")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = _decode_json(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, RecursionError, MemoryError) as exc:
+        if isinstance(exc, (RecursionError, MemoryError)):
+            exc = ValueError("a JSON record exceeds decoder limits")
         return Verdict(False, "VERIFY_SCHEMA", f"{path.name} is not JSON: {exc}")
     if not isinstance(data, dict):
         return Verdict(False, "VERIFY_SCHEMA", "result is not an object")

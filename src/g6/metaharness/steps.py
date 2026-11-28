@@ -57,7 +57,8 @@ def run_shown(code: str, imports: Sequence[str], asserts: Sequence[str], *, time
     except (SyntaxError, ValueError) as exc:
         return f"SyntaxError: {exc}"
     from g6.core.confine import IsolationRefused
-    from g6.core.sandbox import isolation_refused, run_script
+    from g6.core.sandbox import isolation_refused
+    from g6.core.guidance_builders import script_run as run_script
 
     source = PRELUDE + "".join(f"{i}\n" for i in imports) + "from solution import *\n" + "".join(f"{a}\n" for a in asserts)
     ran = run_script(source, {"solution.py": code}, timeout_s=timeout_s, mem_mb=512)
