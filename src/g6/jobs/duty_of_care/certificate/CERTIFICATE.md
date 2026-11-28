@@ -243,7 +243,7 @@ A deliberately deceptive implementation shares the child process with the harnes
       "rule": "phq9_total"
     }
   ],
-  "digest": "d1454e1ddf51e0e986a31e6c06b9871916199c1a26c5d21274baedf3cd807894",
+  "digest": "c520b070da36ff4d08808348f00f38fcfb3e9357e910d0bc0de47f1c5d0a9b53",
   "falsification": {
     "gad7_total": {
       "bounds": "Answer lists for the PHQ-9 (nine items) and the GAD-7 (seven items): every item 0 to 3, the PHQ-9's item 9 mostly 0 and otherwise any value of the scale; one item with no answer, or one answer short; one answer off the scale (4, 5, 7 or -1); one answer too many; three inputs in four also raise one answered item by one. Boundary inputs: an off-scale item 9, a raise that takes item 9 from 0 to 1, a raise past 3, nine answers for the GAD-7 and ten for the PHQ-9, and no answers at all.",
@@ -3659,7 +3659,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3667,7 +3667,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3675,7 +3675,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3683,7 +3683,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3691,7 +3691,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3699,7 +3699,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3707,7 +3707,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3715,7 +3715,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3723,7 +3723,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3731,7 +3731,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3739,7 +3739,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3747,7 +3747,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           },
           {
             "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
@@ -3755,10 +3755,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "answers_required",
-            "seq": 33
+            "seq": 25
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -3777,7 +3777,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3785,7 +3785,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3793,7 +3793,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3801,7 +3801,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3809,7 +3809,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3817,7 +3817,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           },
           {
             "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
@@ -3825,10 +3825,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "category_fit",
-            "seq": 36
+            "seq": 28
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -3847,7 +3847,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           },
           {
             "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
@@ -3855,7 +3855,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           },
           {
             "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
@@ -3863,7 +3863,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           },
           {
             "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
@@ -3871,7 +3871,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           },
           {
             "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
@@ -3879,7 +3879,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           },
           {
             "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
@@ -3887,10 +3887,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_lock",
-            "seq": 39
+            "seq": 31
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -3909,7 +3909,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_trigger",
-            "seq": 42
+            "seq": 34
           },
           {
             "check_sha": "d62847607c2825191aafaf00749e411accf9962e266d624a2c1e18c573f56a58",
@@ -3917,7 +3917,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_trigger",
-            "seq": 42
+            "seq": 34
           },
           {
             "check_sha": "d62847607c2825191aafaf00749e411accf9962e266d624a2c1e18c573f56a58",
@@ -3925,10 +3925,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "crisis_trigger",
-            "seq": 42
+            "seq": 34
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -3947,7 +3947,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "directory_age",
-            "seq": 45
+            "seq": 37
           },
           {
             "check_sha": "e4aa841f1953ac5d5756ea0f1b70fe9d51e211661d1d8a519a5988144e852ff6",
@@ -3955,7 +3955,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "directory_age",
-            "seq": 45
+            "seq": 37
           },
           {
             "check_sha": "e4aa841f1953ac5d5756ea0f1b70fe9d51e211661d1d8a519a5988144e852ff6",
@@ -3963,7 +3963,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "directory_age",
-            "seq": 45
+            "seq": 37
           },
           {
             "check_sha": "e4aa841f1953ac5d5756ea0f1b70fe9d51e211661d1d8a519a5988144e852ff6",
@@ -3971,7 +3971,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "directory_age",
-            "seq": 45
+            "seq": 37
           },
           {
             "check_sha": "e4aa841f1953ac5d5756ea0f1b70fe9d51e211661d1d8a519a5988144e852ff6",
@@ -3979,10 +3979,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "directory_age",
-            "seq": 45
+            "seq": 37
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4001,7 +4001,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "emergency_first",
-            "seq": 48
+            "seq": 40
           },
           {
             "check_sha": "2770a708fdd8cc07982c8ea4ebede290d2b7f79dfe0099867de6d9c86f7a6e52",
@@ -4009,7 +4009,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "emergency_first",
-            "seq": 48
+            "seq": 40
           },
           {
             "check_sha": "2770a708fdd8cc07982c8ea4ebede290d2b7f79dfe0099867de6d9c86f7a6e52",
@@ -4017,10 +4017,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "emergency_first",
-            "seq": 48
+            "seq": 40
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4039,7 +4039,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "few_services",
-            "seq": 51
+            "seq": 43
           },
           {
             "check_sha": "83ec218d9c24fd36ea0fab2e7b12c96e6adf2b70d56d2c28c082e643777175b4",
@@ -4047,7 +4047,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "few_services",
-            "seq": 51
+            "seq": 43
           },
           {
             "check_sha": "83ec218d9c24fd36ea0fab2e7b12c96e6adf2b70d56d2c28c082e643777175b4",
@@ -4055,7 +4055,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "few_services",
-            "seq": 51
+            "seq": 43
           },
           {
             "check_sha": "83ec218d9c24fd36ea0fab2e7b12c96e6adf2b70d56d2c28c082e643777175b4",
@@ -4063,7 +4063,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "few_services",
-            "seq": 51
+            "seq": 43
           },
           {
             "check_sha": "83ec218d9c24fd36ea0fab2e7b12c96e6adf2b70d56d2c28c082e643777175b4",
@@ -4071,10 +4071,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "few_services",
-            "seq": 51
+            "seq": 43
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4093,7 +4093,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4101,7 +4101,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4109,7 +4109,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4117,7 +4117,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4125,7 +4125,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4133,7 +4133,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4141,7 +4141,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4149,7 +4149,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4157,7 +4157,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4165,7 +4165,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4173,7 +4173,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
@@ -4181,12 +4181,12 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
-        "positive_seq": 55,
+        "positive_seq": 47,
         "predicates": [
           "gad7_total"
         ]
@@ -4203,7 +4203,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4211,7 +4211,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4219,7 +4219,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4227,7 +4227,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4235,7 +4235,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4243,7 +4243,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4251,7 +4251,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4259,7 +4259,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4267,7 +4267,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4275,7 +4275,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4283,7 +4283,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           },
           {
             "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
@@ -4291,12 +4291,12 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "gad7_total",
-            "seq": 54
+            "seq": 46
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
-        "positive_seq": 55,
+        "positive_seq": 47,
         "predicates": [
           "gad7_total"
         ]
@@ -4313,7 +4313,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4321,7 +4321,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4329,7 +4329,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4337,7 +4337,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4345,7 +4345,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4353,7 +4353,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4361,7 +4361,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4369,7 +4369,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4377,7 +4377,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           },
           {
             "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
@@ -4385,10 +4385,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "help_first",
-            "seq": 57
+            "seq": 49
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4407,7 +4407,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "hope",
-            "seq": 60
+            "seq": 52
           },
           {
             "check_sha": "7dbe20a36ee5230b40f159129d29a45105895d8389efc84de11b67bbb2b79020",
@@ -4415,10 +4415,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "hope",
-            "seq": 60
+            "seq": 52
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4437,7 +4437,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           },
           {
             "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
@@ -4445,7 +4445,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           },
           {
             "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
@@ -4453,7 +4453,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           },
           {
             "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
@@ -4461,7 +4461,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           },
           {
             "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
@@ -4469,7 +4469,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           },
           {
             "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
@@ -4477,10 +4477,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "language",
-            "seq": 63
+            "seq": 55
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4499,7 +4499,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "licence_settled",
-            "seq": 66
+            "seq": 58
           },
           {
             "check_sha": "49939eeff80f049c3e431c6ebdf63f1ea3849e2645fc8f2076714b2383cc644e",
@@ -4507,7 +4507,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "licence_settled",
-            "seq": 66
+            "seq": 58
           },
           {
             "check_sha": "49939eeff80f049c3e431c6ebdf63f1ea3849e2645fc8f2076714b2383cc644e",
@@ -4515,10 +4515,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "licence_settled",
-            "seq": 66
+            "seq": 58
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4537,7 +4537,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "method_location",
-            "seq": 69
+            "seq": 61
           },
           {
             "check_sha": "0d301750072b14a3c0485930c412330d09d3cec6972b0940fbf542fbd5a920b1",
@@ -4545,7 +4545,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "method_location",
-            "seq": 69
+            "seq": 61
           },
           {
             "check_sha": "0d301750072b14a3c0485930c412330d09d3cec6972b0940fbf542fbd5a920b1",
@@ -4553,7 +4553,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "method_location",
-            "seq": 69
+            "seq": 61
           },
           {
             "check_sha": "0d301750072b14a3c0485930c412330d09d3cec6972b0940fbf542fbd5a920b1",
@@ -4561,7 +4561,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "method_location",
-            "seq": 69
+            "seq": 61
           },
           {
             "check_sha": "0d301750072b14a3c0485930c412330d09d3cec6972b0940fbf542fbd5a920b1",
@@ -4569,10 +4569,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "method_location",
-            "seq": 69
+            "seq": 61
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4591,7 +4591,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "minimise_harm",
-            "seq": 72
+            "seq": 64
           },
           {
             "check_sha": "700470d4deaa6931ad8ee2d6efb46bd0ff038dc3f7185d5cbf14b2e55f1c1776",
@@ -4599,7 +4599,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "minimise_harm",
-            "seq": 72
+            "seq": 64
           },
           {
             "check_sha": "700470d4deaa6931ad8ee2d6efb46bd0ff038dc3f7185d5cbf14b2e55f1c1776",
@@ -4607,7 +4607,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "minimise_harm",
-            "seq": 72
+            "seq": 64
           },
           {
             "check_sha": "700470d4deaa6931ad8ee2d6efb46bd0ff038dc3f7185d5cbf14b2e55f1c1776",
@@ -4615,7 +4615,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "minimise_harm",
-            "seq": 72
+            "seq": 64
           },
           {
             "check_sha": "700470d4deaa6931ad8ee2d6efb46bd0ff038dc3f7185d5cbf14b2e55f1c1776",
@@ -4623,10 +4623,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "minimise_harm",
-            "seq": 72
+            "seq": 64
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4645,7 +4645,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4653,7 +4653,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4661,7 +4661,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4669,7 +4669,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4677,7 +4677,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4685,7 +4685,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           },
           {
             "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
@@ -4693,10 +4693,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "no_method",
-            "seq": 75
+            "seq": 67
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4715,7 +4715,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4723,7 +4723,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4731,7 +4731,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4739,7 +4739,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4747,7 +4747,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4755,7 +4755,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           },
           {
             "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
@@ -4763,10 +4763,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "no_sensational_language",
-            "seq": 78
+            "seq": 70
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4785,7 +4785,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4793,7 +4793,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4801,7 +4801,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4809,7 +4809,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4817,7 +4817,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4825,7 +4825,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4833,7 +4833,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4841,7 +4841,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4849,7 +4849,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4857,7 +4857,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4865,7 +4865,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4873,7 +4873,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           },
           {
             "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
@@ -4881,10 +4881,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "numbers_checked",
-            "seq": 81
+            "seq": 73
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4903,7 +4903,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "online_service",
-            "seq": 84
+            "seq": 76
           },
           {
             "check_sha": "66fdc4903f30fbbbebf5164d20f885a6c0294521dbaade135fb22ba3ce178a57",
@@ -4911,7 +4911,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "online_service",
-            "seq": 84
+            "seq": 76
           },
           {
             "check_sha": "66fdc4903f30fbbbebf5164d20f885a6c0294521dbaade135fb22ba3ce178a57",
@@ -4919,10 +4919,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "online_service",
-            "seq": 84
+            "seq": 76
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4941,7 +4941,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "others_too",
-            "seq": 87
+            "seq": 79
           },
           {
             "check_sha": "9412f98725212860d629ed1761a68230c8c0bef2574f204fd79be182093e364c",
@@ -4949,10 +4949,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "others_too",
-            "seq": 87
+            "seq": 79
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4971,7 +4971,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -4979,7 +4979,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -4987,7 +4987,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -4995,7 +4995,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5003,7 +5003,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5011,7 +5011,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5019,7 +5019,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5027,7 +5027,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5035,7 +5035,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           },
           {
             "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
@@ -5043,10 +5043,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_item9",
-            "seq": 90
+            "seq": 82
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5065,7 +5065,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5073,7 +5073,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5081,7 +5081,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5089,7 +5089,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5097,7 +5097,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5105,7 +5105,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5113,7 +5113,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5121,7 +5121,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5129,7 +5129,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5137,7 +5137,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5145,7 +5145,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
@@ -5153,12 +5153,12 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
-        "positive_seq": 94,
+        "positive_seq": 86,
         "predicates": [
           "phq9_total"
         ]
@@ -5175,7 +5175,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5183,7 +5183,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5191,7 +5191,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5199,7 +5199,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5207,7 +5207,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5215,7 +5215,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5223,7 +5223,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5231,7 +5231,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5239,7 +5239,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5247,7 +5247,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5255,7 +5255,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           },
           {
             "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
@@ -5263,12 +5263,12 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "phq9_total",
-            "seq": 93
+            "seq": 85
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
-        "positive_seq": 94,
+        "positive_seq": 86,
         "predicates": [
           "phq9_total"
         ]
@@ -5285,7 +5285,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "seek_help_message",
-            "seq": 96
+            "seq": 88
           },
           {
             "check_sha": "8a10e961f0bc68d2c5560d7a24a1371e1eefa12a9b98f3472b81e4909e06230a",
@@ -5293,7 +5293,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "seek_help_message",
-            "seq": 96
+            "seq": 88
           },
           {
             "check_sha": "8a10e961f0bc68d2c5560d7a24a1371e1eefa12a9b98f3472b81e4909e06230a",
@@ -5301,7 +5301,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": false,
             "predicate": "seek_help_message",
-            "seq": 96
+            "seq": 88
           },
           {
             "check_sha": "8a10e961f0bc68d2c5560d7a24a1371e1eefa12a9b98f3472b81e4909e06230a",
@@ -5309,7 +5309,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "seek_help_message",
-            "seq": 96
+            "seq": 88
           },
           {
             "check_sha": "8a10e961f0bc68d2c5560d7a24a1371e1eefa12a9b98f3472b81e4909e06230a",
@@ -5317,10 +5317,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "seek_help_message",
-            "seq": 96
+            "seq": 88
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5339,7 +5339,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "two_all_hours_services",
-            "seq": 99
+            "seq": 91
           },
           {
             "check_sha": "767b4ab8c264a28b2086f2a769cfffa65a25750158e078688723373b053757f4",
@@ -5347,7 +5347,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "two_all_hours_services",
-            "seq": 99
+            "seq": 91
           },
           {
             "check_sha": "767b4ab8c264a28b2086f2a769cfffa65a25750158e078688723373b053757f4",
@@ -5355,7 +5355,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "two_all_hours_services",
-            "seq": 99
+            "seq": 91
           },
           {
             "check_sha": "767b4ab8c264a28b2086f2a769cfffa65a25750158e078688723373b053757f4",
@@ -5363,7 +5363,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "two_all_hours_services",
-            "seq": 99
+            "seq": 91
           },
           {
             "check_sha": "767b4ab8c264a28b2086f2a769cfffa65a25750158e078688723373b053757f4",
@@ -5371,10 +5371,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "two_all_hours_services",
-            "seq": 99
+            "seq": 91
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5393,7 +5393,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5401,7 +5401,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5409,7 +5409,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5417,7 +5417,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5425,7 +5425,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5433,7 +5433,7 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           },
           {
             "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
@@ -5441,10 +5441,10 @@ A deliberately deceptive implementation shares the child process with the harnes
             "generated_by": "g6",
             "killed": true,
             "predicate": "where_and_how",
-            "seq": 102
+            "seq": 94
           }
         ],
-        "frozen_seq": 32,
+        "frozen_seq": 24,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5454,7 +5454,7 @@ A deliberately deceptive implementation shares the child process with the harnes
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "0972d748fc8cb88762fb90c7d02d6b7d4c368d28b77e5537176d39faddb63a96",
+    "digest": "2b59349751cc42327b92ca7acc3f412cf9edd48e5106a771393a603a36ddb6cb",
     "formal": [],
     "gaps": [
       [
@@ -5865,7 +5865,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "d6d175eefb39b7c748363a44a5b11c692631586551f86426e62350e1497a039d",
         "receipt_id": "answers_required:known:receipt",
         "result": "pass",
-        "seq": 35
+        "seq": 27
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5873,7 +5873,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "04b2e1adfa09e09f9cc84da239386468a33120b19d7fdc98d8544bf8e705d3c7",
         "receipt_id": "category_fit:known:receipt",
         "result": "pass",
-        "seq": 38
+        "seq": 30
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5881,7 +5881,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "2525049b5250fe6981dfea2a74f24a871150b649e03ee69ae9d217846064a70b",
         "receipt_id": "crisis_lock:known:receipt",
         "result": "pass",
-        "seq": 41
+        "seq": 33
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5889,7 +5889,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "d62847607c2825191aafaf00749e411accf9962e266d624a2c1e18c573f56a58",
         "receipt_id": "crisis_trigger:known:receipt",
         "result": "pass",
-        "seq": 44
+        "seq": 36
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5897,7 +5897,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "e4aa841f1953ac5d5756ea0f1b70fe9d51e211661d1d8a519a5988144e852ff6",
         "receipt_id": "directory_age:known:receipt",
         "result": "pass",
-        "seq": 47
+        "seq": 39
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5905,7 +5905,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "2770a708fdd8cc07982c8ea4ebede290d2b7f79dfe0099867de6d9c86f7a6e52",
         "receipt_id": "emergency_first:known:receipt",
         "result": "pass",
-        "seq": 50
+        "seq": 42
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5913,7 +5913,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "83ec218d9c24fd36ea0fab2e7b12c96e6adf2b70d56d2c28c082e643777175b4",
         "receipt_id": "few_services:known:receipt",
         "result": "pass",
-        "seq": 53
+        "seq": 45
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5921,7 +5921,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "7022b3ca8388719aa7fbdd76a81dd2acb6651719ec9e1030fffd2953433e3c4b",
         "receipt_id": "gad7_total:known:receipt",
         "result": "pass",
-        "seq": 56
+        "seq": 48
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5929,7 +5929,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "593456b541a46649f9b76e0d871f69e94288d80374ea630fff98f5a4e4decb3c",
         "receipt_id": "gad7_total:second_route:receipt",
         "result": "pass",
-        "seq": 56
+        "seq": 48
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5937,7 +5937,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "29249df1fbaab82c92a9141fac42f2e3209373831166d3e59bd5b83eb19b1fc9",
         "receipt_id": "help_first:known:receipt",
         "result": "pass",
-        "seq": 59
+        "seq": 51
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5945,7 +5945,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "7dbe20a36ee5230b40f159129d29a45105895d8389efc84de11b67bbb2b79020",
         "receipt_id": "hope:known:receipt",
         "result": "pass",
-        "seq": 62
+        "seq": 54
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5953,7 +5953,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "dc94c116a9fa225f567eecc7660054f1393a0761a6a4c01d81bdd73b4cb1f98e",
         "receipt_id": "language:known:receipt",
         "result": "pass",
-        "seq": 65
+        "seq": 57
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5961,7 +5961,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "49939eeff80f049c3e431c6ebdf63f1ea3849e2645fc8f2076714b2383cc644e",
         "receipt_id": "licence_settled:known:receipt",
         "result": "pass",
-        "seq": 68
+        "seq": 60
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5969,7 +5969,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "0d301750072b14a3c0485930c412330d09d3cec6972b0940fbf542fbd5a920b1",
         "receipt_id": "method_location:known:receipt",
         "result": "pass",
-        "seq": 71
+        "seq": 63
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5977,7 +5977,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "700470d4deaa6931ad8ee2d6efb46bd0ff038dc3f7185d5cbf14b2e55f1c1776",
         "receipt_id": "minimise_harm:known:receipt",
         "result": "pass",
-        "seq": 74
+        "seq": 66
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5985,7 +5985,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "6e5beea59508835278a335bd2be11dda6d55d23f0eb1e926293a4d7d25dea343",
         "receipt_id": "no_method:known:receipt",
         "result": "pass",
-        "seq": 77
+        "seq": 69
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -5993,7 +5993,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "8b947468fbb35ff6c8e5ddd353cdc6702fa83166fb9f226c0e6527209e257012",
         "receipt_id": "no_sensational_language:known:receipt",
         "result": "pass",
-        "seq": 80
+        "seq": 72
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6001,7 +6001,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "8fcac318f22a167a690251f0ddc4d463aadfaa3cd2b223910f3cf5d43a424f54",
         "receipt_id": "numbers_checked:known:receipt",
         "result": "pass",
-        "seq": 83
+        "seq": 75
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6009,7 +6009,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "66fdc4903f30fbbbebf5164d20f885a6c0294521dbaade135fb22ba3ce178a57",
         "receipt_id": "online_service:known:receipt",
         "result": "pass",
-        "seq": 86
+        "seq": 78
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6017,7 +6017,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "9412f98725212860d629ed1761a68230c8c0bef2574f204fd79be182093e364c",
         "receipt_id": "others_too:known:receipt",
         "result": "pass",
-        "seq": 89
+        "seq": 81
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6025,7 +6025,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "13b41e0d3a6aecbf00ba5ba08216a8931edf902afdc287c9ddf4edac947581f4",
         "receipt_id": "phq9_item9:known:receipt",
         "result": "pass",
-        "seq": 92
+        "seq": 84
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6033,7 +6033,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "461494acb10dd33bcd73298a8d70e836f8f596e4731e56a81348574af894e607",
         "receipt_id": "phq9_total:known:receipt",
         "result": "pass",
-        "seq": 95
+        "seq": 87
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6041,7 +6041,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "07dadc517767d5038430d4f3487b7ff7ea381cd05c47cb18eec6d21fd8a90130",
         "receipt_id": "phq9_total:second_route:receipt",
         "result": "pass",
-        "seq": 95
+        "seq": 87
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6049,7 +6049,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "8a10e961f0bc68d2c5560d7a24a1371e1eefa12a9b98f3472b81e4909e06230a",
         "receipt_id": "seek_help_message:known:receipt",
         "result": "pass",
-        "seq": 98
+        "seq": 90
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6057,7 +6057,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "767b4ab8c264a28b2086f2a769cfffa65a25750158e078688723373b053757f4",
         "receipt_id": "two_all_hours_services:known:receipt",
         "result": "pass",
-        "seq": 101
+        "seq": 93
       },
       {
         "artifact_sha": "24012d95edebf151afcfa4e7330f0e557cc38a3172b0ec99ed55a70b132f6db2",
@@ -6065,7 +6065,7 @@ A deliberately deceptive implementation shares the child process with the harnes
         "check_sha": "e39bd92b63a456db228db8df7c772718c65098f8b55f0eafcb69bcd5ad4a87a4",
         "receipt_id": "where_and_how:known:receipt",
         "result": "pass",
-        "seq": 104
+        "seq": 96
       }
     ],
     "rerun": [],
@@ -9731,65 +9731,65 @@ A deliberately deceptive implementation shares the child process with the harnes
   "positions": {
     "artifact": 1,
     "commits": {
-      "answers_required:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
+      "answers_required:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
       "artifact": "229873b5509c5be646de8d1778607555357e5697",
-      "category_fit:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "crisis_lock:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "crisis_trigger:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "directory_age:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "emergency_first:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "few_services:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "gad7_total:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "gad7_total:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "help_first:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "hope:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "language:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "licence_settled:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "method_location:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "minimise_harm:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "no_method:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "no_sensational_language:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "numbers_checked:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "online_service:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "others_too:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "phq9_item9:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "phq9_total:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "phq9_total:second_route": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "seek_help_message:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "two_all_hours_services:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8",
-      "where_and_how:known": "bb4e37cb1726924c8faec5f9baa1d10d05d748e8"
+      "category_fit:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "crisis_lock:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "crisis_trigger:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "directory_age:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "emergency_first:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "few_services:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "gad7_total:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "gad7_total:second_route": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "help_first:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "hope:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "language:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "licence_settled:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "method_location:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "minimise_harm:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "no_method:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "no_sensational_language:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "numbers_checked:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "online_service:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "others_too:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "phq9_item9:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "phq9_total:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "phq9_total:second_route": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "seek_help_message:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "two_all_hours_services:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9",
+      "where_and_how:known": "fb4a7aabbbbd0c2ee59e51d31cd1f347e0c208e9"
     },
-    "controls": 33,
+    "controls": 25,
     "frozen": {
-      "answers_required:known": 32,
-      "category_fit:known": 32,
-      "crisis_lock:known": 32,
-      "crisis_trigger:known": 32,
-      "directory_age:known": 32,
-      "emergency_first:known": 32,
-      "few_services:known": 32,
-      "gad7_total:known": 32,
-      "gad7_total:second_route": 32,
-      "help_first:known": 32,
-      "hope:known": 32,
-      "language:known": 32,
-      "licence_settled:known": 32,
-      "method_location:known": 32,
-      "minimise_harm:known": 32,
-      "no_method:known": 32,
-      "no_sensational_language:known": 32,
-      "numbers_checked:known": 32,
-      "online_service:known": 32,
-      "others_too:known": 32,
-      "phq9_item9:known": 32,
-      "phq9_total:known": 32,
-      "phq9_total:second_route": 32,
-      "seek_help_message:known": 32,
-      "two_all_hours_services:known": 32,
-      "where_and_how:known": 32
+      "answers_required:known": 24,
+      "category_fit:known": 24,
+      "crisis_lock:known": 24,
+      "crisis_trigger:known": 24,
+      "directory_age:known": 24,
+      "emergency_first:known": 24,
+      "few_services:known": 24,
+      "gad7_total:known": 24,
+      "gad7_total:second_route": 24,
+      "help_first:known": 24,
+      "hope:known": 24,
+      "language:known": 24,
+      "licence_settled:known": 24,
+      "method_location:known": 24,
+      "minimise_harm:known": 24,
+      "no_method:known": 24,
+      "no_sensational_language:known": 24,
+      "numbers_checked:known": 24,
+      "online_service:known": 24,
+      "others_too:known": 24,
+      "phq9_item9:known": 24,
+      "phq9_total:known": 24,
+      "phq9_total:second_route": 24,
+      "seek_help_message:known": 24,
+      "two_all_hours_services:known": 24,
+      "where_and_how:known": 24
     },
-    "positive": 34,
-    "receipts": 35
+    "positive": 26,
+    "receipts": 27
   },
   "printed_values": [],
   "register": [
